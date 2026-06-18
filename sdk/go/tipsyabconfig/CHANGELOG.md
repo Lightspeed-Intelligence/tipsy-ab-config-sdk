@@ -20,6 +20,8 @@ bump first, then an SDK tag bump.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-06-18
+
 ### Removed (BREAKING)
 
 - `Config.ExposureSink`, `Config.ExposureDedupTTL`, type `ExposureSink`,
@@ -103,6 +105,7 @@ Initial public release of the Tipsy AB-config Go SDK.
 - `ExposureEvent`, `ExposureSink`, `ExposureSinkFunc`, default `logSink`
   + async `exposureEmitter` with per-process 5-min dedup.
 
-[Unreleased]: https://github.com/Lightspeed-Intelligence/tipsy-ab-config/compare/sdk/go/tipsyabconfig/v0.2.0...HEAD
-[0.2.0]: https://github.com/Lightspeed-Intelligence/tipsy-ab-config/releases/tag/sdk%2Fgo%2Ftipsyabconfig%2Fv0.2.0
-[0.1.0]: https://github.com/Lightspeed-Intelligence/tipsy-ab-config/releases/tag/sdk%2Fgo%2Ftipsyabconfig%2Fv0.1.0
+[Unreleased]: https://github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk/compare/sdk/go/tipsyabconfig/v0.3.0...HEAD
+[0.3.0]: https://github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk/releases/tag/sdk%2Fgo%2Ftipsyabconfig%2Fv0.3.0
+[0.2.0]: https://github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk/releases/tag/sdk%2Fgo%2Ftipsyabconfig%2Fv0.2.0
+[0.1.0]: https://github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk/releases/tag/sdk%2Fgo%2Ftipsyabconfig%2Fv0.1.0
