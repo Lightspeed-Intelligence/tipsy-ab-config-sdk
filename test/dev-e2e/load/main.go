@@ -154,13 +154,13 @@ func run(cfg config) {
 					}
 				}
 				inflight.Add(1)
-				status, dur, err := driver.do(sigCtx)
+				status, sample, err := driver.do(sigCtx)
 				inflight.Add(-1)
 				if sigCtx.Err() != nil && err != nil {
 					// shutdown-induced cancellation — don't count as an error.
 					return
 				}
-				coll.record(status, dur, err)
+				coll.record(status, sample, err)
 			}
 		}()
 	}

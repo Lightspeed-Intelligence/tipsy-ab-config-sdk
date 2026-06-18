@@ -3,10 +3,12 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"io"
 	"math/rand"
 	"net/http"
+	"net/http/httptrace"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -55,25 +57,99 @@ func (d *driver) randUser() string {
 	return "load-u" + strconv.FormatInt(n, 36)
 }
 
-// do issues one request and returns (httpStatus, latency, err). A transport
+// phaseSample captures per-request timings from net/http/httptrace.ClientTrace
+// so we can decompose "where the wall-clock went" into:
+//
+//	dns   : DNS lookup (0 when not performed — e.g. cached / IP)
+//	tcp   : TCP connect (0 when conn was reused)
+//	tls   : TLS handshake (0 when conn was reused)
+//	wait  : request fully written → first response byte
+//	         (= server think time + return-leg network)
+//	read  : first byte → body fully drained
+//
+// reused indicates whether the underlying TCP+TLS connection was reused via
+// keep-alive (i.e. the request paid no dns/tcp/tls cost). Tracking that ratio
+// separately is critical: on a Cloudflare-fronted endpoint, the first request
+// per worker pays one expensive TLS handshake, then every subsequent request
+// on that conn pays only `wait+read`.
+type phaseSample struct {
+	total  time.Duration
+	dns    time.Duration
+	tcp    time.Duration
+	tls    time.Duration
+	wait   time.Duration
+	read   time.Duration
+	reused bool
+}
+
+// do issues one request and returns (httpStatus, sample, err). A transport
 // error returns status 0.
-func (d *driver) do(ctx context.Context) (int, time.Duration, error) {
+func (d *driver) do(ctx context.Context) (int, phaseSample, error) {
 	body := d.buildBody()
+
+	var (
+		sample        phaseSample
+		dnsStart      time.Time
+		connStart     time.Time
+		tlsStart      time.Time
+		wroteReq      time.Time
+		firstByteSeen time.Time
+	)
+
+	trace := &httptrace.ClientTrace{
+		DNSStart: func(httptrace.DNSStartInfo) { dnsStart = time.Now() },
+		DNSDone: func(httptrace.DNSDoneInfo) {
+			if !dnsStart.IsZero() {
+				sample.dns = time.Since(dnsStart)
+			}
+		},
+		ConnectStart: func(network, addr string) { connStart = time.Now() },
+		ConnectDone: func(network, addr string, err error) {
+			if !connStart.IsZero() {
+				sample.tcp = time.Since(connStart)
+			}
+		},
+		TLSHandshakeStart: func() { tlsStart = time.Now() },
+		TLSHandshakeDone: func(state tls.ConnectionState, err error) {
+			if !tlsStart.IsZero() {
+				sample.tls = time.Since(tlsStart)
+			}
+		},
+		GotConn: func(info httptrace.GotConnInfo) {
+			sample.reused = info.Reused
+		},
+		WroteRequest: func(httptrace.WroteRequestInfo) {
+			wroteReq = time.Now()
+		},
+		GotFirstResponseByte: func() {
+			firstByteSeen = time.Now()
+			if !wroteReq.IsZero() {
+				sample.wait = firstByteSeen.Sub(wroteReq)
+			}
+		},
+	}
+
 	start := time.Now()
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, d.url, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(httptrace.WithClientTrace(ctx, trace), http.MethodPost, d.url, bytes.NewReader(body))
 	if err != nil {
-		return 0, time.Since(start), err
+		sample.total = time.Since(start)
+		return 0, sample, err
 	}
 	req.Header.Set("Authorization", "Bearer "+d.cfg.token)
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := d.cli.Do(req)
 	if err != nil {
-		return 0, time.Since(start), err
+		sample.total = time.Since(start)
+		return 0, sample, err
 	}
 	// Drain + close so the connection is reused (keep-alive).
 	_, _ = io.Copy(io.Discard, resp.Body)
 	_ = resp.Body.Close()
-	return resp.StatusCode, time.Since(start), nil
+	if !firstByteSeen.IsZero() {
+		sample.read = time.Since(firstByteSeen)
+	}
+	sample.total = time.Since(start)
+	return resp.StatusCode, sample, nil
 }
 
 func (d *driver) buildBody() []byte {
@@ -99,9 +175,11 @@ func (d *driver) buildBody() []byte {
 type collector struct {
 	totalCount atomic.Int64
 	errCount   atomic.Int64
+	reusedCnt  atomic.Int64
+	freshCnt   atomic.Int64
 
 	mu        sync.Mutex
-	durations []time.Duration  // all latencies (volumes are bounded for a medium run)
+	samples   []phaseSample    // all per-request samples (volumes are bounded for a medium run)
 	byStatus  map[int]int64    // http status → count (0 = transport error)
 	errSample map[string]int64 // error string → count (capped sample)
 }
@@ -113,10 +191,15 @@ func newCollector() *collector {
 	}
 }
 
-func (c *collector) record(status int, dur time.Duration, err error) {
+func (c *collector) record(status int, s phaseSample, err error) {
 	c.totalCount.Add(1)
+	if s.reused {
+		c.reusedCnt.Add(1)
+	} else {
+		c.freshCnt.Add(1)
+	}
 	c.mu.Lock()
-	c.durations = append(c.durations, dur)
+	c.samples = append(c.samples, s)
 	c.byStatus[status]++
 	if err != nil {
 		c.errCount.Add(1)
