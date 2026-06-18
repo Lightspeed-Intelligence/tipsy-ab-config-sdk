@@ -56,6 +56,14 @@ var (
 //     "passthrough:///bufnet-config", "dns:///host", "unix:path", "xds:///") is
 //     passed through verbatim as plaintext (useTLS=false, no authority, no
 //     skip-verify) — the unchanged legacy path.
+//
+//     Recommended Headless Service form (K8S in-cluster deployment):
+//     "dns:///<service>.<ns>.svc.cluster.local:<port>". The grpc-go DNS
+//     resolver returns the full A-record set, and the SDK auto-enables the
+//     client-side round_robin load-balancing policy for any target with the
+//     "dns:///" prefix (see serviceConfigFor in sdk.go). All other forms keep
+//     grpc-go's default pick_first behaviour, so existing bare host:port /
+//     grpc:// / grpcs:// / passthrough:/// / unix: addresses are unaffected.
 //  3. grpc://host:port → plaintext; any ?authority= / ?insecure= query is a
 //     parameter error (Q1: those params are meaningless on plaintext).
 //  4. grpcs://host:port[?authority=&insecure=] → TLS; parse the query. A missing

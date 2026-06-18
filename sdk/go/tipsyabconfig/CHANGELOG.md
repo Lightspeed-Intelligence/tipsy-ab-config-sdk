@@ -20,6 +20,16 @@ bump first, then an SDK tag bump.
 
 ## [Unreleased]
 
+### Added
+
+- Auto-enable client-side `round_robin` load balancing when the dial
+  target uses the `dns:///` gRPC name resolver scheme (typically
+  `dns:///<service>.<ns>.svc.cluster.local:<port>` for K8S Headless
+  Service deployment). All other address forms (bare `host:port`,
+  `grpc://`, `grpcs://`, `passthrough:///`, `unix:`) keep grpc-go's
+  default `pick_first` behavior. No SDK Config field changes; opt-in
+  via address string only. See `docs/usage-and-integration.md` §4.1.
+
 ## [0.3.0] - 2026-06-18
 
 ### Removed (BREAKING)

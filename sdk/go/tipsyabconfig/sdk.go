@@ -619,8 +619,34 @@ func (c *Client) dial(tgt grpcTarget) (*grpc.ClientConn, error) {
 	if tgt.useTLS && tgt.authority != "" {
 		opts = append(opts, grpc.WithAuthority(tgt.authority))
 	}
+	// Headless Service + client-side round_robin opt-in: when the dial target
+	// uses the gRPC "dns:///" name-resolver scheme, inject a default service
+	// config that selects the round_robin load-balancing policy. Every other
+	// address form falls through to grpc-go's default pick_first to preserve
+	// backwards compatibility (design §Acceptance Criteria #10). The injection
+	// goes BEFORE cfg.DialOptions so a test seam can still override the
+	// default service config if needed.
+	if sc := serviceConfigFor(tgt.dialTarget); sc != "" {
+		opts = append(opts, grpc.WithDefaultServiceConfig(sc))
+	}
 	opts = append(opts, c.cfg.DialOptions...)
 	return grpc.NewClient(tgt.dialTarget, opts...)
+}
+
+// serviceConfigFor returns the gRPC service-config JSON to inject for a
+// given dial target, or "" to leave grpc-go on its defaults.
+//
+// Headless Service + round_robin opt-in: when the dial target starts with
+// "dns:///" (gRPC name-resolver scheme that resolves to all backend pod
+// IPs), we inject a round_robin loadBalancingConfig. Every other scheme
+// — bare host:port, "grpc://", "grpcs://[?...]", "passthrough:///",
+// "unix:" — falls through to grpc-go's default pick_first, preserving
+// backwards compatibility (design §Acceptance Criteria #10).
+func serviceConfigFor(dialTarget string) string {
+	if strings.HasPrefix(dialTarget, "dns:///") {
+		return `{"loadBalancingConfig":[{"round_robin":{}}]}`
+	}
+	return ""
 }
 
 // bearerCredentialsFromConfig returns the grpc.PerRPCCredentials matching
