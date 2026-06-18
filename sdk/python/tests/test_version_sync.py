@@ -6,7 +6,7 @@ Asserts that all three version surfaces stay in lockstep:
 2. ``pyproject.toml`` ``project.version``.
 3. A ``## [<version>]`` header in ``CHANGELOG.md``.
 
-Also smoke-imports the three shipped ``*_pb2_grpc`` stubs so that any future
+Also smoke-imports the shipped ``*_pb2_grpc`` stubs so that any future
 breakage of the ``scripts/gen-proto-py.sh`` import-rewrite tail surfaces at
 plain ``pytest -q`` time, rather than only inside the opt-in packaging-marker
 test or only when a downstream caller instantiates a stub.
@@ -53,7 +53,7 @@ def test_version_sync() -> None:
 
 
 def test_grpc_stubs_import_cleanly() -> None:
-    """All three shipped ``*_pb2_grpc`` modules must import without error.
+    """All shipped ``*_pb2_grpc`` modules must import without error.
 
     Catches future regressions where ``scripts/gen-proto-py.sh``'s
     ``from tipsy.<m>.v1 import ...`` → ``from tipsy_ab_config._proto.tipsy.<m>.v1
@@ -63,7 +63,10 @@ def test_grpc_stubs_import_cleanly() -> None:
     modules (``client.py`` only imports them lazily inside its own module
     body), so this test fills a gap that the existing 11 test files do not
     cover at module-import time.
+
+    Per design DR-001, the audit proto subtree is intentionally NOT shipped by
+    this SDK (it lives in the private ab-config backend repo only), so only
+    config + abtest stubs are smoke-imported here.
     """
     from tipsy_ab_config._proto.tipsy.config.v1 import config_pb2_grpc as _c  # noqa: F401
     from tipsy_ab_config._proto.tipsy.abtest.v1 import abtest_pb2_grpc as _a  # noqa: F401
-    from tipsy_ab_config._proto.tipsy.audit.v1 import audit_pb2_grpc as _au  # noqa: F401

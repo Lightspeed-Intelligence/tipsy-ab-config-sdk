@@ -9,7 +9,7 @@ import (
 // TestTipsyAuthDoesNotImportInternal enforces design 04 acceptance:
 // "tipsyauth 不 import 任何 internal/...". The public package must remain
 // importable by external modules (e.g. tipsy-backend), so it MUST NOT pull in
-// any github.com/Lightspeed-Intelligence/tipsy-ab-config/internal/... package — directly. We scan the
+// any github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk/internal/... package — directly. We scan the
 // package's own (non-test) import list via go/build.
 //
 // This guards the import-direction invariant: internal/auth may import
@@ -23,7 +23,7 @@ func TestTipsyAuthDoesNotImportInternal(t *testing.T) {
 		if strings.Contains(imp, "/internal/") || strings.HasSuffix(imp, "/internal") {
 			t.Errorf("tipsyauth imports internal package %q; the public signer must not depend on internal/...", imp)
 		}
-		if strings.HasPrefix(imp, "github.com/Lightspeed-Intelligence/tipsy-ab-config/internal") {
+		if strings.HasPrefix(imp, "github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk/internal") {
 			t.Errorf("tipsyauth imports %q; must not depend on internal/...", imp)
 		}
 	}

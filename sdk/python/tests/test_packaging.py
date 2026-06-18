@@ -80,10 +80,12 @@ def test_wheel_whitelist(built_wheel: pathlib.Path) -> None:
     assert "tipsy_ab_config/__init__.py" in names
     assert "tipsy_ab_config/py.typed" in names
 
-    # All proto bindings must be shipped — at minimum, each of the three
-    # versioned packages (config/v1, abtest/v1, audit/v1) must contribute at
-    # least one ``_pb2.py`` AND one ``_pb2_grpc.py``.
-    for pkg in ("config", "abtest", "audit"):
+    # All proto bindings must be shipped — at minimum, each of the two
+    # versioned packages (config/v1, abtest/v1) must contribute at least one
+    # ``_pb2.py`` AND one ``_pb2_grpc.py``. Per design DR-001, the audit subtree
+    # is intentionally NOT shipped (it lives in the private ab-config backend
+    # repo only).
+    for pkg in ("config", "abtest"):
         prefix = f"tipsy_ab_config/_proto/tipsy/{pkg}/v1/"
         pb2 = [n for n in names if n.startswith(prefix) and n.endswith("_pb2.py")]
         grpc = [n for n in names if n.startswith(prefix) and n.endswith("_pb2_grpc.py")]
@@ -100,8 +102,6 @@ def test_wheel_whitelist(built_wheel: pathlib.Path) -> None:
         "tipsy_ab_config/_proto/tipsy/config/v1/__init__.py",
         "tipsy_ab_config/_proto/tipsy/abtest/__init__.py",
         "tipsy_ab_config/_proto/tipsy/abtest/v1/__init__.py",
-        "tipsy_ab_config/_proto/tipsy/audit/__init__.py",
-        "tipsy_ab_config/_proto/tipsy/audit/v1/__init__.py",
     ):
         assert required_init in names, f"wheel is missing {required_init}"
 
