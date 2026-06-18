@@ -47,9 +47,6 @@ func (c *Client) GetConfigStatic(ns, key, defaultValue string) (string, bool) {
 // "no experiment hit" case and resolves to the full-release version, NOT the
 // default. The default is only returned when neither an abtest hit nor a
 // full-release version exists.
-//
-// Exposure events are emitted asynchronously when (and only when) the returned
-// value came from an abtest hit (source = experiment_group | whitelist).
 func (c *Client) GetConfig(ctx context.Context, abctx *AbtestContext, ns, key, defaultValue string) (string, error) {
 	return c.getConfigResolved(ctx, abctx, ns, key, defaultValue)
 }
@@ -85,13 +82,12 @@ func (c *Client) getConfigResolved(ctx context.Context, abctx *AbtestContext, ns
 	if abresult != nil {
 		if abVersion, ok := abresult.keyVersions[key]; ok && abVersion != 0 {
 			if val, ok := c.cache.valueOf(resolvedNs, key, abVersion); ok {
-				c.exposure.emit(abctx.userID, resolvedNs, key, abVersion, abresult.exposures, abctx.traceID)
 				c.logger.Debug("tipsyabconfig: get_config hit (abtest)",
 					"ns", resolvedNs, "key", key, "version", abVersion, "uid", abctx.userID, "trace_id", abctx.traceID)
 				return val, nil
 			}
-			// ab→full fallback: local cache missing the ab version. Log WARN,
-			// no exposure (design §B.3 / M6).
+			// ab→full fallback: local cache missing the ab version. Log WARN
+			// (design §B.3 / M6).
 			c.metrics.abtestFallback.inc(resolvedNs)
 			c.logger.Warn("tipsyabconfig: ab version missing in local cache; falling back to full",
 				"ns", resolvedNs, "key", key, "ab_version", abVersion, "trace_id", abctx.traceID)

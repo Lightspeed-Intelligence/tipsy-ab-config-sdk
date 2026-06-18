@@ -329,12 +329,33 @@ func TestHTTP_PeriodicPull_RefreshesCache(t *testing.T) {
 }
 
 // ---- C.3 GetExperimentResult over HTTP ------------------------------------
+//
+// Two round-trip cases here, both exercising the Go-SDK ⇄ publicread HTTP
+// transport:
+//
+//   - TestHTTP_GetExperimentResult_ExposuresRoundTrip — mock server still
+//     stuffs the deprecated `Exposures` repeated field to simulate an OLD
+//     server (D1 keeps the proto wire-compat by reserving field number 4).
+//     Asserting that the SDK can still deserialise it guarantees future
+//     protojson changes to optional+int64 handling won't silently break the
+//     backward-compat read path.
+//
+//   - TestHTTP_GetExperimentResult_GrayHitsRoundTrip — covers the new
+//     `gray_hits` repeated field (D2). The mock server emits a single
+//     GrayReleaseHit (release_id=7, key="k", version_id=99) and we verify
+//     the SDK observes it through GetGrayHits().
+//
+// Both use the same handler + recorder; the only difference is the canned
+// response shape.
 
-func TestHTTP_GetExperimentResult(t *testing.T) {
+func TestHTTP_GetExperimentResult_ExposuresRoundTrip(t *testing.T) {
 	h := newHTTPHarness(t)
 	h.cfgServer.SetPullSnapshot(makeSnapshot("ns1", 1, 1, nil))
 	expID := "e1"
 	groupID := "g1"
+	// Mock server塞旧版 server 才会填充的 Exposures repeated field, to
+	// verify the SDK still decodes it after D1 (proto field 4 retained,
+	// server永不再填充, but wire bytes must remain round-trippable).
 	h.abServer.SetResponse("ns1", &abtestv1.GetExperimentResultResponse{
 		ConfigFlatKv: map[string]int64{"k": 7},
 		Exposures: []*abtestv1.Exposure{
@@ -359,12 +380,59 @@ func TestHTTP_GetExperimentResult(t *testing.T) {
 	if got := res.GetConfigFlatKv()["k"]; got != 7 {
 		t.Fatalf("config_flat_kv[k] = %d, want 7", got)
 	}
+	// Backward-compat read: even though the SDK no longer EMITS exposure
+	// events, it must still decode the proto field bytes a legacy server
+	// might send.
 	if len(res.GetExposures()) != 1 || res.GetExposures()[0].GetVersion() != 7 {
 		t.Fatalf("unexpected exposures round-trip: %+v", res.GetExposures())
 	}
 	// The wire request must have carried the user id + attrs through protojson.
 	if lr := h.abServer.LastRequest(); lr == nil || lr.GetUserId() != "u1" {
 		t.Fatalf("server did not receive user id over HTTP: %+v", lr)
+	}
+}
+
+// TestHTTP_GetExperimentResult_GrayHitsRoundTrip exercises the new
+// repeated GrayReleaseHit gray_hits = 6 field (D2): mock server塞一条
+// gray hit; verify the SDK decodes it end-to-end through the publicread
+// protojson handler. Pairs with the equivalent Python coverage in
+// test_http_transport.py::test_http_get_experiment_result_gray_hits_round_trip.
+func TestHTTP_GetExperimentResult_GrayHitsRoundTrip(t *testing.T) {
+	h := newHTTPHarness(t)
+	h.cfgServer.SetPullSnapshot(makeSnapshot("ns1", 1, 1, nil))
+	h.abServer.SetResponse("ns1", &abtestv1.GetExperimentResultResponse{
+		ConfigFlatKv: map[string]int64{"k": 99},
+		GrayHits: []*abtestv1.GrayReleaseHit{
+			{ReleaseId: 7, Key: "k", VersionId: 99},
+		},
+	})
+
+	cfg := h.baseHTTPConfig([]string{"ns1"})
+	cli, err := Init(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("Init (http): %v", err)
+	}
+	defer cli.Close()
+
+	res, err := cli.GetExperimentResult(context.Background(), ExperimentResultRequest{
+		Namespace: "ns1",
+		UserInfo:  UserInfo{UID: "u-gray", Attrs: map[string]any{"country": "US"}},
+	})
+	if err != nil {
+		t.Fatalf("GetExperimentResult (http): %v", err)
+	}
+	hits := res.GetGrayHits()
+	if len(hits) != 1 {
+		t.Fatalf("gray_hits round-trip: got %d entries, want 1: %+v", len(hits), hits)
+	}
+	if hits[0].GetReleaseId() != 7 {
+		t.Fatalf("gray_hits[0].release_id = %d, want 7", hits[0].GetReleaseId())
+	}
+	if hits[0].GetKey() != "k" {
+		t.Fatalf("gray_hits[0].key = %q, want %q", hits[0].GetKey(), "k")
+	}
+	if hits[0].GetVersionId() != 99 {
+		t.Fatalf("gray_hits[0].version_id = %d, want 99", hits[0].GetVersionId())
 	}
 }
 
@@ -376,18 +444,13 @@ func TestHTTP_GetConfig_FullChain(t *testing.T) {
 		full     int64
 		versions map[int64]string
 	}{"k": {full: 1, versions: map[int64]string{1: "full-v1", 2: "ab-v2"}}}))
-	expID := "101"
-	groupID := "202"
+	// After D3 the SDK no longer emits exposure events. The full chain test
+	// only verifies abtest version selection reaches the value lookup.
 	h.abServer.SetResponse("ns1", &abtestv1.GetExperimentResultResponse{
 		ConfigFlatKv: map[string]int64{"k": 2},
-		Exposures: []*abtestv1.Exposure{
-			{Key: "k", Version: 2, Source: "experiment_group", ExperimentId: &expID, GroupId: &groupID},
-		},
 	})
 
-	sink := newDrainExposureSink()
 	cfg := h.baseHTTPConfig([]string{"ns1"})
-	cfg.ExposureSink = sink
 	cli, err := Init(context.Background(), cfg)
 	if err != nil {
 		t.Fatalf("Init (http): %v", err)
@@ -401,13 +464,6 @@ func TestHTTP_GetConfig_FullChain(t *testing.T) {
 	}
 	if val != "ab-v2" {
 		t.Fatalf("expected ab value over HTTP, got %q", val)
-	}
-	if !waitFor(t, 2*time.Second, func() bool { return len(sink.Events()) >= 1 }) {
-		t.Fatalf("expected exposure over HTTP, got %d", len(sink.Events()))
-	}
-	ev := sink.Events()[0]
-	if ev.ExperimentID != expID || ev.GroupID != groupID || ev.Key != "k" || ev.Version != 2 || ev.UserID != "u1" {
-		t.Fatalf("unexpected exposure over HTTP: %+v", ev)
 	}
 }
 
@@ -520,9 +576,7 @@ func TestHTTP_GetExperimentResult_Non2xx_DegradesToFull(t *testing.T) {
 	// experiment_result always 403.
 	h.setAbtestStatus(http.StatusForbidden)
 
-	sink := newDrainExposureSink()
 	cfg := h.baseHTTPConfig([]string{"ns1"})
-	cfg.ExposureSink = sink
 	cli, err := Init(context.Background(), cfg)
 	if err != nil {
 		t.Fatalf("Init (http): %v", err)
@@ -539,10 +593,6 @@ func TestHTTP_GetExperimentResult_Non2xx_DegradesToFull(t *testing.T) {
 	}
 	if cli.Metrics().AbtestFallbackTotal("ns1") == 0 {
 		t.Fatal("expected abtest_fallback_total ns1 > 0 on HTTP experiment_result error")
-	}
-	time.Sleep(50 * time.Millisecond)
-	if len(sink.Events()) != 0 {
-		t.Fatalf("HTTP abtest error must not emit exposure; got %+v", sink.Events())
 	}
 }
 

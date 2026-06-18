@@ -50,9 +50,8 @@ type AbtestContext struct {
 
 	// traceID is the per-request trace identifier propagated to every
 	// GetExperimentResult RPC issued from this ctx (eager prefetch + lazy
-	// resultFor), and stamped onto ExposureEvent (sdk-trace-id §4). Always
-	// non-empty post-construction: the constructor falls back to
-	// uuid.New().String() when the caller passes "".
+	// resultFor). Always non-empty post-construction: the constructor falls
+	// back to uuid.New().String() when the caller passes "".
 	//
 	// Concurrency note: traceID is assigned exactly once inside
 	// newAbtestContext before the eager-prefetch goroutine is started AND
@@ -83,11 +82,10 @@ type computeStatus struct {
 }
 
 // abtestComputeResult is the SDK-local view of a GetExperimentResult response:
-// the config_flat_kv key→version map plus the exposures so we can re-emit them
-// downstream. keyVersions key is the config_key name (not id).
+// the config_flat_kv key→version map consumed by the dynamic getConfig fast
+// path. keyVersions key is the config_key name (not id).
 type abtestComputeResult struct {
 	keyVersions map[string]int64
-	exposures   []*abtestv1.Exposure
 }
 
 // emptyAbtestResult is the sentinel "no abtest hits" result. We never close
@@ -119,8 +117,7 @@ func (c *Client) NewAbtestContext(parentCtx context.Context, userID string, user
 // trace_id (sdk-trace-id §4). Empty traceID ⇒ the SDK generates a fresh
 // uuid.New().String(); non-empty ⇒ passed through verbatim. Every
 // GetExperimentResult RPC issued from this ctx (eager prefetch + lazy per-ns
-// fetch) carries this trace_id; ExposureEvent.TraceID is stamped from the same
-// value.
+// fetch) carries this trace_id.
 //
 // Use this in Gin / net/http middleware to propagate an inbound X-Trace-Id /
 // X-Request-Id from the upstream request; see Middleware / GinMiddleware.
@@ -186,8 +183,8 @@ func (c *Client) newAbtestContext(parentCtx context.Context, prefetchNs, userID 
 // nothing eagerly; instead resultFor short-circuits to the empty result for an
 // identity-less ctx, so no RPC is ever issued.
 //
-// A fresh trace_id is generated even for the empty ctx so any downstream log /
-// exposure attribution stays internally consistent (sdk-trace-id §4).
+// A fresh trace_id is generated even for the empty ctx so any downstream log
+// / report channel stays internally consistent (sdk-trace-id §4).
 func (c *Client) EmptyAbtestContext() *AbtestContext {
 	return &AbtestContext{
 		results: make(map[string]*computeStatus),
@@ -203,8 +200,8 @@ func (c *Client) EmptyAbtestContext() *AbtestContext {
 // lazy path short-circuits to the empty result (no RPC), matching the prior
 // "namespaces not in the map resolve to the empty result" behaviour.
 //
-// A fresh trace_id is generated so any downstream log / exposure attribution
-// stays internally consistent (sdk-trace-id §4).
+// A fresh trace_id is generated so any downstream log / report channel stays
+// internally consistent (sdk-trace-id §4).
 func (c *Client) MockAbtestContext(userID string, keyVersionsByNS map[string]map[string]int64) *AbtestContext {
 	ctx := &AbtestContext{
 		userID:  userID,
@@ -240,11 +237,11 @@ func (a *AbtestContext) UserInfo() UserInfo {
 }
 
 // TraceID returns the per-request trace id this ctx propagates to every
-// GetExperimentResult RPC and stamps onto ExposureEvent (sdk-trace-id §4).
-// For a NewAbtestContext / EmptyAbtestContext / MockAbtestContext result it
-// is the SDK-generated UUID (always non-empty); for a *WithTraceID
-// constructor it is the caller-supplied value (or a fresh UUID when "" was
-// passed). Returns "" for a nil receiver.
+// GetExperimentResult RPC (sdk-trace-id §4). For a NewAbtestContext /
+// EmptyAbtestContext / MockAbtestContext result it is the SDK-generated UUID
+// (always non-empty); for a *WithTraceID constructor it is the
+// caller-supplied value (or a fresh UUID when "" was passed). Returns "" for
+// a nil receiver.
 func (a *AbtestContext) TraceID() string {
 	if a == nil {
 		return ""
@@ -366,7 +363,6 @@ func (c *Client) getExperimentResultForNamespace(parentCtx context.Context, ns, 
 	}
 	out := &abtestComputeResult{
 		keyVersions: make(map[string]int64, len(resp.GetConfigFlatKv())),
-		exposures:   resp.GetExposures(),
 	}
 	for k, v := range resp.GetConfigFlatKv() {
 		out.keyVersions[k] = v

@@ -45,26 +45,22 @@ func TestGetConfigStatic_HitAndMiss(t *testing.T) {
 	}
 }
 
-func TestGetConfig_AbtestHitEmitsExposure(t *testing.T) {
+func TestGetConfig_AbtestHitResolvesAbVersion(t *testing.T) {
 	h := newHarness(t)
 	// Cache has both full v=1 and ab v=2.
 	h.cfgServer.SetPullSnapshot(makeSnapshot("ns1", 1, 1, map[string]struct {
 		full     int64
 		versions map[int64]string
 	}{"k": {full: 1, versions: map[int64]string{1: "full-v1", 2: "ab-v2"}}}))
-	// Compute returns ab version=2 with experiment exposure.
-	expID := "101"
-	groupID := "202"
+	// Compute returns ab version=2. After D3 the SDK no longer emits
+	// ExposureEvents, so we only assert that the abtest-resolved version
+	// reaches the caller; the response carries no Exposures field anymore
+	// (server永不填充, see design v3 D1/D3).
 	h.abServer.SetResponse("ns1", &abtestv1.GetExperimentResultResponse{
 		ConfigFlatKv: map[string]int64{"k": 2},
-		Exposures: []*abtestv1.Exposure{
-			{Key: "k", Version: 2, Source: "experiment_group", ExperimentId: &expID, GroupId: &groupID},
-		},
 	})
 
-	sink := newDrainExposureSink()
 	cfg := h.baseConfig([]string{"ns1"})
-	cfg.ExposureSink = sink
 	cli, err := Init(context.Background(), cfg)
 	if err != nil {
 		t.Fatalf("Init: %v", err)
@@ -79,12 +75,8 @@ func TestGetConfig_AbtestHitEmitsExposure(t *testing.T) {
 	if val != "ab-v2" {
 		t.Fatalf("expected ab value, got %q", val)
 	}
-	if !waitFor(t, 2*time.Second, func() bool { return len(sink.Events()) >= 1 }) {
-		t.Fatalf("expected exposure, got %d", len(sink.Events()))
-	}
-	ev := sink.Events()[0]
-	if ev.Source != "experiment_group" || ev.ExperimentID != expID || ev.GroupID != groupID || ev.Key != "k" || ev.Version != 2 || ev.UserID != "u1" {
-		t.Fatalf("unexpected exposure: %+v", ev)
+	if got := h.abServer.Calls("ns1"); got != 1 {
+		t.Fatalf("expected exactly 1 Compute call, got %d", got)
 	}
 }
 
@@ -96,9 +88,7 @@ func TestGetConfig_FullFallbackWhenAbtestUnavailable(t *testing.T) {
 	}{"k": {full: 1, versions: map[int64]string{1: "full-v1"}}}))
 	h.abServer.SetError("ns1", status.Error(codes.Unavailable, "down"))
 
-	sink := newDrainExposureSink()
 	cfg := h.baseConfig([]string{"ns1"})
-	cfg.ExposureSink = sink
 	cli, err := Init(context.Background(), cfg)
 	if err != nil {
 		t.Fatalf("Init: %v", err)
@@ -116,9 +106,6 @@ func TestGetConfig_FullFallbackWhenAbtestUnavailable(t *testing.T) {
 	if cli.Metrics().AbtestFallbackTotal("ns1") == 0 {
 		t.Fatal("expected abtest_fallback_total ns1 > 0")
 	}
-	if len(sink.Events()) != 0 {
-		t.Fatalf("expected no exposure on full fallback; got %+v", sink.Events())
-	}
 }
 
 func TestGetConfig_AbVersionMissingInCacheFallsBack(t *testing.T) {
@@ -132,9 +119,7 @@ func TestGetConfig_AbVersionMissingInCacheFallsBack(t *testing.T) {
 		ConfigFlatKv: map[string]int64{"k": 99},
 	})
 
-	sink := newDrainExposureSink()
 	cfg := h.baseConfig([]string{"ns1"})
-	cfg.ExposureSink = sink
 	cli, err := Init(context.Background(), cfg)
 	if err != nil {
 		t.Fatalf("Init: %v", err)
@@ -151,11 +136,6 @@ func TestGetConfig_AbVersionMissingInCacheFallsBack(t *testing.T) {
 	}
 	if cli.Metrics().AbtestFallbackTotal("ns1") == 0 {
 		t.Fatal("expected abtest_fallback_total ns1 > 0 on ab->full fallback")
-	}
-	// Allow scheduler a moment, then assert no exposure was sent.
-	time.Sleep(50 * time.Millisecond)
-	if len(sink.Events()) != 0 {
-		t.Fatalf("ab->full fallback must not emit exposure; got %+v", sink.Events())
 	}
 }
 

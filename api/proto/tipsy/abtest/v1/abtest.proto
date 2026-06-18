@@ -11,7 +11,9 @@ option go_package = "github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk/api/
 //
 //   - GetExperimentResult: business SDK ⇄ abtest. Given (namespace, user_id,
 //     user_attrs, layer_ids?, experiment_type, display_type) it walks the
-//     topology tree and returns the experiment / whitelist hits + exposures.
+//     topology tree and returns the experiment / whitelist hits (+ optional
+//     gray hit list when display_type==EACH_EXPERIMENT_GROUP and
+//     experiment_type ∈ {CONFIG_VERSION, ALL}).
 //   - GetPossibleVersionsAndExperimentSnapshotSeq: config ⇄ abtest (unchanged).
 //   - GetExperimentSnapshotSeq: config ⇄ abtest. Lightweight "just the seq"
 //     read of namespace_experiment_snapshot_seq — returns only the int64 seq
@@ -72,8 +74,20 @@ message GetExperimentResultResponse {
   google.protobuf.Struct custom_flat_kv = 2;
   // each_experiment_group mode: one element per hit experiment group.
   repeated ExperimentGroupResult groups = 3;
+  // exposures: retained on the wire for proto3 backward compatibility
+  // (D1) — server v2 onwards NEVER populates this field. Pre-v2 servers may
+  // still emit it; SDK clients should treat the field as effectively
+  // deprecated. Do not consume in new code.
   repeated Exposure exposures = 4;
   google.protobuf.Timestamp computed_at = 5;
+  // gray_hits: the explicit list of gray release hits resolved for
+  // (uid, namespace). Populated ONLY when display_type ==
+  // RESULT_DISPLAY_TYPE_EACH_EXPERIMENT_GROUP AND experiment_type ∈
+  // {EXPERIMENT_TYPE_CONFIG_VERSION, EXPERIMENT_TYPE_ALL}. In every other
+  // request shape the field is a zero-length slice (NOT a missing field) —
+  // same style as `groups` / `config_flat_kv`. Output is sorted by
+  // release_id ascending and stable across repeated identical requests.
+  repeated GrayReleaseHit gray_hits = 6;
 }
 
 message ExperimentGroupResult {
@@ -87,6 +101,10 @@ message ExperimentGroupResult {
   google.protobuf.Struct params_custom   = 6;
 }
 
+// Exposure is retained on the wire purely for proto3 backward compatibility
+// (D1: field number 4 of GetExperimentResultResponse is not reused).
+// server v2 onwards: never populated, retained for wire-level compatibility
+// （永不填充，保留为 proto3 兼容字段）.
 message Exposure {
   string key     = 1;
   // config_version: version_id (int64); custom_params: 0 (no version semantics).
@@ -96,6 +114,17 @@ message Exposure {
   optional string group_id          = 5;
   optional string experiment_status = 6;
   optional int64  release_id        = 7;    // gray release_whitelist.id (int64)
+}
+
+// GrayReleaseHit is one (release_id, key, version_id) tuple resolved by the
+// gray-release engine for a single (uid, namespace). The (release_id, key)
+// pair is unique per response (computeGray is first-writer-wins per
+// release_id ascending); version_id is the gray release's target version
+// for that key.
+message GrayReleaseHit {
+  int64  release_id = 1;
+  string key        = 2;
+  int64  version_id = 3;
 }
 
 message GetPossibleVersionsAndExperimentSnapshotSeqRequest {

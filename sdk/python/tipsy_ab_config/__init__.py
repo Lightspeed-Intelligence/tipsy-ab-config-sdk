@@ -6,13 +6,11 @@ This package mirrors the Go SDK 1:1:
   :class:`~tipsy_ab_config.cache.ConfigCache` populated by a startup
   ``PullAll``, a long-lived server-streaming ``Subscribe``, and a 10-second
   fallback ``PullAll`` safety net.
-- :func:`Client.get_config_static` is a pure cache read — no abtest, no
-  exposure.
+- :func:`Client.get_config_static` is a pure cache read — no abtest call.
 - :func:`Client.get_config` resolves the namespace (explicit > project
   default > :class:`NamespaceRequired`), awaits the per-request
   :class:`~tipsy_ab_config.abtest_context.AbtestContext`, and resolves the
-  value (abtest hit > full release fallback). Exposure events are emitted
-  asynchronously with a 5-minute per-process dedup window.
+  value (abtest hit > full release fallback).
 - :func:`Client.new_abtest_context` eagerly pre-fetches ONLY the prefetch
   namespace (explicit-or-default) via one ``GetExperimentResult`` task; other
   namespaces are fetched lazily and memoised at-most-once on first dynamic
@@ -36,7 +34,6 @@ from .exceptions import (
 )
 from .abtest_context import AbtestContext, UserInfo, abtest_ctx_var
 from .client import Client, init, Config
-from .exposure import ExposureEvent, ExposureSink
 
 __version__ = "0.3.0"
 
@@ -45,8 +42,6 @@ __all__ = [
     "AbtestContextMissing",
     "Client",
     "Config",
-    "ExposureEvent",
-    "ExposureSink",
     "NamespaceNotSubscribed",
     "NamespaceRequired",
     "SDKClosed",

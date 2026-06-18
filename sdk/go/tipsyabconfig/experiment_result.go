@@ -75,9 +75,9 @@ type ExperimentResultRequest struct {
 
 // GetExperimentResult is the thin exported wrapper over
 // AbtestService.GetExperimentResult (design 04 §B.6). Unlike GetConfig it does
-// NOT memoise into an AbtestContext, does NOT touch the local config cache, and
-// does NOT emit exposures — it returns the raw proto response so business code
-// can read custom_flat_kv / groups / exposures directly.
+// NOT memoise into an AbtestContext and does NOT touch the local config cache —
+// it returns the raw proto response so business code can read
+// config_flat_kv / custom_flat_kv / groups / gray_hits directly.
 //
 // Namespace resolution mirrors GetConfig (explicit > default >
 // ErrNamespaceRequired; unsubscribed > ErrNamespaceNotSubscribed). The call is

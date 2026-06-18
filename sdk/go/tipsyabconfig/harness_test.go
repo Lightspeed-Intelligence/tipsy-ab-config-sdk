@@ -392,35 +392,6 @@ func mustStatusCode(t *testing.T, err error, want codes.Code) {
 	}
 }
 
-// drainExposureSink is a simple channel-backed ExposureSink for tests.
-type drainExposureSink struct {
-	mu     sync.Mutex
-	events []ExposureEvent
-	notify chan struct{}
-}
-
-func newDrainExposureSink() *drainExposureSink {
-	return &drainExposureSink{notify: make(chan struct{}, 256)}
-}
-
-func (s *drainExposureSink) Sink(ev ExposureEvent) {
-	s.mu.Lock()
-	s.events = append(s.events, ev)
-	s.mu.Unlock()
-	select {
-	case s.notify <- struct{}{}:
-	default:
-	}
-}
-
-func (s *drainExposureSink) Events() []ExposureEvent {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	out := make([]ExposureEvent, len(s.events))
-	copy(out, s.events)
-	return out
-}
-
 // silence "unused" linter when these helpers aren't referenced from one of
 // the smaller test files; they are part of the public test API.
 var _ = io.EOF

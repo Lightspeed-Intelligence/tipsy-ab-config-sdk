@@ -30,7 +30,9 @@ class AbtestServiceStub(object):
 
     - GetExperimentResult: business SDK ⇄ abtest. Given (namespace, user_id,
     user_attrs, layer_ids?, experiment_type, display_type) it walks the
-    topology tree and returns the experiment / whitelist hits + exposures.
+    topology tree and returns the experiment / whitelist hits (+ optional
+    gray hit list when display_type==EACH_EXPERIMENT_GROUP and
+    experiment_type ∈ {CONFIG_VERSION, ALL}).
     - GetPossibleVersionsAndExperimentSnapshotSeq: config ⇄ abtest (unchanged).
     - GetExperimentSnapshotSeq: config ⇄ abtest. Lightweight "just the seq"
     read of namespace_experiment_snapshot_seq — returns only the int64 seq
@@ -66,7 +68,9 @@ class AbtestServiceServicer(object):
 
     - GetExperimentResult: business SDK ⇄ abtest. Given (namespace, user_id,
     user_attrs, layer_ids?, experiment_type, display_type) it walks the
-    topology tree and returns the experiment / whitelist hits + exposures.
+    topology tree and returns the experiment / whitelist hits (+ optional
+    gray hit list when display_type==EACH_EXPERIMENT_GROUP and
+    experiment_type ∈ {CONFIG_VERSION, ALL}).
     - GetPossibleVersionsAndExperimentSnapshotSeq: config ⇄ abtest (unchanged).
     - GetExperimentSnapshotSeq: config ⇄ abtest. Lightweight "just the seq"
     read of namespace_experiment_snapshot_seq — returns only the int64 seq
@@ -123,7 +127,9 @@ class AbtestService(object):
 
     - GetExperimentResult: business SDK ⇄ abtest. Given (namespace, user_id,
     user_attrs, layer_ids?, experiment_type, display_type) it walks the
-    topology tree and returns the experiment / whitelist hits + exposures.
+    topology tree and returns the experiment / whitelist hits (+ optional
+    gray hit list when display_type==EACH_EXPERIMENT_GROUP and
+    experiment_type ∈ {CONFIG_VERSION, ALL}).
     - GetPossibleVersionsAndExperimentSnapshotSeq: config ⇄ abtest (unchanged).
     - GetExperimentSnapshotSeq: config ⇄ abtest. Lightweight "just the seq"
     read of namespace_experiment_snapshot_seq — returns only the int64 seq

@@ -33,7 +33,7 @@ Assumptions about the in-progress implementation (codingAgent contract)
 * HTTP base URLs append fixed paths:
     config_service_addr + "/api/v1/config/pull_all"
     abtest_service_addr + "/api/v1/abtest/experiment_result"
-* HTTP mode does NOT start a Subscribe task; only the pull loop + exposure.
+* HTTP mode does NOT start a Subscribe task; only the pull loop.
 * ``Authorization: Bearer <token>`` is taken from ``_TokenCache.current()``.
 
 Where the contract is uncertain (e.g. exact transport-parse helper name) the
@@ -575,15 +575,15 @@ async def test_http_periodic_pull_refreshes_cache(recorder):
 
 
 async def test_http_get_experiment_result(recorder):
-    """get_experiment_result over HTTP returns the decoded proto response."""
+    """get_experiment_result over HTTP returns the decoded proto response.
+
+    The deprecated `exposures` field is retained on the wire (D1) but is
+    never populated by the server again (D3); see
+    test_http_get_experiment_result_exposures_round_trip below for the
+    backward-compat read coverage.
+    """
     recorder.set_pull_snapshot(make_snapshot("ns1", 1, 1, {"k": (1, {1: "full"})}))
     resp = make_exp_result({"k": 7})
-    ex = resp.exposures.add()
-    ex.key = "k"
-    ex.version = 7
-    ex.source = "experiment_group"
-    ex.experiment_id = "100"
-    ex.group_id = "200"
     recorder.set_abtest_response(resp)
     cli = await init(http_config(recorder, pull_interval=10.0))
     try:
@@ -598,18 +598,74 @@ async def test_http_get_experiment_result(recorder):
         await cli.aclose()
 
 
+async def test_http_get_experiment_result_exposures_round_trip(recorder):
+    """Backward-compat: SDK still decodes a legacy server's `exposures`.
+
+    Mirrors the Go-side
+    transport_http_test.go::TestHTTP_GetExperimentResult_ExposuresRoundTrip:
+    mock server塞 the deprecated `Exposures` repeated field to simulate an
+    OLD server; verify the SDK still deserialises it. Future protojson
+    regressions on the optional+int64 path will be caught here.
+    """
+    recorder.set_pull_snapshot(make_snapshot("ns1", 1, 1, {"k": (1, {1: "full"})}))
+    resp = make_exp_result({"k": 7})
+    ex = resp.exposures.add()
+    ex.key = "k"
+    ex.version = 7
+    ex.source = "experiment_group"
+    ex.experiment_id = "100"
+    ex.group_id = "200"
+    recorder.set_abtest_response(resp)
+    cli = await init(http_config(recorder, pull_interval=10.0))
+    try:
+        out = await cli.get_experiment_result("ns1", UserInfo(uid="u1"))
+        # Backward-compat read: even though SDK no longer EMITS exposures,
+        # the proto field bytes a legacy server might send must still decode.
+        assert len(out.exposures) == 1
+        assert out.exposures[0].version == 7
+        assert out.exposures[0].source == "experiment_group"
+    finally:
+        await cli.aclose()
+
+
+async def test_http_get_experiment_result_gray_hits_round_trip(recorder):
+    """New `gray_hits` field (D2) round-trips through the HTTP transport.
+
+    Mirrors the Go-side
+    transport_http_test.go::TestHTTP_GetExperimentResult_GrayHitsRoundTrip:
+    mock server塞一条 GrayReleaseHit; verify the SDK observes it via
+    response.gray_hits after the publicread protojson decode.
+    """
+    recorder.set_pull_snapshot(make_snapshot("ns1", 1, 1, {"k": (1, {1: "full"})}))
+    resp = make_exp_result({"k": 99})
+    hit = resp.gray_hits.add()
+    hit.release_id = 7
+    hit.key = "k"
+    hit.version_id = 99
+    recorder.set_abtest_response(resp)
+    cli = await init(http_config(recorder, pull_interval=10.0))
+    try:
+        out = await cli.get_experiment_result("ns1", UserInfo(uid="u-gray"))
+        assert len(out.gray_hits) == 1, (
+            f"expected 1 gray_hit; got {list(out.gray_hits)!r}"
+        )
+        assert out.gray_hits[0].release_id == 7
+        assert out.gray_hits[0].key == "k"
+        assert out.gray_hits[0].version_id == 99
+    finally:
+        await cli.aclose()
+
+
 async def test_http_get_config_full_link(recorder):
-    """get_config over HTTP: experiment compute + value lookup + exposure."""
+    """get_config over HTTP: experiment compute + value lookup.
+
+    D3 removed the SDK-side exposure emit pipeline; this test now only
+    verifies the abtest-resolved version reaches the value lookup.
+    """
     recorder.set_pull_snapshot(
         make_snapshot("ns1", 1, 1, {"k": (1, {1: "full", 2: "ab-v2"})})
     )
     resp = make_exp_result({"k": 2})
-    ex = resp.exposures.add()
-    ex.key = "k"
-    ex.version = 2
-    ex.source = "experiment_group"
-    ex.experiment_id = "100"
-    ex.group_id = "200"
     recorder.set_abtest_response(resp)
     cli = await init(http_config(recorder, pull_interval=10.0))
     try:
@@ -775,7 +831,7 @@ async def test_http_startup_fail_open_metric(recorder):
 
 
 async def test_http_mode_does_not_subscribe(recorder):
-    """HTTP mode starts NO Subscribe task; only pull loop (+ exposure).
+    """HTTP mode starts NO Subscribe task; only the pull loop.
 
     There is no Subscribe HTTP endpoint, so the recorder must NEVER see a
     subscribe-shaped path. We also assert the SDK didn't spin up a subscribe

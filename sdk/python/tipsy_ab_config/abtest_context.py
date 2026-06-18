@@ -32,7 +32,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Mapping, Optional, TYPE_CHECKING
+from typing import Any, Dict, Mapping, Optional, TYPE_CHECKING
 
 import contextvars
 
@@ -55,12 +55,10 @@ class _ComputeResult:
     """GetExperimentResult result the SDK keeps on the AbtestContext.
 
     ``key_versions`` maps config_key.name → version_id (from the
-    ``config_flat_kv`` map); ``exposures`` is the raw Exposure list used to
-    attribute the exposure source.
+    ``config_flat_kv`` map).
     """
 
     key_versions: Dict[str, int] = field(default_factory=dict)
-    exposures: List[Any] = field(default_factory=list)
 
 
 _EMPTY_RESULT = _ComputeResult()
@@ -184,8 +182,8 @@ class AbtestContext:
         existing slot and awaits the SAME task. Net effect: AT MOST ONE
         GetExperimentResult RPC per ns per request link.
 
-        Returns the empty result (no hits, no exposures) when the per-ns call
-        failed — a single-ns failure degrades that ns silently so the awaiting
+        Returns the empty result (no hits) when the per-ns call failed —
+        a single-ns failure degrades that ns silently so the awaiting
         ``get_config`` falls through to the full-release branch.
         """
         async with self._lock:

@@ -95,8 +95,8 @@ func TestSubscribe_CancelClean(t *testing.T) {
 	if !waitFor(t, 2*time.Second, func() bool { return h.cfgServer.SubscribeCalls() >= 1 }) {
 		t.Fatal("subscribe never attached")
 	}
-	// Close should cancel rootCtx, exit Subscribe loop, drain exposure
-	// queue, and return without deadlock.
+	// Close should cancel rootCtx, exit Subscribe loop, and return without
+	// deadlock.
 	done := make(chan error, 1)
 	go func() { done <- cli.Close() }()
 	select {

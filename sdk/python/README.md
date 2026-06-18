@@ -7,9 +7,8 @@ Tipsy AB-config server.
 
 `tipsy-ab-config` is the Python client SDK for the Tipsy AB-config server.
 It maintains a process-local config cache (populated by a startup `PullAll`
-and a long-lived server-streaming `Subscribe`), resolves abtest hits via
-the server's `AbtestService.GetExperimentResult`, and emits exposure events
-with a 5-minute per-process dedup window. All gRPC traffic is JWT
+and a long-lived server-streaming `Subscribe`) and resolves abtest hits via
+the server's `AbtestService.GetExperimentResult`. All gRPC traffic is JWT
 authenticated.
 
 This package mirrors the Go SDK 1:1. The SDK never talks to the database —
@@ -192,10 +191,10 @@ async def main():
         token="<bearer-jwt>",
     )
 
-    # Pure cache read — no abtest, no exposure event.
+    # Pure cache read — no abtest call.
     cfg = client.get_config_static("feature.flags")
 
-    # AbtestContext-aware lookup with exposure.
+    # AbtestContext-aware lookup (resolves abtest hits via the server).
     # Pass `trace_id=` to reuse an upstream trace; omit or pass an empty
     # string to have the SDK auto-generate a UUID v4 for this request.
     async with client.new_abtest_context(
@@ -215,9 +214,9 @@ async def main():
 The same `trace_id=` kwarg is accepted by `new_abtest_context`,
 `abtest_scope`, and `get_experiment_result`. Empty / `None` means
 "SDK generates a fresh UUID v4". The id is propagated end-to-end:
-into the proto `trace_id` field, server-side computation logs, and the
-exposure events emitted by the SDK. The server enforces a 128-char
-soft cap (oversize input is truncated with a one-shot WARN).
+into the proto `trace_id` field and the server-side computation logs.
+The server enforces a 128-char soft cap (oversize input is truncated with
+a one-shot WARN).
 
 > **About the trace_id semantics.** `trace_id` is a correlation token
 > — it ties one logical request together across SDK logs, server-side

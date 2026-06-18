@@ -55,13 +55,11 @@ async def test_get_config_abtest_hit(cfg_servicer, ab_servicer, running_servers)
     cfg_servicer.set_pull_snapshot(
         make_snapshot("ns1", 1, 1, {"k": (1, {1: "full", 2: "ab-v2"})})
     )
+    # D3: SDK no longer emits ExposureEvent; we only check that the
+    # abtest-resolved version reaches GetConfig. The deprecated `exposures`
+    # field is retained on the wire (D1) but server永不再填充, so the
+    # response carries config_flat_kv only.
     resp = make_exp_result({"k": 2})
-    ex = resp.exposures.add()
-    ex.key = "k"
-    ex.version = 2
-    ex.source = "experiment_group"
-    ex.experiment_id = "100"
-    ex.group_id = "200"
     ab_servicer.set_response("ns1", resp)
 
     cli = await init(

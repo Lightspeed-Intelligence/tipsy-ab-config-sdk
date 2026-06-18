@@ -8,6 +8,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed (BREAKING)
+
+- `Config.exposure_sink`, `Config.exposure_dedup_ttl`, class `ExposureSink`,
+  class `ExposureEvent`, internal `ExposureEmitter`. The Python SDK no
+  longer emits exposure events on `get_config`. Use the upstream
+  experiment-result data report channel instead.
+- `GetExperimentResultResponse.exposures` is retained on the proto wire
+  for backward compatibility but is never populated by the server.
+
+### Added
+
+- `GetExperimentResultResponse.gray_hits` (`repeated GrayReleaseHit`) —
+  populated when `display_type==EACH_EXPERIMENT_GROUP` and
+  `experiment_type ∈ {CONFIG_VERSION, ALL}`; otherwise an empty list.
+
 ## [0.3.0] - 2026-06-18
 
 ### Changed

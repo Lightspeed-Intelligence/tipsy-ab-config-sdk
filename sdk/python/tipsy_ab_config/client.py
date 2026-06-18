@@ -4,13 +4,13 @@ Mirrors ``sdk/go/tipsyabconfig/sdk.go`` with asyncio semantics:
 
 - :func:`init` is an async factory that constructs the gRPC channels,
   performs the startup PullAll-per-ns sweep, and starts background tasks
-  for ``Subscribe`` + fallback ``PullAll`` + exposure draining. It also
-  resolves the project default namespace once (Config override or the
+  for ``Subscribe`` + fallback ``PullAll``. It also resolves the project
+  default namespace once (Config override or the
   ``PROJECT_DEFAULT_NAMESPACE`` env var; decision A-3).
 - ``Client.get_config_static`` is synchronous (pure cache read).
 - ``Client.get_config`` is async; it resolves the namespace (explicit >
-  default > NamespaceRequired), awaits the per-ns memoised
-  ``GetExperimentResult`` result, and fires the exposure (non-blocking).
+  default > NamespaceRequired) and awaits the per-ns memoised
+  ``GetExperimentResult`` result.
 - ``Client.new_abtest_context`` is synchronous: per design 04 §B.2 it eagerly
   pre-fetches ONLY the prefetch namespace (explicit-or-default) via one
   ``GetExperimentResult`` task; other namespaces are fetched lazily and
@@ -18,8 +18,7 @@ Mirrors ``sdk/go/tipsyabconfig/sdk.go`` with asyncio semantics:
 - ``Client.get_experiment_result`` is the thin client that exposes every
   wire parameter (namespace / user_info / layer_ids / type / display) for
   custom_params results (design 04 §B.6).
-- ``Client.close`` cancels background tasks, drains the exposure queue,
-  and closes the gRPC channels.
+- ``Client.close`` cancels background tasks and closes the gRPC channels.
 """
 
 from __future__ import annotations
@@ -64,7 +63,6 @@ from .exceptions import (
     SDKClosed,
     StartupPullFailed,
 )
-from .exposure import ExposureEmitter, ExposureSink
 from .metrics import Metrics
 
 # defaultNamespaceEnvVar is the environment variable the SDK reads ONCE at init
@@ -119,8 +117,6 @@ class Config:
     startup_fail_open: bool = False
     token: str = ""
     token_provider: Optional[Callable[[], Awaitable[str]]] = None
-    exposure_sink: Optional[ExposureSink] = None
-    exposure_dedup_ttl: float = 300.0
     max_recv_message_size: int = 512 * 1024 * 1024
     max_send_message_size: int = 512 * 1024 * 1024
     # ``default_namespace``, when non-empty, overrides the value read from the
@@ -240,7 +236,6 @@ class Client:
         metrics: Metrics,
         config_transport: Any,
         abtest_transport: Optional[Any],
-        exposure: ExposureEmitter,
         auth_plugin: Optional[_TokenCache],
         config_channel: Optional["grpc.aio.Channel"] = None,
         abtest_channel: Optional["grpc.aio.Channel"] = None,
@@ -266,7 +261,6 @@ class Client:
         # owns). An injected ``Config.http_client`` is NOT stored here so
         # ``aclose`` leaves its lifecycle to the caller.
         self._owned_http_client = owned_http_client
-        self._exposure = exposure
         self._auth = auth_plugin
         self._tasks: List[asyncio.Task] = []
         self._closed = False
@@ -350,7 +344,7 @@ class Client:
     ) -> Optional[str]:
         """Return the active full-release value for ``(ns, key)``.
 
-        Synchronous; no abtest call; no exposure event. Use for service-
+        Synchronous; no abtest call. Use for service-
         level / no-user-context paths.  Returns ``default`` on cache miss.
         """
         if self._closed:
@@ -422,13 +416,6 @@ class Client:
         if ab_version is not None and ab_version != 0:
             value = self._cache.value_of(resolved_ns, key, ab_version)
             if value is not None:
-                self._exposure.emit(
-                    ctx.user_id,
-                    resolved_ns,
-                    key,
-                    ab_version,
-                    abresult.exposures,
-                )
                 logger.debug(
                     "get_config hit (abtest)",
                     extra={
@@ -439,7 +426,7 @@ class Client:
                     },
                 )
                 return value
-            # ab → full fallback (no exposure; design §B.3 / M6).
+            # ab → full fallback (design §B.3 / M6).
             self._metrics.inc_abtest_fallback(resolved_ns)
             logger.warning(
                 "tipsy_ab_config: ab version missing in local cache; falling back to full",
@@ -569,7 +556,6 @@ class Client:
                 ns,
                 _ComputeResult(
                     key_versions={str(k): int(v) for k, v in kv.items()},
-                    exposures=[],
                 ),
             )
         return ctx
@@ -592,8 +578,9 @@ class Client:
         wire parameter (namespace / user_info / layer_ids / experiment_type /
         display_type) so business code can fetch custom_params results (or
         per-group results) directly. Unlike :meth:`get_config` it does NOT
-        memoise into an AbtestContext, does NOT touch the local config cache,
-        and does NOT emit exposures — it returns the raw proto response.
+        memoise into an AbtestContext and does NOT touch the local config
+        cache — it returns the raw proto response so business code can read
+        ``config_flat_kv`` / ``groups`` / ``gray_hits`` directly.
 
         Namespace resolution mirrors :meth:`get_config` (explicit > default >
         :class:`NamespaceRequired`; unsubscribed > :class:`NamespaceNotSubscribed`).
@@ -640,8 +627,8 @@ class Client:
         ``getExperimentResultForNamespace``.
 
         ``trace_id`` is forwarded verbatim onto the proto request so the SDK
-        log line, the server log line and any downstream exposure all carry
-        the same identifier (sdk-trace-id §5).
+        log line, the server log line and any downstream report channel all
+        carry the same identifier (sdk-trace-id §5).
         """
         if self._abtest_tr is None:
             self._metrics.inc_abtest_fallback(ns)
@@ -679,7 +666,6 @@ class Client:
             return _EMPTY_RESULT
         return _ComputeResult(
             key_versions={str(k): int(v) for k, v in resp.config_flat_kv.items()},
-            exposures=list(resp.exposures),
         )
 
     # ---- background loops ----
@@ -851,9 +837,6 @@ class Client:
         if self._tasks:
             with contextlib.suppress(Exception):
                 await asyncio.gather(*self._tasks, return_exceptions=True)
-        # Drain exposure.
-        with contextlib.suppress(Exception):
-            await self._exposure.aclose()
         # Close gRPC channels (gRPC mode only; ``None`` in HTTP mode).
         if self._config_channel is not None:
             with contextlib.suppress(Exception):
@@ -960,12 +943,6 @@ async def _init_grpc(cfg: Config) -> Client:
         else None
     )
 
-    exposure = ExposureEmitter(
-        sink=cfg.exposure_sink,
-        ttl_seconds=cfg.exposure_dedup_ttl,
-    )
-    await exposure.start()
-
     client = Client(
         cfg=cfg,
         cache=cache,
@@ -974,7 +951,6 @@ async def _init_grpc(cfg: Config) -> Client:
         abtest_transport=(
             _GrpcAbtestTransport(abtest_stub) if abtest_stub is not None else None
         ),
-        exposure=exposure,
         auth_plugin=auth_plugin,
         config_channel=config_channel,
         abtest_channel=abtest_channel,
@@ -1058,19 +1034,12 @@ async def _init_http(cfg: Config) -> Client:
         else None
     )
 
-    exposure = ExposureEmitter(
-        sink=cfg.exposure_sink,
-        ttl_seconds=cfg.exposure_dedup_ttl,
-    )
-    await exposure.start()
-
     client = Client(
         cfg=cfg,
         cache=cache,
         metrics=metrics,
         config_transport=config_tr,
         abtest_transport=abtest_tr,
-        exposure=exposure,
         auth_plugin=auth_plugin,
         owned_http_client=owned_http_client,
     )

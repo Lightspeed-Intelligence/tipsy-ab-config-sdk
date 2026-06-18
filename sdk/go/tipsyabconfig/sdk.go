@@ -102,15 +102,6 @@ type Config struct {
 	// Logger is the structured logger; defaults to slog.Default().
 	Logger *slog.Logger
 
-	// ExposureSink, when non-nil, receives every emitted Exposure event.
-	// The default sink logs at INFO level. Hook this to push to Kafka /
-	// HTTP gateway in production.
-	ExposureSink ExposureSink
-
-	// ExposureDedupTTL is the per-process exposure dedup window (default
-	// 5 minutes, per design §9.2).
-	ExposureDedupTTL time.Duration
-
 	// MaxRecvMessageSize / MaxSendMessageSize override the 512 MB defaults
 	// (backend §4.4.1).
 	MaxRecvMessageSize int
@@ -186,9 +177,6 @@ func (c *Config) applyDefaults() {
 	if c.AbtestTimeout <= 0 {
 		c.AbtestTimeout = 1500 * time.Millisecond
 	}
-	if c.ExposureDedupTTL <= 0 {
-		c.ExposureDedupTTL = 5 * time.Minute
-	}
 	if c.MaxRecvMessageSize <= 0 {
 		c.MaxRecvMessageSize = 512 * 1024 * 1024
 	}
@@ -249,8 +237,6 @@ type Client struct {
 	// resolves to defaultNamespace and surfaces a validation error to the
 	// caller via resolveNamespace.
 	defaultNsSubscribed bool
-
-	exposure *exposureEmitter
 
 	// health is the mutex-protected background-link health state surfaced via
 	// Health and updated by fireBackgroundError.
@@ -371,7 +357,6 @@ func Init(ctx context.Context, cfg Config) (*Client, error) {
 				"default_namespace", cfg.DefaultNamespace, "namespaces", subs)
 		}
 	}
-	cli.exposure = newExposureEmitter(cfg.ExposureSink, cfg.ExposureDedupTTL, cfg.Logger)
 
 	// Build transports. gRPC mode dials gRPC connections and wraps the
 	// generated clients; HTTP mode builds net/http transports and dials no gRPC
@@ -466,8 +451,6 @@ func Init(ctx context.Context, cfg Config) (*Client, error) {
 	}
 	cli.wg.Add(1)
 	go cli.runPullLoop()
-	cli.wg.Add(1)
-	go cli.exposure.run(rootCtx, &cli.wg)
 
 	return cli, nil
 }
@@ -517,8 +500,8 @@ func (c *Client) resolveNamespace(ns string) (string, error) {
 // Metrics returns the per-process counter handle. Safe for concurrent use.
 func (c *Client) Metrics() *Metrics { return c.metrics }
 
-// Close stops background loops, closes gRPC connections, and waits for
-// in-flight exposures to drain.
+// Close stops background loops, closes gRPC connections, and releases any
+// SDK-owned HTTP client idle connections.
 func (c *Client) Close() error {
 	c.closedOnce.Do(func() {
 		c.rootCancel()
