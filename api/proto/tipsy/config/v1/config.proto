@@ -1,0 +1,198 @@
+syntax = "proto3";
+
+package tipsy.config.v1;
+
+option go_package = "github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk/api/gen/go/tipsy/config/v1;configv1";
+
+// ConfigService is the read entrypoint for business SDKs AND the abtest
+// module. It carries:
+//
+//   - PullAll / Subscribe:               business SDK ⇄ config (PullAll =
+//     synchronous full snapshot, Subscribe = server-streaming push of new
+//     snapshots when either business_snapshot_seq OR experiment_snapshot_seq
+//     advances).
+//   - ListNamespacesByKind / ListConfigKeys / ListConfigVersions: abtest
+//     module reads config metadata over gRPC (no cross-schema SQL).
+//   - NotifyBusinessNamespaceChange: abtest module signals config that an
+//     experiment / whitelist write happened ⇒ config bumps an in-memory
+//     experiment_snapshot_seq tracker, re-assembles the snapshot, pushes to
+//     local Subscribe streams, AND fans out NodeInternal.Notify to sibling
+//     config nodes. Fire-and-forget.
+//
+// See config-platform-backend.md §4.1 for the canonical contract; this proto
+// is the source of truth for field tags and types.
+service ConfigService {
+  // PullAll returns one NamespaceSnapshot per requested namespace. The
+  // snapshot assembly path joins release_full (config DB) with abtest's
+  // GetPossibleVersionsAndExperimentSnapshotSeq via gRPC; on abtest RPC
+  // failure config falls back to a degraded snapshot containing only
+  // full-release versions + experiment_snapshot_seq = 0.
+  rpc PullAll(PullAllRequest) returns (PullAllResponse);
+
+  // Subscribe is a server-streaming push channel. The client declares the
+  // double seq pair it already has cached in known_seqs; the server emits a
+  // ConfigUpdateEvent (containing a fresh NamespaceSnapshot) on the initial
+  // connection for any ns that is stale, and again whenever EITHER seq
+  // advances for a subscribed ns.
+  rpc Subscribe(SubscribeRequest) returns (stream ConfigUpdateEvent);
+
+  // ListNamespacesByKind enumerates business namespaces (the only kind in
+  // v0.8) from namespace_registry. Used by abtest at startup + every 5s to
+  // discover new business ns.
+  rpc ListNamespacesByKind(ListNamespacesByKindRequest)
+      returns (ListNamespacesByKindResponse);
+
+  // ListConfigKeys / ListConfigVersions feed the abtest console UI select
+  // panel and the application-level version-existence check abtest performs
+  // when writing experiments / whitelists.
+  rpc ListConfigKeys(ListConfigKeysRequest) returns (ListConfigKeysResponse);
+  rpc ListConfigVersions(ListConfigVersionsRequest)
+      returns (ListConfigVersionsResponse);
+
+  // NotifyBusinessNamespaceChange is invoked by abtest after every write
+  // that may change "possible versions" for that ns (start / pause / resume
+  // / complete / archive / new whitelist / whitelist offline). It is
+  // fire-and-forget: config returns OK quickly, then asynchronously
+  // re-assembles the snapshot and pushes to subscribers / sibling nodes.
+  rpc NotifyBusinessNamespaceChange(NotifyBusinessNamespaceChangeRequest)
+      returns (NotifyBusinessNamespaceChangeResponse);
+
+  // GetDynamicConfig returns already-resolved config values for a user. The
+  // server internally runs GetExperimentResult(config_version) + gray + full
+  // release and merges per the resolution algorithm (design 03 §2.2). For
+  // external callers with no local cache.
+  rpc GetDynamicConfig(GetDynamicConfigRequest) returns (GetDynamicConfigResponse);
+
+  // GetStaticConfig returns the full-release value of each key (user-agnostic).
+  rpc GetStaticConfig(GetStaticConfigRequest) returns (GetStaticConfigResponse);
+}
+
+// Value is the tagged-union representation of one user_attrs entry (mirrors
+// tipsy.abtest.v1.Value; redeclared here so config.proto is self-contained).
+message Value {
+  oneof v {
+    string  s = 1;
+    int64   i = 2;
+    double  d = 3;
+    bool    b = 4;
+  }
+}
+
+message GetDynamicConfigRequest {
+  string namespace = 1;                 // defaulted by the SDK
+  string user_id   = 2;
+  map<string, Value> user_attrs = 3;
+  repeated string keys = 4;             // requested key names; empty = all keys
+  string trace_id = 5;                  // optional; empty ⇒ server fills uuid.New()
+}
+message GetDynamicConfigResponse {
+  map<string, string> values = 1;       // key_name → resolved value
+}
+
+message GetStaticConfigRequest {
+  string namespace = 1;
+  repeated string keys = 2;
+  string trace_id = 3;                  // optional; empty ⇒ server fills uuid.New()
+}
+message GetStaticConfigResponse {
+  map<string, string> values = 1;       // key_name → full-release value
+}
+
+enum NamespaceKind {
+  NAMESPACE_KIND_UNSPECIFIED = 0;
+  NAMESPACE_KIND_BUSINESS    = 1;
+}
+
+message PullAllRequest  {
+  repeated string namespaces = 1;
+  string trace_id = 2;                  // optional; empty ⇒ server fills uuid.New()
+}
+message PullAllResponse { repeated NamespaceSnapshot snapshots = 1; }
+
+message SubscribeRequest {
+  repeated string namespaces = 1;
+  // map key = namespace, value = the seq pair the client already has
+  // cached. Server omits push for ns whose double seq is already current.
+  map<string, NamespaceSeqs> known_seqs = 2;
+  // trace_id describes "which subscribe-establish action"; per-event pushes
+  // do not carry their own trace_id (see design.md §2 Subscribe semantics).
+  string trace_id = 3;
+}
+
+message NamespaceSeqs {
+  int64 business_snapshot_seq   = 1;
+  int64 experiment_snapshot_seq = 2;
+}
+
+// NamespaceSnapshot is the full read-view delivered to business SDK callers.
+// Both seqs MUST be populated; experiment_snapshot_seq = 0 marks the
+// degraded path (abtest RPC unavailable, see §4.1.1).
+message NamespaceSnapshot {
+  string namespace               = 1;
+  int64  business_snapshot_seq   = 2;
+  int64  experiment_snapshot_seq = 3;
+  repeated KeyState keys         = 4;
+}
+
+message KeyState {
+  string key = 1;
+  // Active full-release version id, if any. Optional because a key may
+  // have config_version rows but no active release.
+  optional int64 full_release_version = 2;
+  // version_id → value(text). Includes the full-release version (if any)
+  // plus every version that abtest reports as "possibly applicable"
+  // (active whitelist + running/paused experiment refs).
+  map<int64, string> versions = 3;
+}
+
+message ConfigUpdateEvent {
+  oneof payload {
+    NamespaceSnapshot snapshot = 1;
+    // Reserved for future streaming extensions.
+  }
+}
+
+message ListNamespacesByKindRequest  { NamespaceKind kind = 1; }
+message ListNamespacesByKindResponse { repeated string namespaces = 1; }
+
+message ListConfigKeysRequest {
+  string namespace = 1;
+  int32  page      = 2;  // 1-based
+  int32  page_size = 3;  // default 50
+}
+message ListConfigKeysResponse {
+  message ConfigKeyInfo {
+    int64  id           = 1;
+    string key          = 2;
+    string category     = 3;
+    string sub_category = 4;
+    string description  = 5;
+  }
+  repeated ConfigKeyInfo keys = 1;
+  int32 total_count = 2;
+}
+
+message ListConfigVersionsRequest {
+  int64 key_id    = 1;
+  int32 page      = 2;
+  int32 page_size = 3;
+}
+message ListConfigVersionsResponse {
+  message ConfigVersionInfo {
+    int64  id              = 1;
+    int64  version_no      = 2;
+    string change_note     = 3;
+    string operator        = 4;
+    int64  created_at_unix = 5;
+  }
+  repeated ConfigVersionInfo versions = 1;
+  int32 total_count = 2;
+}
+
+message NotifyBusinessNamespaceChangeRequest {
+  string business_namespace = 1;
+  // Hint signal only; receiver still re-reads from abtest via gRPC. Use
+  // for logs / debug. Optional in case abtest doesn't want to expose it.
+  optional int64 abtest_experiment_snapshot_seq = 2;
+}
+message NotifyBusinessNamespaceChangeResponse {}

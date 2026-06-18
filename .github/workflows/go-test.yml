@@ -1,0 +1,55 @@
+name: Go test
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.0'
+
+      # Source the in-tree module list from go.work (single source of truth in
+      # this repo since go.work IS committed). jq is preinstalled on ubuntu-latest.
+      - name: Discover modules
+        id: modules
+        run: |
+          mods=$(go work edit -json | jq -r '.Use[].DiskPath' | tr '\n' ' ')
+          echo "list=$mods" >> "$GITHUB_OUTPUT"
+
+      - name: go vet
+        run: |
+          set -euo pipefail
+          for m in ${{ steps.modules.outputs.list }}; do
+            echo "==> vet $m"
+            (cd "$m" && go vet ./...)
+          done
+
+      - name: go test
+        run: |
+          set -euo pipefail
+          for m in ${{ steps.modules.outputs.list }}; do
+            if [ -z "$(find "$m" -name '*_test.go' -print -quit)" ]; then
+              echo "==> skip $m (no _test.go)"
+              continue
+            fi
+            race=""
+            if [ "$m" = "./sdk/go/tipsyabconfig" ]; then race="-race"; fi
+            echo "==> test $m $race"
+            (cd "$m" && go test ./... -count=1 $race -timeout=240s)
+          done
+
+      # proto drift check: regenerate and diff. Mismatch means either the
+      # checked-in *.pb.go is stale OR the local toolchain (protoc /
+      # protoc-gen-go / protoc-gen-go-grpc) differs from the canonical
+      # versions documented at the top of scripts/gen-proto.sh.
+      - name: Proto drift check
+        run: |
+          bash scripts/gen-proto.sh
+          git diff --exit-code -- api/gen/go

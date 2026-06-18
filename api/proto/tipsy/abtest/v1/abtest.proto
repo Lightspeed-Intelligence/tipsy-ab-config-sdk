@@ -1,0 +1,120 @@
+syntax = "proto3";
+
+package tipsy.abtest.v1;
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/struct.proto";
+
+option go_package = "github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk/api/gen/go/tipsy/abtest/v1;abtestv1";
+
+// AbtestService is the gRPC entry point for the abtest module (v2).
+//
+//   - GetExperimentResult: business SDK ⇄ abtest. Given (namespace, user_id,
+//     user_attrs, layer_ids?, experiment_type, display_type) it walks the
+//     topology tree and returns the experiment / whitelist hits + exposures.
+//   - GetPossibleVersionsAndExperimentSnapshotSeq: config ⇄ abtest (unchanged).
+//   - GetExperimentSnapshotSeq: config ⇄ abtest. Lightweight "just the seq"
+//     read of namespace_experiment_snapshot_seq — returns only the int64 seq
+//     (no possibleVersions, no full-table scans) for config's snapshot-cache
+//     freshness check.
+service AbtestService {
+  rpc GetExperimentResult(GetExperimentResultRequest)
+      returns (GetExperimentResultResponse);
+
+  rpc GetPossibleVersionsAndExperimentSnapshotSeq(
+      GetPossibleVersionsAndExperimentSnapshotSeqRequest)
+      returns (GetPossibleVersionsAndExperimentSnapshotSeqResponse);
+
+  rpc GetExperimentSnapshotSeq(GetExperimentSnapshotSeqRequest)
+      returns (GetExperimentSnapshotSeqResponse);
+}
+
+// Value is the tagged-union representation of one user_attrs entry.
+message Value {
+  oneof v {
+    string  s = 1;
+    int64   i = 2;
+    double  d = 3;
+    bool    b = 4;
+  }
+}
+
+// ExperimentType filters which experiment results are returned.
+enum ExperimentType {
+  EXPERIMENT_TYPE_UNSPECIFIED    = 0; // treated as default custom_params
+  EXPERIMENT_TYPE_CONFIG_VERSION = 1;
+  EXPERIMENT_TYPE_CUSTOM_PARAMS  = 2;
+  EXPERIMENT_TYPE_ALL            = 3;
+}
+
+// ResultDisplayType selects the result shape (flat_kv vs per-group).
+enum ResultDisplayType {
+  RESULT_DISPLAY_TYPE_UNSPECIFIED           = 0; // treated as default flat_kv
+  RESULT_DISPLAY_TYPE_FLAT_KV               = 1;
+  RESULT_DISPLAY_TYPE_EACH_EXPERIMENT_GROUP = 2;
+}
+
+message GetExperimentResultRequest {
+  string namespace = 1;                  // required
+  string user_id   = 2;                  // required (UID drives hashing)
+  map<string, Value> user_attrs = 3;     // userInfo for admission
+  repeated string layer_ids = 4;         // optional; empty = all layers
+  ExperimentType experiment_type = 5;    // optional; default custom_params
+  ResultDisplayType display_type = 6;    // optional; default flat_kv
+  string trace_id = 7;                   // optional; empty ⇒ server fills uuid.New()
+}
+
+message GetExperimentResultResponse {
+  // flat_kv mode: split to avoid int64 precision loss (M1).
+  //   config_flat_kv: config_version experiment/gray hits → key_name → version_id.
+  //   custom_flat_kv: custom_params experiment hits → key → arbitrary JSON value.
+  map<string, int64>     config_flat_kv = 1;
+  google.protobuf.Struct custom_flat_kv = 2;
+  // each_experiment_group mode: one element per hit experiment group.
+  repeated ExperimentGroupResult groups = 3;
+  repeated Exposure exposures = 4;
+  google.protobuf.Timestamp computed_at = 5;
+}
+
+message ExperimentGroupResult {
+  string layer_id      = 1;   // direct parent layer (not earlier ancestors)
+  string experiment_id = 2;
+  string group_id      = 3;
+  ExperimentType experiment_type = 4;
+  // config_version: params as key_name → version_id (params_versions).
+  // custom_params: params as arbitrary JSON (params_custom).
+  map<string, int64>     params_versions = 5;
+  google.protobuf.Struct params_custom   = 6;
+}
+
+message Exposure {
+  string key     = 1;
+  // config_version: version_id (int64); custom_params: 0 (no version semantics).
+  int64  version = 2;
+  string source  = 3;                       // "whitelist" | "experiment_group"
+  optional string experiment_id     = 4;    // string ids (A-1)
+  optional string group_id          = 5;
+  optional string experiment_status = 6;
+  optional int64  release_id        = 7;    // gray release_whitelist.id (int64)
+}
+
+message GetPossibleVersionsAndExperimentSnapshotSeqRequest {
+  string namespace = 1;
+}
+
+message GetPossibleVersionsAndExperimentSnapshotSeqResponse {
+  map<int64, VersionList> possible_versions = 1;
+  int64 experiment_snapshot_seq = 2;
+}
+
+message GetExperimentSnapshotSeqRequest {
+  string namespace = 1;
+}
+
+message GetExperimentSnapshotSeqResponse {
+  int64 experiment_snapshot_seq = 1;
+}
+
+message VersionList {
+  repeated int64 version_ids = 1;
+}

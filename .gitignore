@@ -1,0 +1,40 @@
+# Go workspace sum file — not committed (regenerated on `go work sync`).
+# Note: go.work IS committed in this multi-module SDK repo.
+go.work.sum
+
+# Go build / test artifacts
+*.test
+coverage.out
+*.out
+
+# Native shared libraries
+*.so
+*.dylib
+*.dll
+
+# Vendoring (we don't vendor)
+vendor/
+
+# IDE
+.idea/
+.vscode/
+
+# Build / dist
+dist/
+build/
+
+# Per-module example/driver binaries (produced by `go build .` from the
+# module root; leading slash ensures only the binary in that location is
+# matched, not any source files named `example`).
+/sdk/go/example/example
+
+# Python build / test artifacts
+*.egg-info/
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+
+# macOS
+.DS_Store
