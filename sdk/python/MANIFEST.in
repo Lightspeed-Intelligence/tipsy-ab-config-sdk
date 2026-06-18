@@ -1,0 +1,12 @@
+include README.md
+include LICENSE
+include CHANGELOG.md
+include tipsy_ab_config/py.typed
+recursive-include tipsy_ab_config/_proto *.py
+global-exclude __pycache__
+global-exclude *.pyc
+global-exclude *.pyo
+prune .venv
+prune .pytest_cache
+prune tipsy_ab_config.egg-info
+prune tests/__pycache__

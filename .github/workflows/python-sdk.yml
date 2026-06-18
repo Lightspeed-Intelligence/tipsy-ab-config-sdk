@@ -1,0 +1,116 @@
+name: python-sdk
+on:
+  pull_request:
+    paths:
+      - 'sdk/python/**'
+      - 'api/proto/**'
+      - 'scripts/gen-proto-py.sh'
+      - '.github/workflows/python-sdk.yml'
+  push:
+    branches: [main]
+    tags: ['python-sdk/v*']
+
+jobs:
+  # Skip non-release jobs for unrelated pushes to main. Tag-pushes are NOT
+  # filtered — release must always run when a python-sdk/v* tag lands.
+  test:
+    if: github.event_name == 'pull_request' || (github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/'))
+    strategy:
+      matrix:
+        python-version: ['3.10', '3.11', '3.12', '3.13']
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '${{ matrix.python-version }}' }
+      - run: pip install -e 'sdk/python[dev,fastapi,http]'
+      - run: cd sdk/python && pytest -q   # 默认 addopts 排除 packaging marker
+
+  proto-drift:
+    # R2-S1: drift check is single-version (3.13) because grpcio-tools output
+    # is Python-runtime-independent; a matrix would burn cycles for no signal.
+    if: github.event_name == 'pull_request' || (github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/'))
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.13' }
+      - run: pip install 'grpcio-tools==1.66.2'   # 与 dev extras 完全一致
+      - run: bash scripts/gen-proto-py.sh
+      - run: git diff --exit-code -- sdk/python/tipsy_ab_config/_proto
+
+  build:
+    needs: [test, proto-drift]
+    # PR/main-push: build only when tests + drift both pass.
+    # Tag-push: build runs unconditionally so release has artifacts.
+    # R2-F3: tag pattern tightened with `contains(github.ref, '.')` so an
+    # accidental `python-sdk/vexperimental` won't auto-release.
+    if: always() && ((needs.test.result == 'success' && needs.proto-drift.result == 'success') || (startsWith(github.ref, 'refs/tags/python-sdk/v') && contains(github.ref, '.')))
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.13' }
+      - run: pip install -e 'sdk/python[dev]'
+      - run: cd sdk/python && python -m build
+      - run: cd sdk/python && twine check dist/*
+      # R2-S3: --override-ini drops pytest addopts so the packaging marker
+      # selector is unambiguous regardless of future pytest precedence drift.
+      - run: cd sdk/python && pytest -m packaging --override-ini="addopts=" -q
+      - name: smoke install on clean venv (3.13)
+        run: |
+          python -m venv /tmp/v
+          /tmp/v/bin/pip install sdk/python/dist/*.whl
+          # On tag push, assert __version__ matches the SemVer suffix of the
+          # tag (strip the `python-sdk/v` prefix). On non-tag pushes, just
+          # assert that __version__ is importable and matches pyproject —
+          # we don't have a ground-truth version to compare to.
+          /tmp/v/bin/python - <<'PY'
+          import re, sys
+          import tipsy_ab_config as p
+          v = p.__version__
+          assert re.fullmatch(r"\d+\.\d+\.\d+([abrc].*)?", v), f"unexpected __version__: {v!r}"
+          import os
+          ref = os.environ.get("GITHUB_REF_NAME", "")
+          prefix = "python-sdk/v"
+          if ref.startswith(prefix):
+              expected = ref[len(prefix):]
+              assert v == expected, f"__version__={v!r} does not match tag suffix {expected!r}"
+              print(f"smoke ok: __version__={v} matches tag {ref}")
+          else:
+              print(f"smoke ok: __version__={v} (no tag to match against)")
+          PY
+        env:
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+      - uses: actions/upload-artifact@v4
+        with: { name: dist, path: sdk/python/dist/* }
+
+  release:
+    # R2-F3: same tightened pattern as build's tag branch.
+    # Use `always()` + an explicit `needs.build.result == 'success'` guard
+    # rather than `success()`. Reason: `success()` returns false when any
+    # transitive upstream is skipped (test/proto-drift are skipped on
+    # tag-push by design), even though our direct dependency `build` is
+    # success. `always()` short-circuits the implicit-success propagation,
+    # and the explicit comparison makes the build-success requirement clear.
+    # Previous attempts (d81e39a, 428a9a6) both skipped release silently.
+    if: always() && needs.build.result == 'success' && startsWith(github.ref, 'refs/tags/python-sdk/v') && contains(github.ref, '.')
+    needs: [build]
+    permissions: { contents: write }
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { name: dist, path: dist }
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          body_path: sdk/python/CHANGELOG.md
+          # R2-S4: rc/alpha/beta tags ship as prerelease — never "latest".
+          # Strip the `python-sdk/v` prefix before pattern matching: the raw
+          # ref_name already contains a dash (the literal "python-sdk-" in
+          # the tag namespace), which would otherwise trigger prerelease=true
+          # for every release including stable v0.1.0. Use the SemVer suffix
+          # only (e.g. `0.1.0` vs `0.1.0rc1`).
+          prerelease: ${{ contains(github.ref_name, 'rc') || contains(github.ref_name, 'alpha') || contains(github.ref_name, 'beta') }}
