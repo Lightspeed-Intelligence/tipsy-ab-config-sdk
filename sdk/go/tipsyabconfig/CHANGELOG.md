@@ -11,7 +11,7 @@ the tag MUST be prefixed with the relative module path). Consumers
 install via:
 
 ```bash
-go get github.com/Lightspeed-Intelligence/tipsy-ab-config/sdk/go/tipsyabconfig@vX.Y.Z
+go get github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk/sdk/go/tipsyabconfig@vX.Y.Z
 ```
 
 The SDK transitively pulls `api/gen/go` at the version pinned in
