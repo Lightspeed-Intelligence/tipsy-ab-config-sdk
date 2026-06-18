@@ -122,18 +122,29 @@
 
 #### 结论
 
-- **RTS 的 232ms wall-clock 中，~99.8% 不是服务端在算**——服务端本身在低并发空载下 p50 < 1ms。
+- **RTS 的 232ms wall-clock 中，~99.8% 不是服务端在算**——服务端本身在低并发空载下 p50 ≈ 0.4 ms。
 - DEV 的 232ms 几乎全是 **客户端 → Cloudflare 边缘 + Cloudflare → 香港/海外源站 + 反向飞回** 的网络飞行时间。这与「CN→CF→海外」公网 RTT 量级（180-280ms）吻合。
-- **同集群内网理想 RTS**：根据本机实测，单实例空载情况下 < 1ms；考虑业务真实并发（k8s 同 namespace 调用 + 0.2–1ms RTT + cache hit/miss + 多实例 PG 锁竞争），生产内网 RTS 预期 **p50 < 5ms，p99 < 20ms**——也就是把现在 232ms 中 99% 的 wall-clock 砍掉。
-- 本机数据**不能直接套用到跨可用区或跨 region 内网**。生产内网 RTT 可能在 0.5–2ms 量级，PG 主从同步、cache miss、其他 RPC 排队都会让真实 p99 走高，但不至于把 sub-ms 级处理拖到 100ms 级别。
+- **同集群内网理想 RTS 基线**：本机实测单实例空载 p50 / p95 / p99 = **0.4 / 0.5 / 0.6 ms**。服务端处理（auth + abtest cache lookup + bucket compute + protojson 编码）量级已经足够低，**没有进一步埋点优化的必要**。
+- **不要把饱和数据当作"理想"基线**：把单实例打到 21k QPS 饱和时观测到的 p50 5 ms / p99 36 ms 是"单实例处理上限被排队拖到的延迟"，**不代表生产正常负载下的服务端处理时间**。生产是水平扩展 + 负载均衡，单实例从不会被打到那个水位，所以正常负载下应该接近 0.4 ms 基线，而不是 5 ms。
+- 本机数据**不能直接套用到跨可用区或跨 region 内网**。生产内网 RTT 可能在 0.5–2 ms 量级（vs loopback 50 µs），PG 同 VPC 而非同 docker network、可能引入 Redis cache 同步，都会让真实 p99 略高于 1 ms 但不会到 100ms 级别。
 
-#### 本对照测试的 caveat（必须知道，否则会过度乐观）
+#### 本对照测试的 caveat（必须知道，否则会过度乐观或过度悲观）
 
 1. **本机 loopback RTT 约 50 µs**，生产同 k8s namespace 调用 RTT 约 0.2–1 ms（仍可忽略，不影响结论的数量级）。
 2. **本机 PG 与 app 在同 docker network**，几乎零网络延迟；生产 PG 通常隔 1ms 以内同 VPC。
 3. **本机是单实例 + 无 Redis**（服务端日志 `REDIS_ADDR not set; running single-node`），没有多实例 cache 同步成本；生产多实例下 PullAll/Subscribe 链路上多一跳。
-4. **本机负载量级有限（21k QPS 单实例饱和）**。生产多实例水平扩展后单实例 QPS 更低，单请求 p50 反而会更低。
+4. **本机负载量级有限（21k QPS 单实例饱和）**。生产多实例水平扩展后**每个实例承载的 QPS 比单机饱和点低得多，p50 应保持在 ~0.4 ms 基线，不会出现 5ms 那种饱和延迟**。
 5. **token 鉴权 / namespace 校验路径同 DEV 一致**（同一份代码），不存在因为本地跳过校验而失真。
+
+#### 附：gRPC 连接复用结论（来自 SDK 源码 sdk.go:407,418 与 client.py:932,934）
+
+SDK 内部为 ConfigService 和 AbtestService **各自独立 dial 一条 `*grpc.ClientConn` / `grpc.aio.Channel`**——即使两个地址相同（DEV 与本机均如此），也是两条 TCP/TLS 长连接、不共享。每条连接内部由 HTTP/2 多路复用所有 RPC：
+
+- ConfigService 那一条：被 PullAll / Subscribe / GetDynamicConfig / GetStaticConfig 复用。
+- AbtestService 那一条：被 GetExperimentResult 复用。
+
+握手成本只在 Init 时付一次（2 次），稳态业务请求基本不存在建连开销——load 数据里 `100% reused`、dns/tcp/tls 三段全 0 ms 是这一点的实证。
+
 
 ### 结论
 
