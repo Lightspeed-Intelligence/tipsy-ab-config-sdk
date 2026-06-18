@@ -20,6 +20,8 @@ bump first, then an SDK tag bump.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-06-19
+
 ### Added
 
 - Auto-enable client-side `round_robin` load balancing when the dial
