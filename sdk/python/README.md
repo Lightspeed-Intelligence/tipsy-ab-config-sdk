@@ -23,6 +23,9 @@ everything goes through `ConfigService.PullAll`/`Subscribe` plus
 > https://github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk/releases
 > (look for tags prefixed `python-sdk/v`).
 
+The SDK is distributed from the **public** `tipsy-ab-config-sdk` repository
+— `pip install` does not require any credential.
+
 ### Find the latest version
 
 The snippets below use the placeholder `python-sdk/vX.Y.Z` — substitute
@@ -33,80 +36,43 @@ the latest stable tag at install time. The canonical lookups are:
   — top-most non-prerelease entry whose tag begins with `python-sdk/v`.
 - **CHANGELOG**: [`sdk/python/CHANGELOG.md`](./CHANGELOG.md) — top
   `[X.Y.Z] - <date>` section.
-- **Shell one-liner** (needs `GH_PAT` + `jq`):
+- **Shell one-liner** (needs `jq`; no auth required):
 
   ```bash
-  LATEST_TAG=$(curl -s -H "Authorization: token ${GH_PAT}" \
+  LATEST_TAG=$(curl -s \
     https://api.github.com/repos/Lightspeed-Intelligence/tipsy-ab-config-sdk/releases \
     | jq -r '[.[] | select(.prerelease == false) | select(.tag_name | startswith("python-sdk/v")) | .tag_name] | first')
-  echo "${LATEST_TAG}"   # e.g. python-sdk/v0.2.0
+  echo "${LATEST_TAG}"   # e.g. python-sdk/v0.3.0
   ```
 
   Use `${LATEST_TAG}` inline in the `pip install` commands shown below.
+  In CI, exporting a `GITHUB_TOKEN` (or any GitHub PAT) bumps the
+  unauthenticated 60-req/hr rate limit to 5000 req/hr — useful but **not
+  required** for installation itself.
 
 > Pin the resolved tag in your `requirements.txt` / `pyproject.toml` —
 > do **not** ship `python-sdk/vX.Y.Z` literally, and do **not** rely on a
 > floating ref (`main`, `HEAD`) in production.
 
-### Authentication
-
-The monorepo is **private** on GitHub. Authenticate with a fine-grained
-personal access token (PAT) scoped to `Contents: Read` on
-`Lightspeed-Intelligence/tipsy-ab-config-sdk`.
-
-> Treat the PAT as a secret: store it in CI as an encrypted variable, never
-> commit it to git, and prefer fine-grained PATs over classic tokens.
-
 ### Consumer onboarding (end-to-end)
 
 If you are a downstream service (e.g. `tipsy-studio`) integrating this SDK
-for the first time, follow these steps. Each step assumes the previous one
-succeeded; stop and fix before continuing if any step fails.
+for the first time, follow these steps.
 
-**1. Provision a fine-grained PAT.**
-
-- Owner: an account that has read access to
-  `Lightspeed-Intelligence/tipsy-ab-config-sdk`. Service accounts are
-  preferred over personal accounts so the token survives team changes.
-- Repository access: **only** `Lightspeed-Intelligence/tipsy-ab-config-sdk`.
-- Repository permissions: **`Contents: Read`** (and nothing else).
-- Expiration: longest your security policy allows; calendar a renewal.
-
-**2. Store the PAT as a CI secret.**
-
-Add the token as `GH_PAT` (or any name you prefer — replace `GH_PAT`
-everywhere below to match). Examples:
-
-- GitHub Actions: repository or organization secret `GH_PAT`.
-- GitLab CI: protected variable `GH_PAT`.
-- Other CI: any encrypted/masked secret store.
-
-For local development, set the same env var in your shell (`.envrc`,
-`direnv`, or `export GH_PAT=...` once per session). **Never** echo it
-into logs or commit it to git.
-
-**3. Wire the SDK into your project's dependency list.**
+**1. Wire the SDK into your project's dependency list.**
 
 Pick whichever file your project uses. The line is the same in all of
 them — install via `git+https` against a published tag:
 
 ```text
-tipsy-ab-config @ git+https://${GH_PAT}@github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk.git@python-sdk/vX.Y.Z#subdirectory=sdk/python
+tipsy-ab-config @ git+https://github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk.git@python-sdk/vX.Y.Z#subdirectory=sdk/python
 ```
 
-The `${GH_PAT}` is substituted by your environment before pip parses the
-requirement — both shells and `pip`'s requirement parser accept the
-substitution, but **`pyproject.toml`/`uv`/`poetry`'s lockfile resolvers
-will NOT expand env vars at lock time**. Workarounds, in decreasing order
-of cleanness:
+No credential, no env-var substitution: the repo is public, so both
+`pip`/`requirements.txt` and lockfile-style resolvers (`uv`, `poetry`)
+fetch the tag directly.
 
-- Use `requirements.txt` (env vars expand at install time). Simplest.
-- Use `uv pip install -r requirements.txt` with the env var set.
-- For `pyproject.toml`-only projects (e.g. `uv`/`poetry` natively),
-  configure a credential helper or use the two-step Release-asset
-  download form below — see "Alternative" section.
-
-**4. Verify the install.**
+**2. Verify the install.**
 
 ```bash
 # In your project's venv:
@@ -117,30 +83,29 @@ python -c "import tipsy_ab_config as p; print('SDK version:', p.__version__)"
 
 If this fails, see `## Troubleshooting` below.
 
-**5. Wire the SDK into your application code.**
+**3. Wire the SDK into your application code.**
 
 See `## Quickstart` and `## FastAPI integration` below. The SDK is
 fully async; do not call it from sync code paths without first wrapping
 in a runtime.
 
-**6. (Optional but recommended) Pin the tag in CI.**
+**4. (Recommended) Pin the tag in CI.**
 
-Pin your CI matrix to the exact tag you've validated (the `${LATEST_TAG}`
-you resolved above, e.g. `python-sdk/v0.2.0`). When a new SDK version
-ships, review its `CHANGELOG.md`, then update the tag in
-`requirements.txt` and re-run your test suite — do not let the floating
-tag drift silently.
+Pin your CI matrix to the exact tag you've validated (e.g.
+`python-sdk/v0.3.0`). When a new SDK version ships, review its
+`CHANGELOG.md`, then update the tag in `requirements.txt` and re-run
+your test suite — do not let the tag drift silently.
 
 ### 1) Primary — `git+https` one-liner
 
 ```text
-tipsy-ab-config @ git+https://${GH_PAT}@github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk.git@python-sdk/vX.Y.Z#subdirectory=sdk/python
+tipsy-ab-config @ git+https://github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk.git@python-sdk/vX.Y.Z#subdirectory=sdk/python
 ```
 
 Or in `requirements.txt`:
 
 ```text
-tipsy-ab-config @ git+https://${GH_PAT}@github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk.git@python-sdk/vX.Y.Z#subdirectory=sdk/python
+tipsy-ab-config @ git+https://github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk.git@python-sdk/vX.Y.Z#subdirectory=sdk/python
 ```
 
 Or in `pyproject.toml`:
@@ -148,43 +113,38 @@ Or in `pyproject.toml`:
 ```toml
 [project]
 dependencies = [
-    "tipsy-ab-config @ git+https://${GH_PAT}@github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk.git@python-sdk/vX.Y.Z#subdirectory=sdk/python",
+    "tipsy-ab-config @ git+https://github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk.git@python-sdk/vX.Y.Z#subdirectory=sdk/python",
 ]
 ```
 
-The git client honours basic-auth userinfo in the URL; GitHub Release
-asset URLs do not, which is why this form is the most reliable on private
-repos. Tags use the scheme `python-sdk/v<semver>` (e.g. `python-sdk/vX.Y.Z`).
+Tags use the scheme `python-sdk/v<semver>` (e.g. `python-sdk/vX.Y.Z`).
 
 > **Prerelease tags** (`python-sdk/vX.Y.Zrc1`, `…alpha1`, `…beta1`,
 > `…-suffix`) exist on GitHub Releases too and are marked as prereleases.
 > Do not pin production code to them — they are dry-runs for validating
 > the release pipeline.
 
-### 2) Alternative — two-step Release asset download
+### 2) Alternative — Release asset download
 
-For air-gapped / vendoring scenarios, or for `pyproject.toml`-only
-projects that can't expand `${GH_PAT}` at lock time:
+For air-gapped / vendoring scenarios where you want to mirror the wheel
+into an internal artifact store:
 
 ```bash
 # 0. Resolve the latest tag (see "Find the latest version" above) and
 #    URL-encode it (the slash becomes %2F):
-LATEST_TAG=$(curl -s -H "Authorization: token ${GH_PAT}" \
+LATEST_TAG=$(curl -s \
   https://api.github.com/repos/Lightspeed-Intelligence/tipsy-ab-config-sdk/releases \
   | jq -r '[.[] | select(.prerelease == false) | select(.tag_name | startswith("python-sdk/v")) | .tag_name] | first')
-TAG_PATH="${LATEST_TAG/\//%2F}"   # e.g. python-sdk%2Fv0.2.0
+TAG_PATH="${LATEST_TAG/\//%2F}"   # e.g. python-sdk%2Fv0.3.0
 
-# 1. Look up the asset id once per release (or scrape from the API):
-ASSET_ID=$(curl -sH "Authorization: token $GH_PAT" \
+# 1. Download the wheel directly from the public Release page:
+WHEEL_URL=$(curl -s \
   "https://api.github.com/repos/Lightspeed-Intelligence/tipsy-ab-config-sdk/releases/tags/${TAG_PATH}" \
-  | jq -r '.assets[] | select(.name | endswith(".whl")) | .id')
-echo "wheel asset_id=$ASSET_ID"
+  | jq -r '.assets[] | select(.name | endswith(".whl")) | .browser_download_url')
+curl -L -o tipsy_ab_config.whl "${WHEEL_URL}"
 
-# 2. Download and install:
-curl -L -H "Authorization: token $GH_PAT" -H "Accept: application/octet-stream" \
-  "https://api.github.com/repos/Lightspeed-Intelligence/tipsy-ab-config-sdk/releases/assets/$ASSET_ID" \
-  -o tipsy_ab_config-<X.Y.Z>-py3-none-any.whl
-pip install tipsy_ab_config-<X.Y.Z>-py3-none-any.whl
+# 2. Install:
+pip install tipsy_ab_config.whl
 ```
 
 Pin `python-sdk/vX.Y.Z` in the URL (replace with the latest tag from
@@ -193,7 +153,7 @@ Pin `python-sdk/vX.Y.Z` in the URL (replace with the latest tag from
 ### Extras
 
 ```text
-tipsy-ab-config[fastapi] @ git+https://${GH_PAT}@github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk.git@python-sdk/vX.Y.Z#subdirectory=sdk/python
+tipsy-ab-config[fastapi] @ git+https://github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk.git@python-sdk/vX.Y.Z#subdirectory=sdk/python
 ```
 
 Available extras:
@@ -204,8 +164,20 @@ Available extras:
 
 ```text
 # Pin the SDK to a published tag; bump the tag to upgrade.
-tipsy-ab-config @ git+https://${GH_PAT}@github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk.git@python-sdk/vX.Y.Z#subdirectory=sdk/python
+tipsy-ab-config @ git+https://github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk.git@python-sdk/vX.Y.Z#subdirectory=sdk/python
 ```
+
+### Legacy install (deprecated, for back-compat)
+
+Pre-v0.3.0 consumers installed from the private `tipsy-ab-config` monorepo:
+
+```text
+tipsy-ab-config @ git+https://${GH_PAT}@github.com/Lightspeed-Intelligence/tipsy-ab-config.git@python-sdk/v0.2.0#subdirectory=sdk/python
+```
+
+That URL continues to resolve via the preserved `python-sdk/v0.2.0` tag,
+but new releases (v0.3.0+) ship from `tipsy-ab-config-sdk` with no PAT —
+migrate to the public install form above at your next SDK bump.
 
 ## Quickstart
 
@@ -300,8 +272,7 @@ The SDK follows SemVer:
 
 ## Known limitations
 
-- Distributed via private GitHub Releases; **not** on PyPI.
-- PAT required to install.
+- Distributed via public Git installation; **not** yet on PyPI.
 - No `setuptools-scm`/dynamic version — `pyproject.toml` and
   `__init__.__version__` are the single source of truth.
 - No `.pyi` stubs in the current 0.x line (deferred to a future release).
@@ -315,22 +286,19 @@ first integration.
 
 `pip` couldn't reach the tag URL. Usually:
 
-- `GH_PAT` env var not set in the shell/CI session running pip. Verify with
-  `echo ${GH_PAT:+pat-is-set}` — should print `pat-is-set`.
-- PAT lacks `Contents: Read` on `Lightspeed-Intelligence/tipsy-ab-config-sdk`,
-  or PAT was revoked/expired. Re-issue per "Consumer onboarding" step 1.
 - The tag (`python-sdk/vX.Y.Z`) does not yet exist (e.g. you pinned a
   prerelease that was deleted, or pinned a tag that's not published yet).
   Check
   `https://github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk/releases`.
 - Corporate proxy blocking `github.com`. Use the two-step Release-asset
   download (`Install § 2`) into an internal artifact store.
+- Transient GitHub outage or network failure; retry.
 
 ### `pip install` succeeds but `import tipsy_ab_config` raises `ModuleNotFoundError: No module named 'tipsy'`
 
 You have a stale build of the SDK (probably from before the proto stubs
 were rewritten with proper imports). Force a clean reinstall:
-`pip install --force-reinstall --no-deps 'tipsy-ab-config @ git+https://${GH_PAT}@github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk.git@python-sdk/vX.Y.Z#subdirectory=sdk/python'`.
+`pip install --force-reinstall --no-deps 'tipsy-ab-config @ git+https://github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk.git@python-sdk/vX.Y.Z#subdirectory=sdk/python'`.
 
 ### `RuntimeError: Detected mismatch between protobuf gencode and runtime versions`
 
@@ -341,24 +309,6 @@ because the shipped stubs were generated by `grpcio-tools==1.66.2`
 - Upgrade your project's `protobuf` pin to `>=5.29,<7`. Recommended.
 - If you can't, pin to a future SDK release rebuilt against an older
   generator — file an issue.
-
-### `pyproject.toml`/`uv`/`poetry` won't expand `${GH_PAT}`
-
-These tools lock dependencies without expanding env vars. Use one of:
-
-- Switch the SDK line into `requirements.txt` (env vars expand at install
-  time). The rest of your project can stay in `pyproject.toml`.
-- Use the two-step Release-asset download (`Install § 2`) and pin the
-  local wheel path in `pyproject.toml`.
-- Configure git credentials globally (`git config --global credential.<...>`)
-  and remove the `${GH_PAT}@` from the URL.
-
-### Release asset URL `https://github.com/.../releases/download/...` returns 404
-
-Private-repo Release-asset URLs **do not** accept basic-auth via URL
-userinfo. Use the API form documented in `Install § 2`:
-`https://api.github.com/repos/.../releases/assets/<asset_id>` with
-`Authorization: token $GH_PAT` and `Accept: application/octet-stream`.
 
 ### `grpcio` wheel missing on macOS arm64 + Python 3.13
 

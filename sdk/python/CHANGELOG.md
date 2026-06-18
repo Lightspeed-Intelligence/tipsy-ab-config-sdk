@@ -34,7 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Old installs pinned to
   `git+https://${GH_PAT}@github.com/Lightspeed-Intelligence/tipsy-ab-config.git@python-sdk/v0.2.0#subdirectory=sdk/python`
   continue to resolve via the legacy tag preserved on the ab-config repo.
-  Move to the new public install URL when bumping to v0.3.0+.
+  Starting with v0.3.0, install from the new public repo (no PAT).
 
 ## [0.2.0] - 2025-11-21
 
