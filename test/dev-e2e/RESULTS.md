@@ -84,6 +84,57 @@
 - 让 app handler 入口/出口加日志或 `Server-Timing` header（`abtest_calc;dur=...`、`db_read;dur=...`、`json_encode;dur=...`），客户端读 header 即可得到 (4) 的拆分。
 - 在同一根 token、同一个 body 下，从「业务内网（同地域低延迟链路）」直接命中源站对照本机经 CF 的 RTT，差值即 (1)+(2)+(5) 总和；剩余即 (3)+(4)。
 
+### 2026-06-18 进一步：本地容器对照测试（loopback）
+
+为了从客户端侧把"网络飞行"从 wait 里剥出来，按设计的第二条路在本机起了一整套同构环境：
+
+- `tipsy-ab-config-app:latest`（主仓 `docker-compose.local.yml` 构建产物）以 `127.0.0.1:8080` 暴露 HTTP
+- `tipsy-ab-config-db-1`（postgres:16-alpine）同 docker network 内提供 PG，DSN = `postgres://tipsy:tipsy@tipsy-ab-config-db-1:5432/tipsy?sslmode=disable`
+- `test/dev-e2e/sql/seed.sql` 灌入本地库（两个 self-check 均 0 行，通过）
+- 本机 HS256 token：`TIPSY_SERVICE_SECRET=devsecret go run cmd/servicetoken --sub local-test --namespaces '*' --ttl 24h`（主仓 cmd/servicetoken；token `namespaces=["*"]`）
+- 同一份 load 驱动，仅改 `AB_CONFIG_HTTP_BASE=http://localhost:8080`
+
+#### 同参数对照（60s × 150 conc × 1500 QPS 限速，`experiment_result` for_dev_agent_test）
+
+| 指标 | DEV（经 Cloudflare） | 本机容器（loopback） | 差值 ≈ 网络飞行 |
+|---|---:|---:|---:|
+| 总请求 | 36617 | 59101 | — |
+| 达成 QPS | 610 | 985 | 受限于 250ms RTT × 150 并发 |
+| 错误率 | 0.00% | 0.00% | — |
+| dns / tcp / tls | 0 / 0 / 0 ms | 0 / 0 / 0 ms | 全程 keep-alive |
+| **wait p50** | **232.1 ms** | **0.4 ms** | **≈ 232 ms** |
+| wait p95 | 307.1 ms | 0.5 ms | ≈ 306 ms |
+| wait p99 | 475.2 ms | 0.6 ms | ≈ 475 ms |
+| read body | 0.1 / 0.2 / 0.3 ms | 0.0 / 0.0 / 0.0 ms | ms 量级可忽略 |
+
+#### 服务端 Prometheus 实证
+
+抓 `/metrics` 上 `tipsy_abconfig_abtest_compute_duration_seconds`（本机 app 自带的 `experiment_result` 计算阶段直方图，**只计 abtest compute，本身不含 HTTP/serialization**）：
+
+| ≤ bucket | 累计计数（for_dev_agent_test） | 占比 |
+|---|---:|---:|
+| 0.5 ms | 277,438 | ~41% |
+| 1.0 ms | 408,065 | ~60% |
+| 2.5 ms | 603,814 | ~89% |
+| 5.0 ms | 671,030 | ~98% |
+
+这条曲线和客户端 loopback 跑出的 wait p50 / p95 / p99（0.4 / 0.5 / 0.6 ms 量级，**低并发**；20k QPS 高并发下变 5 / 30 / 36 ms，是入队 + GC + PG 行锁的共同产物）量级一致。
+
+#### 结论
+
+- **RTS 的 232ms wall-clock 中，~99.8% 不是服务端在算**——服务端本身在低并发空载下 p50 < 1ms。
+- DEV 的 232ms 几乎全是 **客户端 → Cloudflare 边缘 + Cloudflare → 香港/海外源站 + 反向飞回** 的网络飞行时间。这与「CN→CF→海外」公网 RTT 量级（180-280ms）吻合。
+- **同集群内网理想 RTS**：根据本机实测，单实例空载情况下 < 1ms；考虑业务真实并发（k8s 同 namespace 调用 + 0.2–1ms RTT + cache hit/miss + 多实例 PG 锁竞争），生产内网 RTS 预期 **p50 < 5ms，p99 < 20ms**——也就是把现在 232ms 中 99% 的 wall-clock 砍掉。
+- 本机数据**不能直接套用到跨可用区或跨 region 内网**。生产内网 RTT 可能在 0.5–2ms 量级，PG 主从同步、cache miss、其他 RPC 排队都会让真实 p99 走高，但不至于把 sub-ms 级处理拖到 100ms 级别。
+
+#### 本对照测试的 caveat（必须知道，否则会过度乐观）
+
+1. **本机 loopback RTT 约 50 µs**，生产同 k8s namespace 调用 RTT 约 0.2–1 ms（仍可忽略，不影响结论的数量级）。
+2. **本机 PG 与 app 在同 docker network**，几乎零网络延迟；生产 PG 通常隔 1ms 以内同 VPC。
+3. **本机是单实例 + 无 Redis**（服务端日志 `REDIS_ADDR not set; running single-node`），没有多实例 cache 同步成本；生产多实例下 PullAll/Subscribe 链路上多一跳。
+4. **本机负载量级有限（21k QPS 单实例饱和）**。生产多实例水平扩展后单实例 QPS 更低，单请求 p50 反而会更低。
+5. **token 鉴权 / namespace 校验路径同 DEV 一致**（同一份代码），不存在因为本地跳过校验而失真。
+
 ### 结论
 
 迁入后**所有历史用例（252+ 项）全部通过**，且公开仓 `go get` / `pip install` 全链路替代了原私仓 GOPRIVATE 路径——这正是 SDK 拆离的核心目的。
