@@ -6,6 +6,7 @@ use (
 	./sdk/go/tipsyabconfig
 	./sdk/go/tipsyauth
 	./test/dev-e2e/clients/go
+	./test/dev-e2e/headless/roundrobin-load
 	./test/dev-e2e/load
 	./test/dev-e2e/platform
 	./test/dev-e2e/tools/bucketfind

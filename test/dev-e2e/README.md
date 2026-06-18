@@ -123,9 +123,9 @@ admin write call. The Agent has **no DB access**; the user runs the SQL.
      repo `go.work` (which lists every dev-e2e driver module), Python uses
      `pip install -e sdk/python[http]`.
    - **backend / released** (mirrors `tipsy-backend`'s real integration): Go
-     does `GOWORK=off go run .` against the `v0.1.0` tag pulled via the public
+     does `GOWORK=off go run .` against the `v0.4.0` tag pulled via the public
      module proxy; Python uses
-     `pip install ... @ git+ssh://...@python-sdk/v0.3.0#subdirectory=sdk/python`.
+     `pip install ... @ git+ssh://...@python-sdk/v0.5.0#subdirectory=sdk/python`.
      This is the authoritative "consumer onboarding works" evidence.
 
    ```sh
@@ -134,7 +134,7 @@ admin write call. The Agent has **no DB access**; the user runs the SQL.
    # or a single transport:
    (cd test/dev-e2e/clients/go && go run . -transport http)
 
-   # ----- Go SDK (backend mode; released v0.1.0 via public proxy) -----
+   # ----- Go SDK (backend mode; released v0.4.0 via public proxy) -----
    # No GOPRIVATE needed — the SDK repo is public.
    ( cd test/dev-e2e/clients/go && \
      GOWORK=off go run . -fixtures ../../fixtures/expectations.json )
@@ -143,7 +143,7 @@ admin write call. The Agent has **no DB access**; the user runs the SQL.
    bash test/dev-e2e/clients/py/setup_venv.sh                    # creates .venv/
    test/dev-e2e/clients/py/.venv/bin/python test/dev-e2e/clients/py/run.py
 
-   # ----- Python SDK (backend mode; released v0.3.0 via git+ssh) -----
+   # ----- Python SDK (backend mode; released v0.5.0 via git+ssh) -----
    SDK_MODE=backend bash test/dev-e2e/clients/py/setup_venv.sh   # creates .venv-backend/
    test/dev-e2e/clients/py/.venv-backend/bin/python test/dev-e2e/clients/py/run.py
    ```

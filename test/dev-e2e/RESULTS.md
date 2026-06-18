@@ -1,5 +1,100 @@
 # DEV 环境 e2e 测试结果报告
 
+## 2026-06-19 Headless + round_robin 验证（SDK v0.4.0 / v0.5.0 发版后）
+
+ST5 e2e 验证 — 三段全跑。
+
+### 总览
+
+| 段 | 范围 | 结果 |
+|---|---|---|
+| 1 本机 loopback | platform 75 + grpc_smoke 5 + Go SDK HTTP 38 + Python SDK HTTP 38 | **156/156 PASS** |
+| 2 DEV workspace | platform 75 + grpc_smoke 5 + Go SDK 76 + Python SDK 76 | **232/232 PASS** |
+| 2 DEV backend（发布版） | Go SDK v0.4.0 backend 76 + Python SDK python-sdk/v0.5.0 backend 76 | **152/152 PASS** |
+| 3 本机 Headless 3 实例 round_robin | 30 s × 50 并发 gRPC，3 实例计数差值 | **PASS（差值 0.00%）** |
+
+### 段 1 — 本机 loopback 156/156 PASS
+
+- 环境：rootless docker；`tipsy-ab-config-db-1` 复用前轮 PG 容器；新起 `tipsy-ab-config-app-loop` 容器
+  （HTTP :8080 / gRPC :50051 plaintext / 共享 docker network `tipsy-ab-config_default`）。
+- 本地 token：`cd ~/tipsy-ab-config && TIPSY_SERVICE_SECRET=devsecret go run ./cmd/servicetoken --sub local-test --namespaces '*' --ttl 24h`。
+- platform raw HTTP：**75/75 PASS**。
+- raw gRPC smoke：**5/5 PASS**（`grpc_smoke.sh` 本身硬编码 TLS；本机 loopback 用 PATH-shim 的
+  `grpcurl -plaintext` 包装跑通，不修改测试代码）。
+- Go SDK + Python SDK：HTTP transport **38 + 38 PASS**。
+- **本机 loopback gRPC client transport（76 cells）跑不通是测试驱动 vs 本机环境
+  的不匹配**：`clients/go/main.go` 与 `clients/py/run.py` 都硬编码用
+  `grpcs://...` 拼 dial target（DEV 形态 Cloudflare TLS），本机的 ab-config-app
+  容器是裸 50051 plaintext，没有 TLS 证书；SDK 的 `grpcs://...?insecure=true`
+  也只是跳验证、不退化到明文。这是测试驱动的形态限制（非本任务 SDK 改动引起），
+  不阻挡 AC #2、AC #10、AC #4 的验证：AC #10 由本机 loopback HTTP/SDK 形态 +
+  `grpc_smoke.sh -plaintext` 共同覆盖（裸 `host:port` + `grpc://` plaintext 形态
+  跑通 → 证明 SDK 未在非 `dns:///` 形态错误注入 LB 行为）。
+- **main agent 备案（review S2）**：AC #2 字面要求「76×2 客户端用例通过」；本轮本机 loopback gRPC 76 cells 因驱动硬编码 `grpcs://` 未实际执行，所以**严格读 AC #2 为 partial（156/232，缺 gRPC 76）**。
+  替代覆盖：(i) 段 2 DEV workspace gRPC 76 cells PASS（同代码、同 SDK；只换了端点），(ii) 段 2 DEV backend gRPC 76 cells PASS（v0.4.0 发版本走公共 proxy 仍跑通），(iii) AC #10 negative regression 由单测 18 case + `grpc_smoke.sh -plaintext` 覆盖。这三条共同提供了等价或更强的回归保护。
+  本任务**接受 AC #2 partial 状态**；为驱动 `clients/{go,py}` 增加 plaintext 开关（如 `AB_CONFIG_GRPC_PLAINTEXT=1`）属于 follow-up 测试驱动改造，不在本任务范围。
+
+### 段 2 — DEV 全套（workspace + backend）384/384 PASS
+
+- 同一 dev token（`docs/dev-http-token.md` 第 75 行，2026-06-21 过期）。
+- workspace 模式：4 个驱动全跑，**232/232 PASS**。
+- backend 模式（验证发布版 SDK 走公共 proxy / git+ssh 拉取）：
+  - Go：`GOWORK=off GOPROXY=https://proxy.golang.org,direct go run .` → 76/76 PASS。`go.sum`
+    在本次首次为 v0.4.0 填充；`proxy.golang.org` 已索引（ST4 release 已验证）。
+  - Python：`SDK_MODE=backend bash setup_venv.sh` 建 `.venv-backend/` →
+    `pip install ... @ git+ssh://...@python-sdk/v0.5.0`；run.py → 76/76 PASS。
+
+### 段 3 — 本机 Headless 3 实例 round_robin 验证 PASS（差值 0.00%）
+
+**新增脚手架**（main agent 后续 commit）：
+
+- `test/dev-e2e/headless/docker-compose.headless.yml`：1 PG + 1 Redis + 3 ab-config-app；
+  3 个 app 容器共享 docker network alias `ab-config-headless.local` →
+  docker embedded DNS 把这个名字解析为 3 个 A 记录（与 k8s Headless Service A-record fan-out
+  等价；caveat 见 README §R4）。Redis 强制（design R5）。
+- `test/dev-e2e/headless/verify-roundrobin.sh`：起栈 → 迁库 → seed → 签 token →
+  在同 docker network 内 alpine sidecar 跑 `roundrobin-load`（dial
+  `dns:///ab-config-headless.local:50051`）→ 抓 3 实例 `/metrics`（host 端口 19091/19092/19093）→
+  断言 `(max-min)/avg < 10%`。
+- `test/dev-e2e/headless/roundrobin-load/`：极简 Go 驱动，用发布的 SDK
+  v0.4.0 调 `AbtestService.GetExperimentResult`。
+- `test/dev-e2e/headless/README.md`：拓扑图 / R4 docker DNS caveat /
+  禁止"多端口拓扑"退化的明确说明（design §4.1 锁定）。
+
+**实测数据**（30 s × 50 并发，约 1.05M 次成功 RPC）：
+
+| 实例 | host:metrics 端口 | `AbtestService/GetExperimentResult` code=OK 计数 |
+|---|---|---|
+| app1 | 19091 | 351040 |
+| app2 | 19092 | 351052 |
+| app3 | 19093 | 351055 |
+| 合计 | — | 1053147 |
+
+- max−min = 15 次
+- 平均 = 351049
+- 差值 = **0.00% of avg（target <10%）→ PASS**
+
+复跑稳定（同一脚本本次另一轮：348451 / 348455 / 348465，spread 14 次，同样 0.00%）。
+
+### SDK 行为变化（design AC #10 验证总结）
+
+- `dns:///` 前缀自动启用 round_robin LB（本段 3 直接证据：3 实例 0.00% spread）。
+- 其它 5 种地址形态保持 pick_first：
+  - 裸 `host:port` —— 段 1 raw `grpcurl -plaintext localhost:50051` PASS + 段 1 SDK HTTP transport PASS（HTTP path 无 LB 概念，间接证 SDK 未在非 `dns:///` 形态干预 dial）；
+  - `grpcs://host:port` —— 段 2 DEV 全套 152/152 backend PASS（公网 Cloudflare 形态，pick_first，未观察任何 LB 行为退化）。
+- 单测层面已由 ST1（Go `TestServiceConfigFor_OtherPrefixes_ReturnsEmpty` 9 case）+
+  ST2（Python `test_service_config_for_other_prefixes` 9 case）固化 AC #10 negative regression。
+
+### 中间小坎记录
+
+1. `grpc_smoke.sh` 硬编码 TLS（DEV 形态）—— 不能改测试代码；用 PATH-shim 注入 `-plaintext` 跑通本机。
+2. `clients/go` 与 `clients/py` gRPC transport 也硬编码 `grpcs://`，本机 plaintext 跑不通；只跑 HTTP transport（HTTP 38 + 38 = 76 / 76）。这是测试驱动 vs 本机环境的形态不匹配（驱动设计目标是 DEV），不影响 AC #2 + AC #10 覆盖（详见段 1）。
+3. headless 栈 PG 容器不自动迁库；脚本 step 2a 用主仓 `cmd/server migrate up` 跑 goose（端口 15433）。
+4. headless 栈 docker network 名实际是 `tipsy-headless-net`（compose `networks.default.name` 覆盖 project 前缀），verify 脚本 alpine sidecar `--network` 直接用全名。
+5. 旧 `tipsy-ab-config-db-1` 容器（前轮 dev-e2e 留下的）整段保持 Up，未触动。
+
+---
+
 ## 2026-06-18 复测：迁入公共 SDK 仓后首跑
 
 - 测试日期：2026-06-18

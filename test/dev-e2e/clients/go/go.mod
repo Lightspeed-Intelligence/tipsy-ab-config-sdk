@@ -2,7 +2,7 @@ module github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk/test/dev-e2e/clien
 
 go 1.25.0
 
-require github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk/sdk/go/tipsyabconfig v0.1.0
+require github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk/sdk/go/tipsyabconfig v0.4.0
 
 require (
 	github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk/api/gen/go v0.1.0 // indirect
