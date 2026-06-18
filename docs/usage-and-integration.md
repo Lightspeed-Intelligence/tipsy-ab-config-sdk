@@ -283,26 +283,24 @@ SDK 里有直接获取实验结果的 API，不需要绕到裸 HTTP：
 
 | 入口 | 用途 | 命令 / URL |
 | --- | --- | --- |
-| **GitHub Releases 页**（最直观）| 看所有 SDK 的发布历史、release note、wheel 资产 | <https://github.com/Lightspeed-Intelligence/tipsy-ab-config/releases> |
-| **Python SDK CHANGELOG** | Python 端逐版本的 Added/Changed/Removed | <https://github.com/Lightspeed-Intelligence/tipsy-ab-config/blob/main/sdk/python/CHANGELOG.md> |
-| **Go SDK CHANGELOG** | Go 端逐版本的 Added/Changed/Removed | <https://github.com/Lightspeed-Intelligence/tipsy-ab-config/blob/main/sdk/go/tipsyabconfig/CHANGELOG.md> |
+| **GitHub Releases 页**（最直观）| 看所有 SDK 的发布历史、release note、wheel 资产 | <https://github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk/releases> |
+| **Python SDK CHANGELOG** | Python 端逐版本的 Added/Changed/Removed | <https://github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk/blob/main/sdk/python/CHANGELOG.md> |
+| **Go SDK CHANGELOG** | Go 端逐版本的 Added/Changed/Removed | <https://github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk/blob/main/sdk/go/tipsyabconfig/CHANGELOG.md> |
 | **Git tags / Go list**（命令行）| 程序化获取 | 见下方命令 |
 
 **命令行查最新版本**：
 
 ```bash
-# Go SDK 最新版（Go module proxy 解析）
-GOPRIVATE='github.com/Lightspeed-Intelligence/*' \
-  go list -m -versions github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk/sdk/go/tipsyabconfig
+# Go SDK 最新版（公共 Go module proxy）
+go list -m -versions github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk/sdk/go/tipsyabconfig
 
-# Python SDK 最新 tag（直接读 GitHub Releases API）
-curl -s -H "Authorization: token ${GH_PAT}" \
-  https://api.github.com/repos/Lightspeed-Intelligence/tipsy-ab-config/releases \
+# Python SDK 最新 tag（公共 repo,无需 token）
+curl -s https://api.github.com/repos/Lightspeed-Intelligence/tipsy-ab-config-sdk/releases \
   | jq -r '[.[] | select(.tag_name | startswith("python-sdk/v")) | .tag_name] | first'
-# 输出形如: python-sdk/v0.2.0
+# 输出形如: python-sdk/v0.3.0
 
-# 或者直接 git 查（不需要 token）
-git ls-remote --tags --refs git@github.com:Lightspeed-Intelligence/tipsy-ab-config.git \
+# 或者直接 git 查
+git ls-remote --tags --refs git@github.com:Lightspeed-Intelligence/tipsy-ab-config-sdk.git \
   | awk '{print $2}' | grep -E '^refs/tags/(python-sdk|sdk/go/tipsyabconfig)/v' | sort -V | tail -5
 ```
 
@@ -316,34 +314,9 @@ git ls-remote --tags --refs git@github.com:Lightspeed-Intelligence/tipsy-ab-conf
 
 按下面顺序做，每一步都是一次性的：
 
-**① 确认本机/CI 能访问私有仓库**
+**① 拉取 SDK（无需任何凭据）**
 
-本仓 `Lightspeed-Intelligence/tipsy-ab-config` 是 **GitHub private repo**，公共 `proxy.golang.org` 永远返回 404 拉不到——这是 Go module + 私有 repo 的常规行为，必须配以下两项：
-
-- **本机开发**：确保本机已有 GitHub SSH key 或 PAT，且能 `git clone git@github.com:Lightspeed-Intelligence/tipsy-ab-config.git` 成功。
-- **业务服务的 CI**（GitHub Actions / GitLab CI / Jenkins 等都一样）：必须添加一个能读 `Lightspeed-Intelligence/tipsy-ab-config` 的凭据。两种典型做法：
-  - **Deploy key**：在本仓 Settings → Deploy keys 添加业务仓的公钥（read-only 足够），业务仓 CI 用对应私钥跑 git。
-  - **PAT / Fine-grained token**：业务仓 secrets 里放一个 read 权限的 token，CI 跑 `git config --global url."https://<user>:<token>@github.com/".insteadOf "https://github.com/"`。
-
-**② 在业务仓 go.mod 旁边声明 `GOPRIVATE`**
-
-最稳的做法是写进业务仓的 CI 工作流和本机 shell rc，告诉 Go 工具链"这个 path 走 direct VCS，不要试 proxy/sumdb"：
-
-```bash
-export GOPRIVATE=github.com/Lightspeed-Intelligence/*
-# 可选：同时把 sumdb 也跳掉（GOPRIVATE 默认会带上，显式写一遍也无害）
-export GONOSUMCHECK=github.com/Lightspeed-Intelligence/*
-```
-
-> CI 推荐做法是直接写进 workflow 的 `env:`，例如 GitHub Actions：
-> ```yaml
-> jobs:
->   build:
->     env:
->       GOPRIVATE: github.com/Lightspeed-Intelligence/*
-> ```
-
-**③ `go get` 拉取 SDK**
+本仓 `Lightspeed-Intelligence/tipsy-ab-config-sdk` 是 **GitHub public repo**，公共 `proxy.golang.org` 直接代理，本机与 CI 都无需 PAT / Deploy key / GOPRIVATE。
 
 业务仓根目录跑（拉最新版；要 pin 具体版本见 §4.0）：
 
@@ -359,7 +332,30 @@ go get github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk/sdk/go/tipsyauth@l
 
 **确认你的业务工程 `go.mod` 的 `go` 指令**：可以是 `go 1.25.0`（或更高）；SDK 是独立 module 声明 `go 1.25.0`，不会把你顶到主仓的 `go 1.25.7`。
 
-**④ 业务代码 import + 初始化**
+**② 建议给构建环境加 `GOPROXY` 兜底**
+
+公共 proxy `proxy.golang.org` 对新发布 tag 有 1–5 分钟的首次缓存延迟；CI / 容器构建建议显式设置 GOPROXY，让 proxy 未命中时回退直连：
+
+```bash
+export GOPROXY=https://proxy.golang.org,direct
+```
+
+> 写法解读：`,direct` 后缀表示 "proxy 404 时直接 git clone 公开仓库兜底"。**有 proxy 时走 proxy（快），proxy 没追上时走直连（不阻塞）**。这是消费公开 Go module 仓库的社区惯例，不针对本 SDK。
+>
+> Docker 镜像写法：
+> ```dockerfile
+> ENV GOPROXY=https://proxy.golang.org,direct
+> ```
+>
+> GitHub Actions 写法：
+> ```yaml
+> jobs:
+>   build:
+>     env:
+>       GOPROXY: https://proxy.golang.org,direct
+> ```
+
+**③ 业务代码 import + 初始化**
 
 ```go
 import (
@@ -371,16 +367,16 @@ import (
 
 初始化代码见下文 §4.1 的 `tipsyabconfig.Init(...)` 示例。**SDK 不读取任何固定环境变量**，所有地址 / token / 超时通过 `Config` 字段传入；地址、token 来源由业务方自己用 ENV / Vault / 配置中心管理。
 
-**⑤ Service token 来源（二选一）**
+**④ Service token 来源（二选一）**
 
 - **从 ab-config 平台拿一个长期 token 注入业务 ENV**（最常见）：用 `Config.Token = os.Getenv("AB_CONFIG_TOKEN")` 静态注入。
 - **业务侧自签**（共享 HMAC 密钥时）：用 `tipsyauth.NewSigner(secret).Issue(tipsyauth.IssueOptions{...})` 生成短 TTL token，配合 `Config.TokenProvider` 每次 RPC 取新 token。详见 §2 鉴权边界 与本节后面的"Signer 用法"。
 
-**⑥ 烟测：跑通最小回路**
+**⑤ 烟测：跑通最小回路**
 
 业务进程启动后 `Init` 不报错、`Health()` 显示 `LastPullOK=true`、`SubscribeConnected=true`，就说明全链路通。
 
-**⑦ 升级 SDK 版本**
+**⑥ 升级 SDK 版本**
 
 后续发版用：
 
