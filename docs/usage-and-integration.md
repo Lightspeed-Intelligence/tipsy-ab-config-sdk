@@ -442,15 +442,80 @@ defer sdk.Close()
 - `ConfigServiceAddr`：用于 `PullAll` / `Subscribe` 拉取和订阅配置快照，也是 `GetConfigStatic` / 动态配置本地缓存的来源。
 - `AbtestServiceAddr`：用于 `GetExperimentResult`，也是动态 `GetConfig` 在请求链路内获取实验命中结果的来源。
 
-最佳实践：把这两个地址存入业务服务自己的 ENV（变量名由业务方自定，如 `CONFIG_SERVICE_ADDR` / `ABTEST_SERVICE_ADDR`；SDK 本身不读取任何固定环境变量，地址通过 Config 字段传入），由业务代码启动时读取并传入 SDK。不要把地址硬编码在业务代码里；不同环境、集群、灰度部署时只需要调整 ENV。典型环境形态：
+最佳实践：把这两个地址存入业务服务自己的 ENV（变量名由业务方自定，如 `CONFIG_SERVICE_ADDR` / `ABTEST_SERVICE_ADDR`；SDK 本身不读取任何固定环境变量，地址通过 Config 字段传入），由业务代码启动时读取并传入 SDK。不要把地址硬编码在业务代码里；不同环境、集群、灰度部署时只需要调整 ENV。
 
-- **K8S 集群内同 namespace 调用（生产推荐）**：业务客户端配 **internal Ingress 域名**，例如 `ab-config-grpc.internal:80`（明文 h2c）。流量路径：业务 pod → internal Ingress Controller → ab-config pod。Ingress 在中间做 RPC 级负载均衡（模式 B），单 RPC 多一跳但在 1ms 量级内可忽略。
-  - **强制要求**：集群内 DNS 必须通过 split-horizon DNS 把 internal Ingress 域名直接解析到 Ingress Controller 的 ClusterIP，**不能解析到公网域名（如 Cloudflare 那一套 `dev-ab-config-grpc.infra.fantacy.live`），否则流量会绕公网 hairpin 出去再回来**，延迟从亚毫秒变成跨海 RTT。
-  - 为什么不直接配 ClusterIP Service DNS（如 `ab-config-grpc.<ns>.svc.cluster.local:50051`）？因为普通 ClusterIP Service 是 L4 LB（按 TCP 连接 pin），gRPC 是长连接，多客户端时负载分布会严重不均。详见 [`docs/tech-notes/grpc-load-balancing-and-push.md`](tech-notes/grpc-load-balancing-and-push.md)。
-  - **TODO（终态）**：未来 SDK 支持 `dns:///` resolver + 默认 `round_robin` 服务配置后，推荐改成 **Headless Service + 客户端 round-robin LB（模式 C）**，例如 `dns:///ab-config-grpc.<ns>.svc.cluster.local:50051`。这是 gRPC 官方推荐的最低延迟、无中间一跳方案，但需要把 Service 改成 `clusterIP: None` 且 SDK 暴露 LB 策略配置（当前 v0.1.0 尚未实现）。
-- **公网标准（TLS + 域名）**：`grpcs://ab-config-grpc.example.com:443`。当前 DEV 已验证：`grpcs://dev-ab-config-grpc.infra.fantacy.live:443`。
-- **直连源站 IP（私有证书，调试 / 排查）**：`grpcs://47.253.175.59:443?authority=ab-config-grpc.example.com&insecure=true`（Go）；Python 同地址再配 `tls_root_certificates=<Origin Cert PEM>`。
-- **同集群本地裸 Service DNS（仅小流量 / 单实例 / 历史向后兼容）**：`ab-config-grpc:50051`（K8S Service DNS 等）。⚠️ 这是 L4 pin 模式，多业务客户端 + 多 ab-config 实例下负载分布严重不均，生产新接入不推荐，仅保留以兼容历史接入。
+#### 部署形态 → 地址配置对照表
+
+| 部署形态 | 业务客户端配置 | 备注 |
+| --- | --- | --- |
+| DEV（Coolify 单实例 + Cloudflare） | `grpcs://dev-ab-config-grpc.infra.fantacy.live:443` | 公网 TLS，pick_first 单连 |
+| 生产 K8S 同 namespace（推荐） | `dns:///ab-config-grpc.<ns>.svc.cluster.local:50051` | Headless Service + round_robin，要求 Service 改 `clusterIP: None` |
+| 同集群 internal Ingress（过渡） | `ab-config-grpc.internal:80` | 模式 B，需要 split-horizon DNS |
+| 公网 TLS（已有部署） | `grpcs://ab-config.example.com:443` | 同 DEV 形态 |
+| 虚拟机（自部署） | `host:port` 或 `grpcs://host:443` | pick_first 单连，无 LB |
+| K8S 跨 namespace（仍工作） | `dns:///ab-config-grpc.<other-ns>.svc.cluster.local:50051` | 同生产形态，只是 FQDN 写全；要求该 ns 也是 Headless |
+| **K8S 跨集群 / multi-cluster mesh / federation（不覆盖）** | — | 本任务不提供方案，请走模式 B（service mesh 或 internal Ingress） |
+
+关于上表中"同集群本地裸 Service DNS"的最后兼容形态：历史接入文档曾推荐过裸 `ab-config-grpc:50051`（K8S ClusterIP Service DNS）写法。这是 L4 pin 模式（模式 A），多业务客户端 + 多 ab-config 实例下负载分布严重不均，**生产新接入不推荐**，仅作为历史兼容形态保留。新接入请按上表选 Headless（同集群推荐）、internal Ingress（过渡）或公网 TLS（DEV / 已有部署）。
+
+关于同集群 internal Ingress（模式 B，过渡形态）的额外约束：
+
+- **强制要求**：集群内 DNS 必须通过 split-horizon DNS 把 internal Ingress 域名直接解析到 Ingress Controller 的 ClusterIP，**不能解析到公网域名（如 Cloudflare 那一套 `dev-ab-config-grpc.infra.fantacy.live`），否则流量会绕公网 hairpin 出去再回来**，延迟从亚毫秒变成跨海 RTT。
+- 流量路径：业务 pod → internal Ingress Controller → ab-config pod。Ingress 在中间做 RPC 级负载均衡，单 RPC 多一跳但在 1ms 量级内可忽略。
+- 这是 Headless 落地前的过渡方案；新集群推荐直接走 Headless（见 §4.1.1）。
+
+直连源站 IP（私有证书，调试 / 排查）：`grpcs://47.253.175.59:443?authority=ab-config-grpc.example.com&insecure=true`（Go）；Python 同地址再配 `tls_root_certificates=<Origin Cert PEM>`。该形态属于调试链路，不在上表覆盖的常规部署形态内。
+
+#### 4.1.1 Headless Service 部署要求（模式 C）
+
+**适用范围**：模式 C（Headless Service + 客户端 round_robin）**仅适用于「客户端与 ab-config Server 在同一 K8S 集群同一 VPC」**。其它部署形态（Coolify、虚拟机、跨集群、公网域名）请按上表选 internal Ingress（模式 B）或公网 TLS（DEV / 已有部署）。
+
+**服务端 Service YAML**：必须把 ab-config 的 Service 改为 Headless（`clusterIP: None`），DNS 才会返回所有 pod 真实 IP 列表，而不是单个虚 IP。示例片段：
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: ab-config-grpc
+  namespace: <ns>
+spec:
+  clusterIP: None            # 关键：标记为 Headless Service
+  selector:
+    app: ab-config
+  ports:
+    - name: grpc
+      port: 50051
+      targetPort: 50051
+      protocol: TCP
+```
+
+**服务端 pod readinessProbe**：必须配 `readinessProbe`（HTTP `/healthz` 或 gRPC health check），否则 DNS 会把"还没起来的 pod IP"也返回给客户端，SDK Init 时连接到未就绪 pod 会触发首次 RPC 失败。示例：
+
+```yaml
+readinessProbe:
+  httpGet:
+    path: /healthz
+    port: 8080
+  initialDelaySeconds: 5
+  periodSeconds: 5
+```
+
+**客户端配置**：地址前缀写 `dns:///`，**SDK 自动启用 `round_robin` 策略，无需任何 Config 字段**。这是地址字符串自描述的 opt-in 模式：
+
+- Go SDK：`v0.4.0+` 起识别 `dns:///` 前缀，自动注入 `grpc.WithDefaultServiceConfig({"loadBalancingConfig":[{"round_robin":{}}]})`。
+- Python SDK：`python-sdk/v0.5.0+` 起同样识别 `dns:///` 前缀，自动注入 `("grpc.service_config", <round_robin JSON>)` channel option。
+- 业务方代码零变更，只改地址 ENV 即可。
+
+**行为说明**：
+
+- grpc 默认每 30s 重新解析一次 DNS（`dnsResolverMinResolveRate = 30s`）。pod 启停时，客户端最长 30s 感知，会自动 reconnect 到新解析出的 pod 集合，业务无感知。
+- 一旦解析出 N 个 pod，SDK 与每个 pod 各建一条 HTTP/2 长连接（每个 RPC 走 round_robin），没有中间 Proxy 一跳，延迟最低。
+- 现有 `Keepalive` 字段对每条子连接（subchannel）仍然生效。
+- 如果业务方想要 pick_first 行为（即只连一个 pod），应直接用裸 `host:port` 或 `passthrough:///host:port`，**不要在 Config 里加 opt-out 字段**（SDK 不提供此字段）。
+
+**强调**：模式 C 仅适用于「客户端与 ab-config Server 在同一 K8S 集群同一 VPC」。跨集群 / multi-cluster mesh / federation 不在本方案覆盖范围内，请走模式 B（service mesh 或 internal Ingress）。跨 namespace 形态仍工作，FQDN 写全即可（见上表对照行）。
+
+详细的负载均衡模式对比与 push 模型分析见 [`docs/tech-notes/grpc-load-balancing-and-push.md`](tech-notes/grpc-load-balancing-and-push.md)。
 
 注意（**gRPC 模式地址语法 · 方案 Y**）：默认 gRPC 模式下，`ConfigServiceAddr` / `AbtestServiceAddr` 是 gRPC target，不是 Console 的 HTTPS URL。地址字符串自描述传输方式，规则如下：
 
@@ -460,6 +525,7 @@ defer sdk.Close()
 | `grpc://host:port` | 明文 h2c | 显式明文 |
 | `grpcs://host:port` | TLS（SNI/证书名取 host） | 公网标准（未来形） |
 | `grpcs://host:port?authority=<域名>&insecure=<bool>` | TLS + 覆盖 :authority/SNI + 可选跳校验 | 直连源站 IP 等特殊链路 |
+| `dns:///host:port` | 通过 DNS 解析所有后端 IP，SDK 自动启用 `round_robin`（Go v0.4.0+ / Python v0.5.0+） | K8S Headless Service，详见 §4.1.1 |
 | `http://` / `https://` | 在 gRPC 模式下报参数错误 | 应改用 HTTP 传输模式 |
 
 - `authority=<域名>`：覆盖 HTTP/2 `:authority`，并作为 TLS SNI / 证书校验目标名。当反代（如 Traefik）按 Host/SNI 路由到 gRPC 后端时必填。

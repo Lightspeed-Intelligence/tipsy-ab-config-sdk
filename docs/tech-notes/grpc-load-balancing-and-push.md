@@ -272,28 +272,33 @@ pod-1 收到写入   ──► Redis 拿到所有 sibling pod 列表
 
 | 决策点 | 当前现状 | 短期推荐 | 长期终态 |
 |---|---|---|---|
-| K8S 内同 ns 接入方式 | 文档默认 `ab-config-grpc:50051`（模式 A） | internal Ingress 域名（模式 B） | Headless Service + 客户端 round_robin（模式 C） |
-| SDK 客户端连接数 | 2 条（ConfigService + AbtestService 各一） | 不变 | 不变（模式 C 后变成 2 × N pod 条） |
+| K8S 内同 ns 接入方式 | 已落地（Go SDK v0.4.0 / Python SDK v0.5.0）：Headless Service + 客户端 round_robin（模式 C） | 同左（终态已落地） | 同左 |
+| SDK 客户端连接数 | 2 条（ConfigService + AbtestService 各一）；模式 C 下每条 channel 展开为 N 个 subchannel（每 pod 一条），由 grpc-go / grpcio 自动管理 | 已落地（v0.4.0 / v0.5.0） | 不变 |
 | 多 pod 配置 push fan-out | 已有 Redis + NodeInternal.Notify star fan-out | 不变 | 不变 |
 | 服务端 `MaxConcurrentStreams` | 默认 `MaxUint32`（不限） | 不变 | 不变 |
-| 集群内 DNS | 取决于 CoreDNS 配置 | split-horizon 强制把 internal Ingress 域名解析到 ClusterIP | 同 |
-| 接入文档 | 旧文案推荐裸 Service DNS | 加 internal Ingress 推荐 + 模式 A 弃用警告 + 模式 C TODO | SDK v0.2/v0.3 推出 `dns:///` + round_robin 配置后改为模式 C |
+| 集群内 DNS | 取决于 CoreDNS 配置 | split-horizon 强制把 internal Ingress 域名解析到 ClusterIP（仅模式 B 过渡形态需要） | 模式 C 直接走 `dns:///<service>.<ns>.svc.cluster.local`，由 K8S 原生 DNS 解析 |
+| 接入文档 | 已落地（v0.4.0/v0.5.0）：`docs/usage-and-integration.md` §4.1 部署形态对照表 + §4.1.1 Headless 部署要求 | 同左 | 同左 |
 
 ## 8. 待办（TODO）
 
-- [ ] SDK v0.2 / v0.3 规划：
-  - 暴露 `Config.LoadBalancingPolicy` 字段（或识别 `dns:///` 前缀自动启用 round_robin）；
-  - Go：通过 `grpc.WithDefaultServiceConfig` 注入；Python：通过 `grpc.aio.insecure_channel(..., options=[("grpc.service_config", ...)])` 注入；
-  - 单测覆盖 LB 策略切换。
-- [ ] 接入文档 §4.1 已经加了 internal Ingress 推荐 + 模式 A 弃用警告 + TODO 链接（本次同步落地）。
-- [ ] 平台侧：评估给 ab-config 加 **internal Ingress Controller** 部署，作为模式 A → 模式 B 过渡的服务端工作。
-- [ ] 平台侧：评估把 Service 改成 **Headless**（`clusterIP: None`），作为模式 C 终态的服务端工作。
+- [x] SDK 客户端 LB 能力（已落地于 `sdk/go/tipsyabconfig/v0.4.0` 与 `python-sdk/v0.5.0`，tag 待 ST4 发版推出）：
+  - SDK 自动识别 `dns:///` 前缀启用 `round_robin`（不新增 Config 字段，业务方零 API 变更）；
+  - Go：`dial()` 内通过 `grpc.WithDefaultServiceConfig` 注入；Python：`_build_channel` 通过 `("grpc.service_config", json)` channel option 注入；
+  - 单测覆盖 LB 策略切换与 AC #10 负向行为（非 `dns:///` 目标不注入 service config）。
+- [x] 接入文档 §4.1 / §4.1.1 已重写为部署形态对照表 + Headless 部署要求（替代旧的 internal Ingress 推荐 + TODO 链接）。
+- [ ] 平台侧：评估给 ab-config 加 **internal Ingress Controller** 部署，作为模式 A → 模式 B 过渡的服务端工作（仍保留作平台侧 TODO，不属于 SDK 工作）。
+- [ ] 平台侧：评估把 Service 改成 **Headless**（`clusterIP: None`），作为模式 C 终态的服务端工作（仍保留作平台侧 TODO，不属于 SDK 工作）。
 - [ ] 本文档迁出 `docs/tech-notes/` 后归档到内部 wiki，留索引页指向归档位置。
 
 ## 9. 参考
 
 - gRPC LB 官方博客：<https://grpc.io/blog/grpc-load-balancing/>
-- SDK 源码连接定义：`sdk/go/tipsyabconfig/sdk.go:407,418`、`sdk/python/tipsy_ab_config/client.py:932,934`
+- SDK 客户端 LB 实现入口（符号定位，行号会随提交漂移）：
+  - Go：`sdk/go/tipsyabconfig/sdk.go` 的 `serviceConfigFor`（`dns:///` → round_robin service config JSON）与 `(*Client).dial`（在 dial options 中注入 `WithDefaultServiceConfig`）。
+  - Python：`sdk/python/tipsy_ab_config/client.py` 的 `_service_config_for` 与 `_build_channel`（在 channel options 中注入 `("grpc.service_config", json)`）。
+- SDK 双 channel 构建位置（符号定位）：
+  - Go：`sdk/go/tipsyabconfig/sdk.go` 内 `Init` 调用 `cli.dial(configTarget)` 与 `cli.dial(abtestTarget)`。
+  - Python：`sdk/python/tipsy_ab_config/client.py` 内 `init` 调用 `_build_channel(cfg, cfg.config_service_addr, ...)` 与 `_build_channel(cfg, cfg.abtest_service_addr, ...)`。
 - 服务端 push fan-out：`internal/api/grpc/configservice/notifier.go`、`cmd/server/main.go:879-934`（主仓 `tipsy-ab-config`）
 - DEV 网络延迟对照实测：`test/dev-e2e/RESULTS.md` §2026-06-18
-- SDK 接入文档：`docs/usage-and-integration.md` §4.1
+- SDK 接入文档：`docs/usage-and-integration.md` §4.1 / §4.1.1
