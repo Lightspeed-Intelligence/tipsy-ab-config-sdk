@@ -1229,6 +1229,21 @@ def _parse_grpcs_scheme(addr: str) -> _GrpcTarget:
     )
 
 
+def _service_config_for(dial_target: str) -> Optional[str]:
+    """Return the gRPC service-config JSON for the given dial target, or None.
+
+    Headless Service + round_robin opt-in: when the dial target starts with
+    "dns:///" (gRPC name-resolver scheme that resolves to all backend pod
+    IPs), inject a round_robin loadBalancingConfig. Every other scheme —
+    bare host:port, "grpc://", "grpcs://[?...]", "passthrough:///",
+    "unix:" — falls through to grpcio's default pick_first, preserving
+    backwards compatibility (design §Acceptance Criteria #10).
+    """
+    if dial_target.startswith("dns:///"):
+        return '{"loadBalancingConfig":[{"round_robin":{}}]}'
+    return None
+
+
 def _build_channel(
     cfg: Config,
     addr: str,
@@ -1257,6 +1272,19 @@ def _build_channel(
         # verification is on, the cert name matches).
         options.append(("grpc.ssl_target_name_override", target.authority))
         options.append(("grpc.default_authority", target.authority))
+    # Headless Service + client-side round_robin opt-in (design §2.1): only
+    # ``dns:///`` dial targets pull in the round_robin service config; every
+    # other scheme is left at grpcio's default pick_first (AC #10 negative
+    # regression). grpcio>=1.50 honours the canonical
+    # ``("grpc.service_config", json)`` option; pyproject pins grpcio>=1.60,
+    # so no version probing is needed here (design R2).
+    sc = _service_config_for(target.dial_target)
+    if sc is not None:
+        # Append the auto-injected service_config BEFORE the caller-supplied
+        # cfg.channel_options below: when the same option key appears multiple
+        # times, grpcio honors the last occurrence, so business-supplied
+        # channel_options can still override the SDK's round_robin default.
+        options.append(("grpc.service_config", sc))
     if cfg.channel_options:
         options.extend(cfg.channel_options)
 

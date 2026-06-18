@@ -8,6 +8,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-06-19
+
+### Fixed
+
+- Restore version-string parity: prior `python-sdk/v0.4.0` shipped with
+  `__init__.py` still claiming 0.3.0; this release jumps to 0.5.0 to skip
+  the inconsistent state and re-establish a clean baseline.
+  (修复版本号一致性：上一版 `python-sdk/v0.4.0` 发布时 `__init__.py`
+  仍声明 0.3.0，存在历史不一致；本版直接跳到 0.5.0 重建清晰基线。)
+
+### Added
+
+- Auto-enable client-side `round_robin` load balancing when the channel
+  address uses the `dns:///` gRPC name resolver scheme (typically
+  `dns:///<service>.<ns>.svc.cluster.local:<port>` for K8S Headless
+  Service deployment). All other address forms (bare `host:port`,
+  `grpc://`, `grpcs://`, `passthrough:///`, `unix:`) keep grpcio's
+  default `pick_first` behavior. No SDK `Config` field changes; opt-in
+  via address string only. See `docs/usage-and-integration.md` §4.1.
+
 ## [0.4.0] - 2026-06-18
 
 ### Removed (BREAKING)
