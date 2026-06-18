@@ -1,0 +1,22 @@
+{
+  "endpoint": "experiment_result",
+  "base": "https://dev-ab-config.infra.fantacy.live",
+  "namespace": "for_dev_agent_test",
+  "concurrency": 150,
+  "target_qps": 2000,
+  "duration_seconds": 90.000516415,
+  "total_requests": 60156,
+  "error_count": 0,
+  "error_rate_pct": 0,
+  "qps": 668.3961647799396,
+  "status_counts": {
+    "200": 60156
+  },
+  "latency_ms": {
+    "p50": 220.084,
+    "p95": 236.283,
+    "p99": 335.509,
+    "max": 756.64
+  },
+  "started_at": "2026-06-16T17:45:12+08:00"
+}

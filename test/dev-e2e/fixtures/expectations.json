@@ -1,0 +1,722 @@
+[
+  {
+    "ns": "demo-test",
+    "user_id": "gray-user-1",
+    "user_attrs": {},
+    "key": "banner_color",
+    "expected_version_id": "900200021",
+    "expected_value": "red",
+    "source": "experiment_group",
+    "note": "gray owns only welcome_text; banner_color still follows E_cfg group A (bucket-derived)",
+    "applies_to": [
+      "http",
+      "grpc",
+      "go_sdk_grpc",
+      "go_sdk_http",
+      "py_sdk_grpc",
+      "py_sdk_http"
+    ]
+  },
+  {
+    "ns": "demo-test",
+    "user_id": "gray-user-1",
+    "user_attrs": {},
+    "key": "welcome_text",
+    "expected_version_id": "900200013",
+    "expected_value": "welcome-GRAY",
+    "source": "whitelist",
+    "note": "gray release on welcome_text takes priority over experiment",
+    "applies_to": [
+      "http",
+      "grpc",
+      "go_sdk_grpc",
+      "go_sdk_http",
+      "py_sdk_grpc",
+      "py_sdk_http"
+    ]
+  },
+  {
+    "ns": "demo-test",
+    "user_id": "gray-user-2",
+    "user_attrs": {},
+    "key": "welcome_text",
+    "expected_version_id": "900200013",
+    "expected_value": "welcome-GRAY",
+    "source": "whitelist",
+    "note": "gray release on welcome_text takes priority over experiment",
+    "applies_to": [
+      "http",
+      "grpc",
+      "go_sdk_grpc",
+      "go_sdk_http",
+      "py_sdk_grpc",
+      "py_sdk_http"
+    ]
+  },
+  {
+    "ns": "demo-test",
+    "user_id": "u0",
+    "user_attrs": {},
+    "key": "__custom__",
+    "expected_version_id": "",
+    "expected_value": {
+      "enabled": false,
+      "max_items": 20,
+      "variant": "B"
+    },
+    "source": "experiment_group",
+    "note": "E_custom group D (custom_params)",
+    "applies_to": [
+      "http",
+      "grpc",
+      "go_sdk_grpc",
+      "go_sdk_http",
+      "py_sdk_grpc",
+      "py_sdk_http"
+    ]
+  },
+  {
+    "ns": "demo-test",
+    "user_id": "u0",
+    "user_attrs": {
+      "country": {
+        "s": "US"
+      }
+    },
+    "key": "admit_key",
+    "expected_version_id": "900200041",
+    "expected_value": "admit-EXP",
+    "source": "experiment_group",
+    "note": "E_admit admission country==US passes",
+    "applies_to": [
+      "http",
+      "grpc",
+      "go_sdk_grpc",
+      "go_sdk_http",
+      "py_sdk_grpc",
+      "py_sdk_http"
+    ]
+  },
+  {
+    "ns": "demo-test",
+    "user_id": "u0",
+    "user_attrs": {},
+    "key": "admit_key",
+    "expected_version_id": "900200049",
+    "expected_value": "admit-FULL",
+    "source": "full",
+    "note": "E_admit admission fails (no country) → fall back to full release",
+    "applies_to": [
+      "http",
+      "grpc",
+      "go_sdk_grpc",
+      "go_sdk_http",
+      "py_sdk_grpc",
+      "py_sdk_http"
+    ]
+  },
+  {
+    "ns": "demo-test",
+    "user_id": "u0",
+    "user_attrs": {},
+    "key": "banner_color",
+    "expected_version_id": "900200021",
+    "expected_value": "red",
+    "source": "experiment_group",
+    "note": "E_cfg group A (bucket-derived)",
+    "applies_to": [
+      "http",
+      "grpc",
+      "go_sdk_grpc",
+      "go_sdk_http",
+      "py_sdk_grpc",
+      "py_sdk_http"
+    ]
+  },
+  {
+    "ns": "demo-test",
+    "user_id": "u0",
+    "user_attrs": {},
+    "key": "gap_key",
+    "expected_version_id": "900200031",
+    "expected_value": "gap-EXP",
+    "source": "experiment_group",
+    "note": "E_gap hit: layer bucket in [0,4999] AND experiment group G",
+    "applies_to": [
+      "http",
+      "grpc",
+      "go_sdk_grpc",
+      "go_sdk_http",
+      "py_sdk_grpc",
+      "py_sdk_http"
+    ]
+  },
+  {
+    "ns": "demo-test",
+    "user_id": "u0",
+    "user_attrs": {},
+    "key": "welcome_text",
+    "expected_version_id": "900200011",
+    "expected_value": "welcome-A",
+    "source": "experiment_group",
+    "note": "E_cfg group A (bucket-derived)",
+    "applies_to": [
+      "http",
+      "grpc",
+      "go_sdk_grpc",
+      "go_sdk_http",
+      "py_sdk_grpc",
+      "py_sdk_http"
+    ]
+  },
+  {
+    "ns": "demo-test",
+    "user_id": "u1",
+    "user_attrs": {},
+    "key": "__custom__",
+    "expected_version_id": "",
+    "expected_value": {
+      "enabled": false,
+      "max_items": 20,
+      "variant": "B"
+    },
+    "source": "experiment_group",
+    "note": "E_custom group D (custom_params)",
+    "applies_to": [
+      "http",
+      "grpc",
+      "go_sdk_grpc",
+      "go_sdk_http",
+      "py_sdk_grpc",
+      "py_sdk_http"
+    ]
+  },
+  {
+    "ns": "demo-test",
+    "user_id": "u1",
+    "user_attrs": {
+      "country": {
+        "s": "US"
+      }
+    },
+    "key": "admit_key",
+    "expected_version_id": "900200041",
+    "expected_value": "admit-EXP",
+    "source": "experiment_group",
+    "note": "E_admit admission country==US passes",
+    "applies_to": [
+      "http",
+      "grpc",
+      "go_sdk_grpc",
+      "go_sdk_http",
+      "py_sdk_grpc",
+      "py_sdk_http"
+    ]
+  },
+  {
+    "ns": "demo-test",
+    "user_id": "u1",
+    "user_attrs": {},
+    "key": "admit_key",
+    "expected_version_id": "900200049",
+    "expected_value": "admit-FULL",
+    "source": "full",
+    "note": "E_admit admission fails (no country) → fall back to full release",
+    "applies_to": [
+      "http",
+      "grpc",
+      "go_sdk_grpc",
+      "go_sdk_http",
+      "py_sdk_grpc",
+      "py_sdk_http"
+    ]
+  },
+  {
+    "ns": "demo-test",
+    "user_id": "u1",
+    "user_attrs": {},
+    "key": "banner_color",
+    "expected_version_id": "900200021",
+    "expected_value": "red",
+    "source": "experiment_group",
+    "note": "E_cfg group A (bucket-derived)",
+    "applies_to": [
+      "http",
+      "grpc",
+      "go_sdk_grpc",
+      "go_sdk_http",
+      "py_sdk_grpc",
+      "py_sdk_http"
+    ]
+  },
+  {
+    "ns": "demo-test",
+    "user_id": "u1",
+    "user_attrs": {},
+    "key": "gap_key",
+    "expected_version_id": "900200031",
+    "expected_value": "gap-EXP",
+    "source": "experiment_group",
+    "note": "E_gap hit: layer bucket in [0,4999] AND experiment group G",
+    "applies_to": [
+      "http",
+      "grpc",
+      "go_sdk_grpc",
+      "go_sdk_http",
+      "py_sdk_grpc",
+      "py_sdk_http"
+    ]
+  },
+  {
+    "ns": "demo-test",
+    "user_id": "u1",
+    "user_attrs": {},
+    "key": "welcome_text",
+    "expected_version_id": "900200011",
+    "expected_value": "welcome-A",
+    "source": "experiment_group",
+    "note": "E_cfg group A (bucket-derived)",
+    "applies_to": [
+      "http",
+      "grpc",
+      "go_sdk_grpc",
+      "go_sdk_http",
+      "py_sdk_grpc",
+      "py_sdk_http"
+    ]
+  },
+  {
+    "ns": "demo-test",
+    "user_id": "u2",
+    "user_attrs": {},
+    "key": "__custom__",
+    "expected_version_id": "",
+    "expected_value": {
+      "enabled": true,
+      "max_items": 10,
+      "variant": "A"
+    },
+    "source": "experiment_group",
+    "note": "E_custom group C (custom_params)",
+    "applies_to": [
+      "http",
+      "grpc",
+      "go_sdk_grpc",
+      "go_sdk_http",
+      "py_sdk_grpc",
+      "py_sdk_http"
+    ]
+  },
+  {
+    "ns": "demo-test",
+    "user_id": "u2",
+    "user_attrs": {},
+    "key": "banner_color",
+    "expected_version_id": "900200022",
+    "expected_value": "blue",
+    "source": "experiment_group",
+    "note": "E_cfg group B (bucket-derived)",
+    "applies_to": [
+      "http",
+      "grpc",
+      "go_sdk_grpc",
+      "go_sdk_http",
+      "py_sdk_grpc",
+      "py_sdk_http"
+    ]
+  },
+  {
+    "ns": "demo-test",
+    "user_id": "u2",
+    "user_attrs": {},
+    "key": "gap_key",
+    "expected_version_id": "900200039",
+    "expected_value": "gap-FULL",
+    "source": "full",
+    "note": "layer gap: L_gap bucket in [5000,9999] uncovered → fall back to full release",
+    "applies_to": [
+      "http",
+      "grpc",
+      "go_sdk_grpc",
+      "go_sdk_http",
+      "py_sdk_grpc",
+      "py_sdk_http"
+    ]
+  },
+  {
+    "ns": "demo-test",
+    "user_id": "u2",
+    "user_attrs": {},
+    "key": "welcome_text",
+    "expected_version_id": "900200012",
+    "expected_value": "welcome-B",
+    "source": "experiment_group",
+    "note": "E_cfg group B (bucket-derived)",
+    "applies_to": [
+      "http",
+      "grpc",
+      "go_sdk_grpc",
+      "go_sdk_http",
+      "py_sdk_grpc",
+      "py_sdk_http"
+    ]
+  },
+  {
+    "ns": "demo-test",
+    "user_id": "u3",
+    "user_attrs": {},
+    "key": "banner_color",
+    "expected_version_id": "900200022",
+    "expected_value": "blue",
+    "source": "experiment_group",
+    "note": "E_cfg group B (bucket-derived)",
+    "applies_to": [
+      "http",
+      "grpc",
+      "go_sdk_grpc",
+      "go_sdk_http",
+      "py_sdk_grpc",
+      "py_sdk_http"
+    ]
+  },
+  {
+    "ns": "demo-test",
+    "user_id": "u3",
+    "user_attrs": {},
+    "key": "welcome_text",
+    "expected_version_id": "900200012",
+    "expected_value": "welcome-B",
+    "source": "experiment_group",
+    "note": "E_cfg group B (bucket-derived)",
+    "applies_to": [
+      "http",
+      "grpc",
+      "go_sdk_grpc",
+      "go_sdk_http",
+      "py_sdk_grpc",
+      "py_sdk_http"
+    ]
+  },
+  {
+    "ns": "demo-test",
+    "user_id": "u6",
+    "user_attrs": {},
+    "key": "__custom__",
+    "expected_version_id": "",
+    "expected_value": {
+      "enabled": true,
+      "max_items": 10,
+      "variant": "A"
+    },
+    "source": "experiment_group",
+    "note": "E_custom group C (custom_params)",
+    "applies_to": [
+      "http",
+      "grpc",
+      "go_sdk_grpc",
+      "go_sdk_http",
+      "py_sdk_grpc",
+      "py_sdk_http"
+    ]
+  },
+  {
+    "ns": "demo-test",
+    "user_id": "u6",
+    "user_attrs": {},
+    "key": "gap_key",
+    "expected_version_id": "900200039",
+    "expected_value": "gap-FULL",
+    "source": "full",
+    "note": "layer gap: L_gap bucket in [5000,9999] uncovered → fall back to full release",
+    "applies_to": [
+      "http",
+      "grpc",
+      "go_sdk_grpc",
+      "go_sdk_http",
+      "py_sdk_grpc",
+      "py_sdk_http"
+    ]
+  },
+  {
+    "ns": "demo-test",
+    "user_id": "wl-force-B",
+    "user_attrs": {},
+    "key": "banner_color",
+    "expected_version_id": "900200022",
+    "expected_value": "blue",
+    "source": "experiment_group",
+    "note": "group whitelist: forced into E_cfg group B (overrides bucket)",
+    "applies_to": [
+      "http",
+      "grpc",
+      "go_sdk_grpc",
+      "go_sdk_http",
+      "py_sdk_grpc",
+      "py_sdk_http"
+    ]
+  },
+  {
+    "ns": "demo-test",
+    "user_id": "wl-force-B",
+    "user_attrs": {},
+    "key": "welcome_text",
+    "expected_version_id": "900200012",
+    "expected_value": "welcome-B",
+    "source": "experiment_group",
+    "note": "group whitelist: forced into E_cfg group B (overrides bucket)",
+    "applies_to": [
+      "http",
+      "grpc",
+      "go_sdk_grpc",
+      "go_sdk_http",
+      "py_sdk_grpc",
+      "py_sdk_http"
+    ]
+  },
+  {
+    "ns": "for_dev_agent_test",
+    "user_id": "gray-fda-1",
+    "user_attrs": {},
+    "key": "greeting",
+    "expected_version_id": "900400021",
+    "expected_value": "hi-GRAY",
+    "source": "whitelist",
+    "note": "gray release on greeting takes priority over (no) experiment",
+    "applies_to": [
+      "http",
+      "grpc",
+      "go_sdk_grpc",
+      "go_sdk_http",
+      "py_sdk_grpc",
+      "py_sdk_http"
+    ]
+  },
+  {
+    "ns": "for_dev_agent_test",
+    "user_id": "u0",
+    "user_attrs": {},
+    "key": "__custom__",
+    "expected_version_id": "",
+    "expected_value": {
+      "tier": "silver",
+      "weight": 2.5
+    },
+    "source": "experiment_group",
+    "note": "E_custom2 silver (custom_params)",
+    "applies_to": [
+      "http",
+      "grpc",
+      "go_sdk_grpc",
+      "go_sdk_http",
+      "py_sdk_grpc",
+      "py_sdk_http"
+    ]
+  },
+  {
+    "ns": "for_dev_agent_test",
+    "user_id": "u0",
+    "user_attrs": {},
+    "key": "color",
+    "expected_version_id": "900400011",
+    "expected_value": "c1",
+    "source": "experiment_group",
+    "note": "E_cfg2 group G1 (bucket-derived)",
+    "applies_to": [
+      "http",
+      "grpc",
+      "go_sdk_grpc",
+      "go_sdk_http",
+      "py_sdk_grpc",
+      "py_sdk_http"
+    ]
+  },
+  {
+    "ns": "for_dev_agent_test",
+    "user_id": "u1",
+    "user_attrs": {},
+    "key": "__custom__",
+    "expected_version_id": "",
+    "expected_value": {
+      "tier": "gold",
+      "weight": 1.5
+    },
+    "source": "experiment_group",
+    "note": "E_custom2 gold (custom_params)",
+    "applies_to": [
+      "http",
+      "grpc",
+      "go_sdk_grpc",
+      "go_sdk_http",
+      "py_sdk_grpc",
+      "py_sdk_http"
+    ]
+  },
+  {
+    "ns": "for_dev_agent_test",
+    "user_id": "u1",
+    "user_attrs": {},
+    "key": "color",
+    "expected_version_id": "900400013",
+    "expected_value": "c3",
+    "source": "experiment_group",
+    "note": "E_cfg2 group G3 (bucket-derived)",
+    "applies_to": [
+      "http",
+      "grpc",
+      "go_sdk_grpc",
+      "go_sdk_http",
+      "py_sdk_grpc",
+      "py_sdk_http"
+    ]
+  },
+  {
+    "ns": "for_dev_agent_test",
+    "user_id": "u15903",
+    "user_attrs": {},
+    "key": "color",
+    "expected_version_id": "900400019",
+    "expected_value": "c-FULL",
+    "source": "full",
+    "note": "experiment-internal gap: E_cfg2 bucket==9999 uncovered → fall back to full release",
+    "applies_to": [
+      "http",
+      "grpc",
+      "go_sdk_grpc",
+      "go_sdk_http",
+      "py_sdk_grpc",
+      "py_sdk_http"
+    ]
+  },
+  {
+    "ns": "for_dev_agent_test",
+    "user_id": "u2",
+    "user_attrs": {},
+    "key": "__custom__",
+    "expected_version_id": "",
+    "expected_value": {
+      "tier": "silver",
+      "weight": 2.5
+    },
+    "source": "experiment_group",
+    "note": "E_custom2 silver (custom_params)",
+    "applies_to": [
+      "http",
+      "grpc",
+      "go_sdk_grpc",
+      "go_sdk_http",
+      "py_sdk_grpc",
+      "py_sdk_http"
+    ]
+  },
+  {
+    "ns": "for_dev_agent_test",
+    "user_id": "u2",
+    "user_attrs": {},
+    "key": "color",
+    "expected_version_id": "900400013",
+    "expected_value": "c3",
+    "source": "experiment_group",
+    "note": "E_cfg2 group G3 (bucket-derived)",
+    "applies_to": [
+      "http",
+      "grpc",
+      "go_sdk_grpc",
+      "go_sdk_http",
+      "py_sdk_grpc",
+      "py_sdk_http"
+    ]
+  },
+  {
+    "ns": "for_dev_agent_test",
+    "user_id": "u3",
+    "user_attrs": {},
+    "key": "__custom__",
+    "expected_version_id": "",
+    "expected_value": {
+      "tier": "gold",
+      "weight": 1.5
+    },
+    "source": "experiment_group",
+    "note": "E_custom2 gold (custom_params)",
+    "applies_to": [
+      "http",
+      "grpc",
+      "go_sdk_grpc",
+      "go_sdk_http",
+      "py_sdk_grpc",
+      "py_sdk_http"
+    ]
+  },
+  {
+    "ns": "for_dev_agent_test",
+    "user_id": "u3",
+    "user_attrs": {},
+    "key": "color",
+    "expected_version_id": "900400011",
+    "expected_value": "c1",
+    "source": "experiment_group",
+    "note": "E_cfg2 group G1 (bucket-derived)",
+    "applies_to": [
+      "http",
+      "grpc",
+      "go_sdk_grpc",
+      "go_sdk_http",
+      "py_sdk_grpc",
+      "py_sdk_http"
+    ]
+  },
+  {
+    "ns": "for_dev_agent_test",
+    "user_id": "u4",
+    "user_attrs": {},
+    "key": "color",
+    "expected_version_id": "900400012",
+    "expected_value": "c2",
+    "source": "experiment_group",
+    "note": "E_cfg2 group G2 (bucket-derived)",
+    "applies_to": [
+      "http",
+      "grpc",
+      "go_sdk_grpc",
+      "go_sdk_http",
+      "py_sdk_grpc",
+      "py_sdk_http"
+    ]
+  },
+  {
+    "ns": "for_dev_agent_test",
+    "user_id": "u53053",
+    "user_attrs": {},
+    "key": "color",
+    "expected_version_id": "900400019",
+    "expected_value": "c-FULL",
+    "source": "full",
+    "note": "experiment-internal gap: E_cfg2 bucket==9999 uncovered → fall back to full release",
+    "applies_to": [
+      "http",
+      "grpc",
+      "go_sdk_grpc",
+      "go_sdk_http",
+      "py_sdk_grpc",
+      "py_sdk_http"
+    ]
+  },
+  {
+    "ns": "for_dev_agent_test",
+    "user_id": "u6",
+    "user_attrs": {},
+    "key": "color",
+    "expected_version_id": "900400012",
+    "expected_value": "c2",
+    "source": "experiment_group",
+    "note": "E_cfg2 group G2 (bucket-derived)",
+    "applies_to": [
+      "http",
+      "grpc",
+      "go_sdk_grpc",
+      "go_sdk_http",
+      "py_sdk_grpc",
+      "py_sdk_http"
+    ]
+  }
+]
