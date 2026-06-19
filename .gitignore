@@ -38,3 +38,12 @@ venv/
 
 # macOS
 .DS_Store
+
+# zyz-worker code-development task artifacts (design docs, status,
+# final reports). Kept locally for traceability but not committed to
+# avoid polluting main with per-task tracking files.
+.zyz-worker/
+
+# dev-e2e ad-hoc load result snapshots (local runs, not the canonical
+# checked-in run-*.json files under test/dev-e2e/load/).
+test/dev-e2e/load/last-run-local*.json
