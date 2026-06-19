@@ -290,7 +290,119 @@ pod-1 收到写入   ──► Redis 拿到所有 sibling pod 列表
 - [ ] 平台侧：评估把 Service 改成 **Headless**（`clusterIP: None`），作为模式 C 终态的服务端工作（仍保留作平台侧 TODO，不属于 SDK 工作）。
 - [ ] 本文档迁出 `docs/tech-notes/` 后归档到内部 wiki，留索引页指向归档位置。
 
-## 9. 参考
+## 9. Headless 模式下 Subscribe push fan-out 是否能简化？
+
+提问场景：模式 C 下客户端按 round_robin 跟每个 pod 各持一条 gRPC 长连接。pod-1 收到管理员写入时，是否可以"只 push pod-1 自己手上的客户端"，把对 sibling pod 的 fan-out 简化为"只通知它们刷 cache 就行,不要 push"？
+
+### 9.1 结论
+
+**不能简化**。所有 pod 都需要被通知，所有 pod 都需要 push 自己手上的 Subscribe 流。否则其他 pod 上的客户端会漏推、退化为 SDK 端 10s 兜底 PullAll 才感知，push 模型变 poll 模型。
+
+### 9.2 推导
+
+Subscribe 是 server-streaming RPC。grpc-go 的 round_robin LB 在调用 unary RPC 时按策略选 subchannel，但对 server-streaming RPC **只在某一条 subchannel 上开流**——选了哪条就 pin 在那条上直到流断开（reconnect 后新流可能选别的 subchannel）。
+
+所以模式 C 下，M 个客户端的 Subscribe 流**分散在所有 N 个 pod 上**（不是每个客户端跟所有 pod 都有 Subscribe 流）：
+
+```
+客户端 c1 的 Subscribe 流 ──pin──► pod-X (X 由 LB 选定)
+客户端 c2 的 Subscribe 流 ──pin──► pod-Y
+...
+客户端 cM 的 Subscribe 流 ──pin──► 分布在所有 N 个 pod 上
+```
+
+写入发生在 pod-1（无论是 admin API 写入还是其它 pod 路由进来的），它只看得到自己手上的 Subscribe 流——其它 pod 上的 c2/c5/c7... 它根本不知道。如果只让 pod-1 push 自己手上的客户端，pod-2..N 上的 Subscribe 流就**永远收不到这次变更的 push**——只能靠 SDK 端的 fallback PullAll（默认 `PullInterval=10s`）兜底，把"实时 push"语义降级为"最多 10s 延迟的 poll"。
+
+所以 fan-out 不可省。
+
+### 9.3 当前 ab-config 的方案恰好就是对的
+
+`internal/api/grpc/configservice/notifier.go` 的 star 拓扑 + Redis sibling 发现：
+
+```
+pod-1 收到写入
+  ├─► self: WakeLocal(ns) → 唤醒 pod-1 本地所有订阅该 ns 的 Subscribe 流并 push
+  ├─► RPC: NodeInternal.Notify(pod-2) → pod-2 WakeLocal(ns) → push pod-2 本地订阅者
+  ├─► RPC: NodeInternal.Notify(pod-3) → pod-3 WakeLocal(ns) → push pod-3 本地订阅者
+  └─► ...
+```
+
+每个 pod 维护自己手上的活跃 Subscribe 列表（grpc.ServerStream 句柄）。写入扇出后，每个 pod 各自给自己手上的客户端 push。Headless 模式 / 模式 B（Ingress L7）/ 普通 ClusterIP（模式 A）下这套机制**完全相同**——LB 模式只影响 Subscribe 流落在哪个 pod 上，不影响 push 路径。
+
+注意：`NodeInternal.Notify` 通知的内容是「namespace 变了，去拉新数据」（轻量唤醒信号），**不是把整份配置数据通过 RPC 传过去**。每个 pod 自己去 DB / cache 拉新版本数据，再 push 到自己手上的流。
+
+### 9.4 可以做的 micro-optimization（与本任务无关）
+
+`notifier.go` 注释里写 originator 路径 "star fan-out, self included"——pod-1 在 fan-out 时把自己也算进去，走的是和 sibling 完全相同的代码路径（避免维护两套）。理论上可以把 self 路径短路（写入完成后直接 WakeLocal，不再对 self 发 fan-out RPC），省一次 self RPC，但对延迟影响 < 1ms，**不属于本设计推荐的优化方向**。
+
+## 10. Headless 不影响公网域名 / HTTP transport / ClusterIP 接入
+
+提问场景：如果平台在 K8S 开启 Headless 模式，是否影响公网域名访问、HTTP 链路、以及继续走普通 ClusterIP 的业务方？
+
+### 10.1 结论
+
+**不影响**。Headless 与 ClusterIP **可以并存**，应作为生产 K8S 部署的标准形态。同一组 Pod 同时挂多个 Service（一个 ClusterIP、一个 Headless），互不干扰。
+
+### 10.2 K8S Service 语义复习
+
+K8S 里 Service 是 Pod 上的「选择器策略」。同一组 Pod 可以被多个不同 Service 同时选中——只要 selector 匹配，每个 Service 独立暴露同一组 Pod，行为彼此正交。
+
+### 10.3 推荐的生产部署形态
+
+```
+                          ┌──────────────────────────┐
+                          │ Pod(app=ab-config)       │
+                          │   :8080 HTTP             │
+                          │   :50051 gRPC            │
+                          │   :9090 metrics          │
+                          └────────┬─────────────────┘
+                                   │
+   ┌───────────────────────────────┼────────────────────────────────┐
+   │ 同一组 Pod,同时被以下多个 Service 选中(selector 都是 run: ab-config) │
+   ▼                               ▼                                ▼
+┌──────────┐               ┌──────────┐                ┌─────────────────────┐
+│ Service  │               │ Service  │                │ Ingress             │
+│ ab-config│               │ ab-config│                │ → Service           │
+│ ClusterIP│               │ -headless│                │   ab-config-public  │
+│          │               │ None     │                │   (LoadBalancer)    │
+└────┬─────┘               └────┬─────┘                └─────────┬───────────┘
+     │ 虚 IP                    │ DNS 直接返回                    │ 公网 SLB
+     │ kube-proxy NAT          │ 所有 ready Pod 的真实 IP        │
+     ▼                          ▼                                ▼
+集群内 HTTP transport     集群内 gRPC 业务方            公网客户端、跨集群业务方
+集群内历史 gRPC 接入      (SDK v0.4.0+ dns:///)         (grpcs://...:443)
+```
+
+### 10.4 各 Service 的角色
+
+| Service | 是否分配 ClusterIP | 谁会用 | 行为 |
+|---|---|---|---|
+| `ab-config`（ClusterIP） | 有 | 公网 Ingress 后端、HTTP transport 业务方、历史 gRPC 接入（裸 `ab-config:50051`）、跨 namespace 业务方 | kube-proxy iptables NAT 到 1 个 pod；gRPC 长连接 L4 pin（模式 A） |
+| `ab-config-headless`（Headless） | 无（`clusterIP: None`） | 集群内同 namespace gRPC 业务方（推荐） | DNS 返回 N 个 pod IP；SDK v0.4.0+ 看到 `dns:///` 前缀自动启用 round_robin（模式 C） |
+| Ingress 后端 Service | 有 | Cloudflare → SLB → Ingress → backend | Ingress 必须能摸到 backend 的虚 IP，**只能是 ClusterIP** |
+
+### 10.5 为什么 Headless 不能替代 ClusterIP
+
+1. **公网 Ingress 链路**：Cloudflare → SLB → Ingress Controller → backend Service，Ingress Controller 必须有一个虚 IP 作为转发目标。**Headless 不分配虚 IP，Ingress 摸不到**。所以公网路径必须有 ClusterIP Service。
+2. **HTTP transport**：HTTP 是短请求或多连接池，L4 pin 在 HTTP 路径上影响很小（不会出现 gRPC 那种"一条长连接所有 RPC 都 pin 同一个 pod"的不均衡）。HTTP 业务方继续走 ClusterIP 是合理的，没必要也走 Headless。
+3. **跨 namespace 业务方**：FQDN 写得对就能用 Headless（如 `dns:///ab-config-headless.prod-ab-config.svc.cluster.local:50051`），但实践中跨 ns 业务方往往不知道目标 ns 的 Headless Service 名字，更可能走 Ingress。
+4. **跨集群业务方**：跨集群通常根本解析不了 `*.svc.cluster.local`（除非有 multi-cluster mesh），只能走 Ingress。
+5. **历史兼容**：旧业务方写裸 `ab-config:50051` 进 ENV 已经在跑，行为是 L4 pin。这种接入在 pod 数较少 + 客户端数 ≫ pod 数的场景下概率上自然均衡，迁移不紧迫。强行去掉 ClusterIP 会让这部分业务方直接报错。
+
+### 10.6 YAML 与运维落地
+
+平台仓 `cmd/prod.manifests.yaml` 提供 ClusterIP Service `${name}`，`cmd/prod.headless-service.yaml` 提供 Headless Service `${name}-headless`。两个文件分别 `kubectl apply`，selector 一样、端口一样、共享同一组 Pod。详见主仓 `docs/aliyun-prod-deploy.md` §9.1。
+
+业务方接入选哪条路径只看他们在 ENV 里填的地址，**不需要改 Pod、不需要改镜像、不需要重启服务**：
+
+| 业务方场景 | ENV 配置 |
+|---|---|
+| 集群内同 ns gRPC（推荐） | `dns:///ab-config-headless.prod-ab-config.svc.cluster.local:50051` |
+| 集群内同 ns HTTP | `http://ab-config.prod-ab-config.svc.cluster.local:8080` + SDK `Transport: "http"` |
+| 跨集群 / 公网 | `grpcs://prod-ab-config-grpc.<your-domain>:443` |
+| 集群内 gRPC 历史 | 裸 `ab-config.prod-ab-config.svc.cluster.local:50051`（仍工作，不推荐新接入） |
+
+## 11. 参考
 
 - gRPC LB 官方博客：<https://grpc.io/blog/grpc-load-balancing/>
 - SDK 客户端 LB 实现入口（符号定位，行号会随提交漂移）：
@@ -300,5 +412,6 @@ pod-1 收到写入   ──► Redis 拿到所有 sibling pod 列表
   - Go：`sdk/go/tipsyabconfig/sdk.go` 内 `Init` 调用 `cli.dial(configTarget)` 与 `cli.dial(abtestTarget)`。
   - Python：`sdk/python/tipsy_ab_config/client.py` 内 `init` 调用 `_build_channel(cfg, cfg.config_service_addr, ...)` 与 `_build_channel(cfg, cfg.abtest_service_addr, ...)`。
 - 服务端 push fan-out：`internal/api/grpc/configservice/notifier.go`、`cmd/server/main.go:879-934`（主仓 `tipsy-ab-config`）
+- 平台 K8S 部署形态（含 ClusterIP + Headless 双 Service 共存）：主仓 `docs/aliyun-prod-deploy.md` §9.1、`cmd/prod.headless-service.yaml`、`cmd/prod.manifests.yaml`
 - DEV 网络延迟对照实测：`test/dev-e2e/RESULTS.md` §2026-06-18
 - SDK 接入文档：`docs/usage-and-integration.md` §4.1 / §4.1.1
