@@ -7,6 +7,10 @@ import "google/protobuf/struct.proto";
 
 option go_package = "github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk/api/gen/go/tipsy/abtest/v1;abtestv1";
 
+option java_multiple_files = true;
+option java_package = "io.tipsy.abconfig.proto.abtest.v1";
+option java_outer_classname = "AbtestProto";
+
 // AbtestService is the gRPC entry point for the abtest module (v2).
 //
 //   - GetExperimentResult: business SDK ⇄ abtest. Given (namespace, user_id,

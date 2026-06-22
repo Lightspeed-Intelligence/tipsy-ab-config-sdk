@@ -1,0 +1,5 @@
+# Maven build output (includes generated protobuf / gRPC sources under
+# target/generated-sources/; the .proto sources are the single source of
+# truth and code is regenerated on every `mvn` run, so nothing here is
+# checked in).
+target/

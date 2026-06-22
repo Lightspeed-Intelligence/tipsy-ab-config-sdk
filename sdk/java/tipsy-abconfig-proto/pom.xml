@@ -1,0 +1,93 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>io.tipsy</groupId>
+    <artifactId>tipsy-ab-config-parent</artifactId>
+    <version>0.1.0</version>
+  </parent>
+
+  <artifactId>tipsy-abconfig-proto</artifactId>
+  <packaging>jar</packaging>
+
+  <name>Tipsy AB-config Java SDK :: proto</name>
+  <description>
+    Generated protobuf messages + gRPC stubs for the Tipsy config / abtest
+    services. Sources are the single source of truth under api/proto; code is
+    generated at build time by protobuf-maven-plugin (downloads protoc + the
+    grpc-java plugin binaries) and is NOT checked in.
+  </description>
+
+  <dependencies>
+    <dependency>
+      <groupId>com.google.protobuf</groupId>
+      <artifactId>protobuf-java</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>com.google.protobuf</groupId>
+      <artifactId>protobuf-java-util</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>io.grpc</groupId>
+      <artifactId>grpc-protobuf</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>io.grpc</groupId>
+      <artifactId>grpc-stub</artifactId>
+    </dependency>
+    <!-- Supplies javax.annotation.Generated referenced by generated gRPC
+         stubs on Java 9+; provided scope (not needed at runtime). -->
+    <dependency>
+      <groupId>org.apache.tomcat</groupId>
+      <artifactId>annotations-api</artifactId>
+      <scope>provided</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <!-- os-maven-plugin resolves ${os.detected.classifier} (e.g.
+         linux-x86_64) before plugin/dependency resolution, so the protoc and
+         grpc-java plugin artifacts pick the correct native binary. -->
+    <extensions>
+      <extension>
+        <groupId>kr.motd.maven</groupId>
+        <artifactId>os-maven-plugin</artifactId>
+        <version>${os-maven-plugin.version}</version>
+      </extension>
+    </extensions>
+
+    <plugins>
+      <plugin>
+        <groupId>org.xolstice.maven.plugins</groupId>
+        <artifactId>protobuf-maven-plugin</artifactId>
+        <configuration>
+          <!-- Download protoc binary (no dependency on system protoc). -->
+          <protocArtifact>com.google.protobuf:protoc:${protobuf.version}:exe:${os.detected.classifier}</protocArtifact>
+          <!-- Single source of truth: the repo's api/proto tree. WKT
+               (google/protobuf/*.proto) are resolved from protoc's built-in
+               include, not from here. -->
+          <protoSourceRoot>${project.basedir}/../../../api/proto</protoSourceRoot>
+          <!-- grpc-java plugin for the compile-custom (stub) goal. -->
+          <pluginId>grpc-java</pluginId>
+          <pluginArtifact>io.grpc:protoc-gen-grpc-java:${grpc.version}:exe:${os.detected.classifier}</pluginArtifact>
+          <!-- includeStdTypes intentionally left default (false): WKT Java
+               classes come from protobuf-java, do not regenerate them. -->
+        </configuration>
+        <executions>
+          <execution>
+            <id>generate-messages-and-stubs</id>
+            <goals>
+              <!-- compile        -> protobuf message classes -->
+              <!-- compile-custom  -> gRPC stub classes (grpc-java) -->
+              <goal>compile</goal>
+              <goal>compile-custom</goal>
+            </goals>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
+</project>
