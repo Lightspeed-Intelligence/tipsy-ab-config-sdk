@@ -9,11 +9,15 @@
     the DEV environment. This is the Java counterpart of test/dev-e2e/clients/{go,py}.
 
     It is INTENTIONALLY NOT part of the sdk/java reactor (no <parent>): the harness
-    depends on the *released / locally-installed* SDK artifact `io.tipsy:tipsy-abconfig`
-    exactly the way a downstream consumer would, and must never be reachable from the
-    product build. Install the SDK to your local ~/.m2 first:
+    depends on the *released* SDK artifact `io.tipsy:tipsy-abconfig` exactly the way
+    a downstream consumer would, and must never be reachable from the product build.
+    There is no <repositories> block — once published, the dependency resolves from
+    Maven Central. Two ways to get the artifact:
 
-        (cd sdk/java && mvn -q -DskipTests install)
+      A) Published (real consumer): set <tipsy-abconfig.version> to a released
+         version; the build pulls it from Maven Central. No local install needed.
+      B) Pre-release (local dev): install the reactor first:
+             (cd sdk/java && mvn -q -DskipTests install)
 
     Build a runnable fat-jar:   mvn -q -DskipTests package
     Run (fat-jar):              AB_CONFIG_TOKEN=... java -jar target/tipsy-dev-e2e-java.jar

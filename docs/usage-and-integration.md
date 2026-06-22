@@ -274,6 +274,7 @@ SDK 里有直接获取实验结果的 API，不需要绕到裸 HTTP：
 | --- | --- | --- | --- |
 | Go | `Client.GetConfig` | `Client.GetConfigStatic` | `Client.GetExperimentResult` |
 | Python | `Client.get_config` | `Client.get_config_static` | `Client.get_experiment_result` |
+| Java | `TipsyAbConfigClient.getConfig` | `TipsyAbConfigClient.getConfigStatic` | `TipsyAbConfigClient.getExperimentResult` |
 
 获取实验结果 API 是 `AbtestService.GetExperimentResult` 的 SDK 包装，适合直接读取 `custom_params`、查看命中的 group，或按 `layer_ids` / `experiment_type` / `display_type` 控制结果形态。它和 `GetConfig` 不同：不会读本地 config cache，不会做配置 value 合成，也不会自动发曝光事件；它返回原始实验计算结果。
 
@@ -286,6 +287,7 @@ SDK 里有直接获取实验结果的 API，不需要绕到裸 HTTP：
 | **GitHub Releases 页**（最直观）| 看所有 SDK 的发布历史、release note、wheel 资产 | <https://github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk/releases> |
 | **Python SDK CHANGELOG** | Python 端逐版本的 Added/Changed/Removed | <https://github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk/blob/main/sdk/python/CHANGELOG.md> |
 | **Go SDK CHANGELOG** | Go 端逐版本的 Added/Changed/Removed | <https://github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk/blob/main/sdk/go/tipsyabconfig/CHANGELOG.md> |
+| **Java SDK CHANGELOG** | Java 端逐版本的 Added/Changed/Removed | <https://github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk/blob/main/sdk/java/tipsy-abconfig/CHANGELOG.md> |
 | **Git tags / Go list**（命令行）| 程序化获取 | 见下方命令 |
 
 **命令行查最新版本**：
@@ -302,9 +304,16 @@ curl -s https://api.github.com/repos/Lightspeed-Intelligence/tipsy-ab-config-sdk
 # 或者直接 git 查
 git ls-remote --tags --refs git@github.com:Lightspeed-Intelligence/tipsy-ab-config-sdk.git \
   | awk '{print $2}' | grep -E '^refs/tags/(python-sdk|sdk/go/tipsyabconfig)/v' | sort -V | tail -5
+
+# Java SDK 最新版（Maven Central，无需凭据）
+curl -s 'https://repo1.maven.org/maven2/io/tipsy/tipsy-abconfig/maven-metadata.xml' \
+  | grep -oE '<release>[^<]+' | sed 's/<release>//'
+# 或查 git tag（前缀 java-sdk/v）
+git ls-remote --tags --refs git@github.com:Lightspeed-Intelligence/tipsy-ab-config-sdk.git \
+  | awk '{print $2}' | grep -E '^refs/tags/java-sdk/v' | sort -V | tail -3
 ```
 
-> Go 子目录 module 的 git tag 命名规则是 `<相对路径>/vX.Y.Z` —— 例如 `sdk/go/tipsyabconfig/vX.Y.Z`、`sdk/go/tipsyauth/vX.Y.Z`、`api/gen/go/vX.Y.Z`、`python-sdk/vX.Y.Z`。
+> Go 子目录 module 的 git tag 命名规则是 `<相对路径>/vX.Y.Z` —— 例如 `sdk/go/tipsyabconfig/vX.Y.Z`、`sdk/go/tipsyauth/vX.Y.Z`、`api/gen/go/vX.Y.Z`、`python-sdk/vX.Y.Z`、`java-sdk/vX.Y.Z`。
 
 下文 §4.1 / §4.2 的安装命令默认拉最新版本；要在 CI / 生产里 pin 到具体 tag 时，把命令里的 `@latest` 或 `${LATEST_TAG}` 换成上面查到的具体 tag 即可。
 
@@ -797,6 +806,96 @@ async with sdk.abtest_scope(
 trace_id 为可选字符串。未传或空串时由 SDK / 服务端自动填充 UUID v4（36 字符带 `-`）；最大 128 字符，超出会被服务端截断并打 WARN。后台 PullAll 等定时调用会生成独立 trace_id，同一 SDK 实例的日志可能落到多个 trace 下，这是预期。
 
 > **关于 trace_id 的语义**：`trace_id` 是"关联标识"——把同一次业务请求在 SDK 日志、服务端实验结果日志、未来的实验结果数据上报里串到一起。业务方可以按自身需求选择传什么 ID（如搜推服务直接传 `request_id`、已接入 OpenTelemetry 的服务传 OTel trace id），平台不规定字面格式，详见 §4.1 同名说明。
+
+### 4.3 Java SDK 接入
+
+Java SDK 与 Go / Python **全量对齐**，语言基线 **Java 21**，Maven 坐标 groupId `io.tipsy`。完整文档见 [`sdk/java/README.md`](../sdk/java/README.md)。
+
+#### 4.3.0 接入方需要做什么（快速清单）
+
+**① 引依赖（无需任何凭据，从 Maven Central 拉取）**
+
+发布版本在 **Maven Central**（与 `page.liam:pine` 同一发布通道），业务工程直接声明依赖：
+
+```xml
+<dependency>
+  <groupId>io.tipsy</groupId>
+  <artifactId>tipsy-abconfig</artifactId>
+  <version>0.1.0</version>   <!-- 最新版见 §4.0 的查询命令 -->
+</dependency>
+<!-- 仅在需要本服务自签 service token 时再加： -->
+<dependency>
+  <groupId>io.tipsy</groupId>
+  <artifactId>tipsy-auth</artifactId>
+  <version>0.1.0</version>
+</dependency>
+```
+
+> `tipsy-abconfig` 已传递依赖 `tipsy-abconfig-proto`（生成的 gRPC stub）与 `tipsy-auth`；
+> gRPC 传输用 `grpc-netty-shaded`（重定位 netty，避免与宿主 netty 冲突）。
+
+**② 构造 client（进程级单例，应用启动时建一次，关闭时 `close()`）**
+
+```java
+import io.tipsy.abconfig.*;
+import java.time.Duration;
+import java.util.List;
+
+TipsyAbConfigClient client = TipsyAbConfigClient.create(
+    Config.builder()
+        .namespaces(List.of("tipsy-chat"))
+        // gRPC（推荐 K8S 内 Headless + dns:/// 自动 round_robin）：
+        .configServiceAddr("grpcs://dev-ab-config-grpc.infra.fantacy.live:443")
+        .abtestServiceAddr("grpcs://dev-ab-config-grpc.infra.fantacy.live:443")
+        .token(System.getenv("AB_CONFIG_TOKEN"))   // HS256 service token
+        .build());
+// 应用退出时：client.close();  （实现了 AutoCloseable）
+```
+
+> **地址 scheme（方案 Y，与 Go/Python 同）**：`grpcs://host:port[?authority=&insecure=]` 走 TLS；
+> 裸 `host:port` / `grpc://host:port` 走明文 h2c；`dns:///svc.ns.svc.cluster.local:port` 自动启用
+> 客户端 `round_robin`；`http(s)://` 需配 `.transport(Transport.HTTP)`（HTTP 模式 protojson POST，仅轮询、无 Subscribe）。
+
+**③ 每个业务请求构造 `AbtestContext` 并显式传给 `getConfig`**
+
+```java
+// 进站请求里拿到 uid + 属性后：
+AbtestContext ctx = client.newAbtestContext(
+    userId, Map.of("country", "US"));   // 也可带 trace_id 重载
+String value = client.getConfig(ctx, "tipsy-chat", "rerank_threshold", "0.5");
+// 无用户身份的服务级读取：client.getConfigStatic("tipsy-chat", key).orElse("0.5");
+// 直接读实验结果（custom_params / 分组）：client.getExperimentResult(ExperimentResultRequest.builder()...build());
+```
+
+> **为什么显式传 `AbtestContext`（而非 ThreadLocal）**：经调研业务方 `tipsy-recsys/pine-java`——
+> 单个请求会在 `newVirtualThreadPerTaskExecutor()` 上 fan-out 到多个虚拟线程，ThreadLocal **不会**
+> 跨 fan-out 传播。因此 SDK 的契约是**显式传参**（与 Go 的显式 `abctx` 参数一致）。SDK 另提供可选的纯 JDK
+> 便捷件 `io.tipsy.abconfig.web.{AbtestContextHolder, HttpServerSupport}`（基于 `com.sun.net.httpserver`），
+> 仅用于 thread-per-request 边缘，且 Javadoc 明确标注 fan-out 不传播警示。**不**提供 servlet/Spring filter。
+
+#### 4.3.1 与 Go/Python 的对外差异（有意设计，非缩水）
+
+- `getConfigStatic` 返回 `Optional<String>`（命中含空串也是 present；未命中 `empty()`）——对应 Go 的 `(value, bool)`；调用方用 `.orElse(default)`。
+- 用显式 `AbtestContext` 参数 + 可选 `AbtestContextHolder` 替代 Go 的 context-value（不提供 `WithAbtestContext`/`AbtestContextFromContext` 等价 API）。
+- gRPC 拨号定制用 `Config.channelConfigurator(UnaryOperator<ManagedChannelBuilder<?>>)`（替代 Go 的 `DialOptions`）。
+- 日志走 SLF4J 门面（宿主选 backend），不在 `Config` 里传 logger。
+- `tipsy-auth` 的 `JwtSigner` 签发 HS256 service token，claims `{roles,namespaces,sub,iat,exp}`，与服务端验证契约一致。
+
+#### 4.3.2 自签 service token（可选）
+
+```java
+import io.tipsy.auth.*;
+import java.time.Duration;
+import java.util.List;
+
+String token = JwtSigner.create(System.getenv("TIPSY_SERVICE_SECRET"))
+    .issue(IssueOptions.builder()
+        .subject("my-service")
+        .roles(List.of("business_sdk"))
+        .namespaces(List.of("*"))
+        .ttl(Duration.ofHours(8))
+        .build());
+```
 
 ## 5. 裸 HTTP 接口
 

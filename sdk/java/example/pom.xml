@@ -37,6 +37,18 @@
         </configuration>
       </plugin>
 
+      <!-- The parent's `release` profile attaches the central-publishing plugin
+           (extensions=true) to every module. The example is a demo, not a
+           published library, so disable its upload to Maven Central. Harmless
+           when the release profile is inactive. -->
+      <plugin>
+        <groupId>org.sonatype.central</groupId>
+        <artifactId>central-publishing-maven-plugin</artifactId>
+        <configuration>
+          <skipPublishing>true</skipPublishing>
+        </configuration>
+      </plugin>
+
       <!-- Lets the example be run directly with `mvn -pl example exec:java`
            (no -Dexec.mainClass needed). Version pinned locally to keep the
            change scoped to this non-published module. -->

@@ -23,14 +23,10 @@ SDK 是纯 gRPC / HTTP 下游客户端：进程内维护配置缓存（启动 `P
 
 ## 安装
 
-### 本地构建 / 安装到 `.m2`
+### Maven Central（推荐）
 
-```bash
-cd sdk/java
-mvn -q -DskipTests install
-```
-
-完成后即可在下游 Maven 项目中引用：
+正式版本发布在 **Maven Central**（通过 Sonatype Central Publisher Portal，与
+`page.liam:pine` 同一发布方式），下游无需任何凭据即可拉取：
 
 ```xml
 <dependency>
@@ -49,8 +45,22 @@ mvn -q -DskipTests install
 > `tipsy-abconfig` 已 compile-scope 依赖 `tipsy-auth` 与 `tipsy-abconfig-proto`，
 > 引入主 SDK 即可传递获得；显式声明 `tipsy-auth` 仅在你单独使用签名工具时需要。
 
-> **Maven Central**：本任务只产出可构建、可测试、可本地 `mvn install` 的工程；
-> 正式发布到 Maven Central 的流程后续文档化（占位）。
+最新版本号见
+[GitHub Releases](https://github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk/releases)
+（tag 前缀 `java-sdk/v`）或各模块 `CHANGELOG.md`。
+
+### 本地构建 / 安装到 `.m2`（开发期）
+
+发布前或本地联调时，可直接安装到本地仓库：
+
+```bash
+cd sdk/java
+mvn -q -DskipTests install
+```
+
+> **发布流程**：见 [`RELEASING.md`](./RELEASING.md)。打 `java-sdk/vX.Y.Z` tag 后由
+> `.github/workflows/java-sdk.yml` 的 release job 自动 `mvn deploy -Prelease`
+> 发布到 Maven Central（需 `CENTRAL_USERNAME`/`CENTRAL_TOKEN` + GPG key 的 repo secrets）。
 
 ## 快速开始
 

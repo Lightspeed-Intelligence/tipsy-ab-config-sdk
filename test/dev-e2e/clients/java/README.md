@@ -10,9 +10,11 @@ Client tags: `java_sdk_grpc` / `java_sdk_http` (already part of `bucketfind`'s
 `allClients`, so every fixture row's `applies_to` includes them).
 
 This directory is a **standalone Maven project** (no `<parent>`): it depends on
-the *released / locally-installed* SDK artifact exactly the way a downstream
-consumer would, and is **deliberately NOT part of the `sdk/java` reactor**
-(test-harness only; it never touches product code).
+the *released* SDK artifact `io.tipsy:tipsy-abconfig` exactly the way a
+downstream consumer would, and is **deliberately NOT part of the `sdk/java`
+reactor** (test-harness only; it never touches product code). There is no
+`<repositories>` block — once the SDK is published, the dependency resolves
+from **Maven Central** like any other public artifact.
 
 ## What it asserts
 
@@ -34,19 +36,30 @@ double-wrap and break admission matching.
 
 ## Build
 
-First install the Java SDK into your local `~/.m2` (the harness resolves
-`io.tipsy:tipsy-abconfig:0.1.0` from there):
+The harness resolves `io.tipsy:tipsy-abconfig` the way a real business
+consumer does. Two modes:
+
+**A. Published jar from Maven Central (the real business-consumer simulation).**
+Once the SDK is released (`java-sdk/vX.Y.Z` tag → CI `mvn deploy -Prelease`),
+the dependency is on Maven Central — no local install, no custom repo. Just set
+`<tipsy-abconfig.version>` in `pom.xml` to the released version and build:
 
 ```sh
-(cd sdk/java && mvn -q -DskipTests install)
-```
-
-Then build a runnable fat-jar:
-
-```sh
-(cd test/dev-e2e/clients/java && mvn -q -DskipTests package)
+# (optionally first prove nothing is cached locally, so the build MUST hit Central)
+rm -rf ~/.m2/repository/io/tipsy/tipsy-abconfig
+(cd test/dev-e2e/clients/java && mvn -q -DskipTests package)   # pulls io.tipsy:tipsy-abconfig from Central
 # → target/tipsy-dev-e2e-java.jar
 ```
+
+**B. Local pre-release build (`~/.m2`).** Before a release is on Central, build
+the SDK reactor and install it locally first:
+
+```sh
+(cd sdk/java && mvn -q -DskipTests install)                    # → ~/.m2/io/tipsy/...
+(cd test/dev-e2e/clients/java && mvn -q -DskipTests package)
+```
+
+Either way you get `target/tipsy-dev-e2e-java.jar`.
 
 The fat-jar bundles `grpc-netty-shaded`, `protobuf-java-util`, Jackson (fixture
 parsing) and `slf4j-simple` (so the SDK's own WARN/ERROR surface on stderr). The
