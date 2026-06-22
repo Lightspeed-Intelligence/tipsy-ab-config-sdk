@@ -458,14 +458,14 @@ defer sdk.Close()
 | 部署形态 | 业务客户端配置 | 备注 |
 | --- | --- | --- |
 | DEV（Coolify 单实例 + Cloudflare） | `grpcs://dev-ab-config-grpc.infra.fantacy.live:443` | 公网 TLS，pick_first 单连 |
-| 生产 K8S 同 namespace（推荐） | `dns:///ab-config-grpc.<ns>.svc.cluster.local:50051` | Headless Service + round_robin，要求 Service 改 `clusterIP: None` |
-| 同集群 internal Ingress（过渡） | `ab-config-grpc.internal:80` | 模式 B，需要 split-horizon DNS |
+| 生产 K8S 同集群同 ns（推荐） | `dns:///tipsy-ab-config-headless.<ns>.svc.cluster.local:50051` | Headless Service + round_robin，纯内网 |
+| 生产 K8S 同集群跨 ns（推荐） | `dns:///tipsy-ab-config-headless.<server-ns>.svc.cluster.local:50051` | 同上——同集群 CoreDNS 跨 ns 可解析，FQDN 里 `<server-ns>` 填 ab-config 所在 ns（不是调用方自己的 ns），纯内网 + round_robin，不必出 Ingress |
+| 同集群 internal Ingress（过渡） | `tipsy-ab-config-grpc.internal:80` | 模式 B，需要 split-horizon DNS |
 | 公网 TLS（已有部署） | `grpcs://ab-config.example.com:443` | 同 DEV 形态 |
 | 虚拟机（自部署） | `host:port` 或 `grpcs://host:443` | pick_first 单连，无 LB |
-| K8S 跨 namespace（仍工作） | `dns:///ab-config-grpc.<other-ns>.svc.cluster.local:50051` | 同生产形态，只是 FQDN 写全；要求该 ns 也是 Headless |
 | **K8S 跨集群 / multi-cluster mesh / federation（不覆盖）** | — | 本任务不提供方案，请走模式 B（service mesh 或 internal Ingress） |
 
-关于上表中"同集群本地裸 Service DNS"的最后兼容形态：历史接入文档曾推荐过裸 `ab-config-grpc:50051`（K8S ClusterIP Service DNS）写法。这是 L4 pin 模式（模式 A），多业务客户端 + 多 ab-config 实例下负载分布严重不均，**生产新接入不推荐**，仅作为历史兼容形态保留。新接入请按上表选 Headless（同集群推荐）、internal Ingress（过渡）或公网 TLS（DEV / 已有部署）。
+关于上表中"同集群本地裸 Service DNS"的最后兼容形态：历史接入文档曾推荐过裸 `tipsy-ab-config:50051`（K8S ClusterIP Service DNS）写法。这是 L4 pin 模式（模式 A），多业务客户端 + 多 ab-config 实例下负载分布严重不均，**生产新接入不推荐**，仅作为历史兼容形态保留。新接入请按上表选 Headless（同集群推荐，含跨 ns）、internal Ingress（过渡）或公网 TLS（DEV / 已有部署）。
 
 关于同集群 internal Ingress（模式 B，过渡形态）的额外约束：
 
@@ -485,12 +485,12 @@ defer sdk.Close()
 apiVersion: v1
 kind: Service
 metadata:
-  name: ab-config-grpc
+  name: tipsy-ab-config-headless
   namespace: <ns>
 spec:
   clusterIP: None            # 关键：标记为 Headless Service
   selector:
-    app: ab-config
+    app: tipsy-ab-config
   ports:
     - name: grpc
       port: 50051
@@ -522,7 +522,7 @@ readinessProbe:
 - 现有 `Keepalive` 字段对每条子连接（subchannel）仍然生效。
 - 如果业务方想要 pick_first 行为（即只连一个 pod），应直接用裸 `host:port` 或 `passthrough:///host:port`，**不要在 Config 里加 opt-out 字段**（SDK 不提供此字段）。
 
-**强调**：模式 C 仅适用于「客户端与 ab-config Server 在同一 K8S 集群同一 VPC」。跨集群 / multi-cluster mesh / federation 不在本方案覆盖范围内，请走模式 B（service mesh 或 internal Ingress）。跨 namespace 形态仍工作，FQDN 写全即可（见上表对照行）。
+**强调**：模式 C 仅适用于「客户端与 ab-config Server 在同一 K8S 集群同一 VPC」。跨集群 / multi-cluster mesh / federation 不在本方案覆盖范围内，请走模式 B（service mesh 或 internal Ingress）。**同集群跨 namespace 同样推荐走模式 C**——同集群 CoreDNS 能解析任意 ns 的 headless FQDN，把 FQDN 里的 ns 段写成 ab-config 所在 ns 即可，纯内网 + round_robin，不必出 Ingress（见上表对照行）。
 
 详细的负载均衡模式对比与 push 模型分析见 [`docs/tech-notes/grpc-load-balancing-and-push.md`](tech-notes/grpc-load-balancing-and-push.md)。
 
@@ -530,7 +530,7 @@ readinessProbe:
 
 | 写法 | 行为 | 适用 |
 |---|---|---|
-| 裸 `host:port`（如 `ab-config:50051`） | 明文 h2c | 内网默认，向后兼容 |
+| 裸 `host:port`（如 `tipsy-ab-config:50051`） | 明文 h2c | 内网默认，向后兼容 |
 | `grpc://host:port` | 明文 h2c | 显式明文 |
 | `grpcs://host:port` | TLS（SNI/证书名取 host） | 公网标准（未来形） |
 | `grpcs://host:port?authority=<域名>&insecure=<bool>` | TLS + 覆盖 :authority/SNI + 可选跳校验 | 直连源站 IP 等特殊链路 |

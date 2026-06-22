@@ -61,7 +61,7 @@ SDK 内部为 `ConfigService` 与 `AbtestService` **各自独立 dial 一条 `*g
 
 ### 2.1 模式 A：L4 LB（最容易踩坑的模式）
 
-典型部署：客户端配 ClusterIP Service DNS（如 `ab-config-grpc.<ns>.svc.cluster.local:50051`），grpc-go 默认 DNS resolver pick-first 拿到 Service 的虚 IP，跟它建一条 TCP。kube-proxy iptables/IPVS 在 TCP 握手时挑一个 backend pod，**之后这条 TCP 一直 pin 到那个 pod**。
+典型部署：客户端配 ClusterIP Service DNS（如 `tipsy-ab-config.<ns>.svc.cluster.local:50051`），grpc-go 默认 DNS resolver pick-first 拿到 Service 的虚 IP，跟它建一条 TCP。kube-proxy iptables/IPVS 在 TCP 握手时挑一个 backend pod，**之后这条 TCP 一直 pin 到那个 pod**。
 
 **问题**：N 个业务客户端起来，每个客户端 pin 1 个 pod。当客户端数 ≪ pod 数时极度不均；甚至会出现部分 pod 无流量。
 
@@ -83,7 +83,7 @@ gRPC 官方专门讨论过这个反 pattern：<https://grpc.io/blog/grpc-load-ba
 
 典型配置：
 ```go
-grpc.NewClient("dns:///ab-config-grpc.<ns>.svc.cluster.local:50051",
+grpc.NewClient("dns:///tipsy-ab-config-headless.<ns>.svc.cluster.local:50051",
     grpc.WithDefaultServiceConfig(`{"loadBalancingConfig":[{"round_robin":{}}]}`),
 )
 ```
@@ -120,17 +120,17 @@ dev 是 **模式 B 串联（Cloudflare + Traefik）**，但 backend 只有 1 个
 业务客户端配：
 
 ```
-config_service_addr = "ab-config-grpc.internal:80"   # 或 :443 走 TLS
-abtest_service_addr = "ab-config-grpc.internal:80"
+config_service_addr = "tipsy-ab-config-grpc.internal:80"   # 或 :443 走 TLS
+abtest_service_addr = "tipsy-ab-config-grpc.internal:80"
 ```
 
-集群内 DNS（CoreDNS）通过 split-horizon 把 `ab-config-grpc.internal` 解析到 internal Ingress Controller 的 ClusterIP，**不出 VPC**。
+集群内 DNS（CoreDNS）通过 split-horizon 把 `tipsy-ab-config-grpc.internal` 解析到 internal Ingress Controller 的 ClusterIP，**不出 VPC**。
 
 落地工作：
 
 - 在 ab-config 服务前部署一个 **internal-only Ingress Controller**（NGINX/Traefik 都可），与对外 Ingress 分开，`ingressClassName: internal`。
 - 给 ab-config 配 Ingress 资源，指向 internal Ingress Controller。
-- 在 CoreDNS 加 rewrite 把 `ab-config-grpc.internal` 解析到 internal Ingress 的 ClusterIP。
+- 在 CoreDNS 加 rewrite 把 `tipsy-ab-config-grpc.internal` 解析到 internal Ingress 的 ClusterIP。
 - 业务方按 4.1 接入文档配 ENV。
 
 代价：每个 RPC 多一跳 < 1ms 的内网飞行 + 一次 HTTP/2 帧 parse/serialize（µs 级）。**好处**：RPC 级公平 LB、客户端无需感知 pod 拓扑、与对外 Ingress 隔离。
@@ -140,8 +140,8 @@ abtest_service_addr = "ab-config-grpc.internal:80"
 业务客户端配：
 
 ```
-config_service_addr = "dns:///ab-config-grpc.<ns>.svc.cluster.local:50051"
-abtest_service_addr = "dns:///ab-config-grpc.<ns>.svc.cluster.local:50051"
+config_service_addr = "dns:///tipsy-ab-config-headless.<ns>.svc.cluster.local:50051"
+abtest_service_addr = "dns:///tipsy-ab-config-headless.<ns>.svc.cluster.local:50051"
 ```
 
 落地条件：
@@ -262,7 +262,7 @@ pod-1 收到写入   ──► Redis 拿到所有 sibling pod 列表
 
 集群外 Ingress 通常用 TLS（`grpcs://...:443`）。集群内 → Ingress 仍走 TLS 会让吞吐降 30–50%（Envoy/Nginx 普遍数据）。
 
-**推荐**：internal Ingress 走明文 h2c（端口 80 或集群内自定义）。客户端配 `ab-config-grpc.internal:80`，省 TLS 成本。
+**推荐**：internal Ingress 走明文 h2c（端口 80 或集群内自定义）。客户端配 `tipsy-ab-config-grpc.internal:80`，省 TLS 成本。
 
 ### 6.3 必须绕开 Cloudflare
 
@@ -350,44 +350,42 @@ K8S 里 Service 是 Pod 上的「选择器策略」。同一组 Pod 可以被多
 ### 10.3 推荐的生产部署形态
 
 ```
-                          ┌──────────────────────────┐
-                          │ Pod(app=ab-config)       │
-                          │   :8080 HTTP             │
-                          │   :50051 gRPC            │
-                          │   :9090 metrics          │
-                          └────────┬─────────────────┘
-                                   │
-   ┌───────────────────────────────┼────────────────────────────────┐
-   │ 同一组 Pod,同时被以下多个 Service 选中(selector 都是 run: ab-config) │
-   ▼                               ▼                                ▼
-┌──────────┐               ┌──────────┐                ┌─────────────────────┐
-│ Service  │               │ Service  │                │ Ingress             │
-│ ab-config│               │ ab-config│                │ → Service           │
-│ ClusterIP│               │ -headless│                │   ab-config-public  │
-│          │               │ None     │                │   (LoadBalancer)    │
-└────┬─────┘               └────┬─────┘                └─────────┬───────────┘
-     │ 虚 IP                    │ DNS 直接返回                    │ 公网 SLB
-     │ kube-proxy NAT          │ 所有 ready Pod 的真实 IP        │
-     ▼                          ▼                                ▼
-集群内 HTTP transport     集群内 gRPC 业务方            公网客户端、跨集群业务方
-集群内历史 gRPC 接入      (SDK v0.4.0+ dns:///)         (grpcs://...:443)
+                       ┌────────────────────────────────┐
+                       │ Pod(app=tipsy-ab-config)       │
+                       │   :8080 HTTP                   │
+                       │   :50051 gRPC                  │
+                       │   :9090 metrics                │
+                       └───────────────┬────────────────┘
+                                       │
+   ┌───────────────────────────────────┼───────────────────────────────────┐
+   │ 同一组 Pod,同时被多个 Service 选中(selector 都是 app: tipsy-ab-config) │
+   ▼                                   ▼                                   ▼
+┌───────────────────┐   ┌───────────────────────────┐   ┌───────────────────────────┐
+│ Service           │   │ Service                   │   │ Ingress → Service         │
+│ tipsy-ab-config   │   │ tipsy-ab-config-headless  │   │ tipsy-ab-config-public    │
+│ (ClusterIP, 虚 IP)│   │ (Headless, clusterIP:None)│   │ (LoadBalancer)            │
+└─────────┬─────────┘   └─────────────┬─────────────┘   └─────────────┬─────────────┘
+          │ kube-proxy NAT            │ DNS 返回所有                  │ 公网 SLB
+          │ 到 1 个 pod               │ ready Pod 真实 IP             │
+          ▼                            ▼                              ▼
+   集群内 HTTP transport       集群内 gRPC 业务方(推荐)        公网客户端、跨集群业务方
+   集群内历史 gRPC 接入        同 ns 与跨 ns,SDK dns:///       (grpcs://...:443)
 ```
 
 ### 10.4 各 Service 的角色
 
 | Service | 是否分配 ClusterIP | 谁会用 | 行为 |
 |---|---|---|---|
-| `ab-config`（ClusterIP） | 有 | 公网 Ingress 后端、HTTP transport 业务方、历史 gRPC 接入（裸 `ab-config:50051`）、跨 namespace 业务方 | kube-proxy iptables NAT 到 1 个 pod；gRPC 长连接 L4 pin（模式 A） |
-| `ab-config-headless`（Headless） | 无（`clusterIP: None`） | 集群内同 namespace gRPC 业务方（推荐） | DNS 返回 N 个 pod IP；SDK v0.4.0+ 看到 `dns:///` 前缀自动启用 round_robin（模式 C） |
+| `tipsy-ab-config`（ClusterIP） | 有 | 公网 Ingress 后端、HTTP transport 业务方、历史 gRPC 接入（裸 `tipsy-ab-config:50051`）、跨集群/集群外业务方 | kube-proxy iptables NAT 到 1 个 pod；gRPC 长连接 L4 pin（模式 A） |
+| `tipsy-ab-config-headless`（Headless） | 无（`clusterIP: None`） | 集群内 gRPC 业务方（推荐，同 ns 与跨 ns 都适用） | DNS 返回 N 个 pod IP；SDK v0.4.0+ 看到 `dns:///` 前缀自动启用 round_robin（模式 C） |
 | Ingress 后端 Service | 有 | Cloudflare → SLB → Ingress → backend | Ingress 必须能摸到 backend 的虚 IP，**只能是 ClusterIP** |
 
 ### 10.5 为什么 Headless 不能替代 ClusterIP
 
 1. **公网 Ingress 链路**：Cloudflare → SLB → Ingress Controller → backend Service，Ingress Controller 必须有一个虚 IP 作为转发目标。**Headless 不分配虚 IP，Ingress 摸不到**。所以公网路径必须有 ClusterIP Service。
 2. **HTTP transport**：HTTP 是短请求或多连接池，L4 pin 在 HTTP 路径上影响很小（不会出现 gRPC 那种"一条长连接所有 RPC 都 pin 同一个 pod"的不均衡）。HTTP 业务方继续走 ClusterIP 是合理的，没必要也走 Headless。
-3. **跨 namespace 业务方**：FQDN 写得对就能用 Headless（如 `dns:///ab-config-headless.prod-ab-config.svc.cluster.local:50051`），但实践中跨 ns 业务方往往不知道目标 ns 的 Headless Service 名字，更可能走 Ingress。
-4. **跨集群业务方**：跨集群通常根本解析不了 `*.svc.cluster.local`（除非有 multi-cluster mesh），只能走 Ingress。
-5. **历史兼容**：旧业务方写裸 `ab-config:50051` 进 ENV 已经在跑，行为是 L4 pin。这种接入在 pod 数较少 + 客户端数 ≫ pod 数的场景下概率上自然均衡，迁移不紧迫。强行去掉 ClusterIP 会让这部分业务方直接报错。
+3. **跨集群业务方**：跨集群通常根本解析不了 `*.svc.cluster.local`（除非有 multi-cluster mesh），只能走 Ingress。注意：**同集群跨 namespace 不在此列**——同集群 CoreDNS 能解析任意 ns 的 headless FQDN，跨 ns 同样推荐走 Headless（`dns:///tipsy-ab-config-headless.<server-ns>.svc.cluster.local:50051`，`<server-ns>` 填 ab-config 所在 ns），纯内网 + RPC 级 round_robin，不必出 Ingress。
+4. **历史兼容**：旧业务方写裸 `tipsy-ab-config:50051` 进 ENV 已经在跑，行为是 L4 pin。这种接入在 pod 数较少 + 客户端数 ≫ pod 数的场景下概率上自然均衡，迁移不紧迫。强行去掉 ClusterIP 会让这部分业务方直接报错。
 
 ### 10.6 YAML 与运维落地
 
@@ -397,10 +395,11 @@ K8S 里 Service 是 Pod 上的「选择器策略」。同一组 Pod 可以被多
 
 | 业务方场景 | ENV 配置 |
 |---|---|
-| 集群内同 ns gRPC（推荐） | `dns:///ab-config-headless.prod-ab-config.svc.cluster.local:50051` |
-| 集群内同 ns HTTP | `http://ab-config.prod-ab-config.svc.cluster.local:8080` + SDK `Transport: "http"` |
+| 集群内同 ns gRPC（推荐） | `dns:///tipsy-ab-config-headless.<ns>.svc.cluster.local:50051` |
+| 集群内跨 ns gRPC（推荐） | `dns:///tipsy-ab-config-headless.<server-ns>.svc.cluster.local:50051`（`<server-ns>` 填 ab-config 所在 ns，纯内网 + round_robin） |
+| 集群内同 ns HTTP | `http://tipsy-ab-config.<ns>.svc.cluster.local:8080` + SDK `Transport: "http"` |
 | 跨集群 / 公网 | `grpcs://prod-ab-config-grpc.<your-domain>:443` |
-| 集群内 gRPC 历史 | 裸 `ab-config.prod-ab-config.svc.cluster.local:50051`（仍工作，不推荐新接入） |
+| 集群内 gRPC 历史 | 裸 `tipsy-ab-config.<ns>.svc.cluster.local:50051`（仍工作，不推荐新接入） |
 
 ## 11. 参考
 
