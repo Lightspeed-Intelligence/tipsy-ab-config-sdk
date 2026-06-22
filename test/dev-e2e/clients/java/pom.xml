@@ -1,0 +1,152 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <!--
+    Standalone Maven test-harness driver for the Tipsy AB-config JAVA SDK against
+    the DEV environment. This is the Java counterpart of test/dev-e2e/clients/{go,py}.
+
+    It is INTENTIONALLY NOT part of the sdk/java reactor (no <parent>): the harness
+    depends on the *released / locally-installed* SDK artifact `io.tipsy:tipsy-abconfig`
+    exactly the way a downstream consumer would, and must never be reachable from the
+    product build. Install the SDK to your local ~/.m2 first:
+
+        (cd sdk/java && mvn -q -DskipTests install)
+
+    Build a runnable fat-jar:   mvn -q -DskipTests package
+    Run (fat-jar):              AB_CONFIG_TOKEN=... java -jar target/tipsy-dev-e2e-java.jar
+    Run (no packaging):         AB_CONFIG_TOKEN=... mvn -q exec:java
+  -->
+
+  <groupId>io.tipsy.deve2e</groupId>
+  <artifactId>tipsy-dev-e2e-java</artifactId>
+  <version>0.1.0</version>
+  <packaging>jar</packaging>
+
+  <name>Tipsy AB-config dev-e2e :: Java SDK driver</name>
+  <description>
+    DEV-environment client-correctness driver for the Tipsy AB-config Java SDK.
+    Exercises both gRPC and HTTP transports and asserts every applicable row of
+    test/dev-e2e/fixtures/expectations.json (client tags java_sdk_grpc / java_sdk_http).
+  </description>
+
+  <properties>
+    <maven.compiler.release>21</maven.compiler.release>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+
+    <!-- The locally-installed Java SDK (mvn install from sdk/java). -->
+    <tipsy-abconfig.version>0.1.0</tipsy-abconfig.version>
+
+    <!-- Harness-only JSON parser. The SDK itself is zero-extra-dependency; a
+         test harness is not bound by that rule, so we use Jackson for the
+         fixtures parse. -->
+    <jackson.version>2.18.2</jackson.version>
+    <slf4j.version>2.0.16</slf4j.version>
+
+    <maven-compiler-plugin.version>3.13.0</maven-compiler-plugin.version>
+    <maven-shade-plugin.version>3.6.0</maven-shade-plugin.version>
+    <maven-surefire-plugin.version>3.5.2</maven-surefire-plugin.version>
+    <exec-maven-plugin.version>3.5.0</exec-maven-plugin.version>
+
+    <!-- No tests in this harness; skip the test phase entirely. -->
+    <maven.test.skip>true</maven.test.skip>
+  </properties>
+
+  <dependencies>
+    <!-- The Java SDK under test. Pulls grpc-netty-shaded / grpc-protobuf /
+         grpc-stub / protobuf-java-util transitively (compile scope), so the
+         driver can dial both transports without redeclaring them. -->
+    <dependency>
+      <groupId>io.tipsy</groupId>
+      <artifactId>tipsy-abconfig</artifactId>
+      <version>${tipsy-abconfig.version}</version>
+    </dependency>
+
+    <!-- Harness JSON parsing of the expectations fixture. -->
+    <dependency>
+      <groupId>com.fasterxml.jackson.core</groupId>
+      <artifactId>jackson-databind</artifactId>
+      <version>${jackson.version}</version>
+    </dependency>
+
+    <!-- A concrete SLF4J binding so the SDK's own WARN/ERROR (degraded-mode,
+         insecure-TLS, ab→full fallback) surface on stderr rather than the NOP
+         logger. The SDK declares only slf4j-api; the consumer picks the backend. -->
+    <dependency>
+      <groupId>org.slf4j</groupId>
+      <artifactId>slf4j-simple</artifactId>
+      <version>${slf4j.version}</version>
+      <scope>runtime</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <finalName>tipsy-dev-e2e-java</finalName>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-compiler-plugin</artifactId>
+        <version>${maven-compiler-plugin.version}</version>
+      </plugin>
+
+      <!-- Pin surefire to a version already present in ~/.m2 (the SDK reactor
+           installs 3.5.2); tests are skipped via maven.test.skip anyway. -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-surefire-plugin</artifactId>
+        <version>${maven-surefire-plugin.version}</version>
+      </plugin>
+
+      <!-- Runnable fat-jar with Main-Class manifest. Merges gRPC's
+           META-INF/services SPI files so io.grpc provider discovery
+           (NameResolverProvider / LoadBalancerProvider) still works after
+           shading. -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-shade-plugin</artifactId>
+        <version>${maven-shade-plugin.version}</version>
+        <executions>
+          <execution>
+            <phase>package</phase>
+            <goals>
+              <goal>shade</goal>
+            </goals>
+            <configuration>
+              <transformers>
+                <transformer
+                    implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
+                <transformer
+                    implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                  <mainClass>io.tipsy.abconfig.deve2e.Main</mainClass>
+                </transformer>
+              </transformers>
+              <filters>
+                <filter>
+                  <!-- Drop signed-jar signatures that break a shaded uber-jar. -->
+                  <artifact>*:*</artifact>
+                  <excludes>
+                    <exclude>META-INF/*.SF</exclude>
+                    <exclude>META-INF/*.DSA</exclude>
+                    <exclude>META-INF/*.RSA</exclude>
+                  </excludes>
+                </filter>
+              </filters>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+
+      <!-- `mvn exec:java` convenience (no packaging needed). -->
+      <plugin>
+        <groupId>org.codehaus.mojo</groupId>
+        <artifactId>exec-maven-plugin</artifactId>
+        <version>${exec-maven-plugin.version}</version>
+        <configuration>
+          <mainClass>io.tipsy.abconfig.deve2e.Main</mainClass>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
+</project>

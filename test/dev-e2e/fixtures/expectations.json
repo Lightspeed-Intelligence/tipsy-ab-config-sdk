@@ -14,7 +14,9 @@
       "go_sdk_grpc",
       "go_sdk_http",
       "py_sdk_grpc",
-      "py_sdk_http"
+      "py_sdk_http",
+      "java_sdk_grpc",
+      "java_sdk_http"
     ]
   },
   {
@@ -32,7 +34,9 @@
       "go_sdk_grpc",
       "go_sdk_http",
       "py_sdk_grpc",
-      "py_sdk_http"
+      "py_sdk_http",
+      "java_sdk_grpc",
+      "java_sdk_http"
     ]
   },
   {
@@ -50,7 +54,9 @@
       "go_sdk_grpc",
       "go_sdk_http",
       "py_sdk_grpc",
-      "py_sdk_http"
+      "py_sdk_http",
+      "java_sdk_grpc",
+      "java_sdk_http"
     ]
   },
   {
@@ -72,7 +78,9 @@
       "go_sdk_grpc",
       "go_sdk_http",
       "py_sdk_grpc",
-      "py_sdk_http"
+      "py_sdk_http",
+      "java_sdk_grpc",
+      "java_sdk_http"
     ]
   },
   {
@@ -94,7 +102,9 @@
       "go_sdk_grpc",
       "go_sdk_http",
       "py_sdk_grpc",
-      "py_sdk_http"
+      "py_sdk_http",
+      "java_sdk_grpc",
+      "java_sdk_http"
     ]
   },
   {
@@ -112,7 +122,9 @@
       "go_sdk_grpc",
       "go_sdk_http",
       "py_sdk_grpc",
-      "py_sdk_http"
+      "py_sdk_http",
+      "java_sdk_grpc",
+      "java_sdk_http"
     ]
   },
   {
@@ -130,7 +142,9 @@
       "go_sdk_grpc",
       "go_sdk_http",
       "py_sdk_grpc",
-      "py_sdk_http"
+      "py_sdk_http",
+      "java_sdk_grpc",
+      "java_sdk_http"
     ]
   },
   {
@@ -148,7 +162,9 @@
       "go_sdk_grpc",
       "go_sdk_http",
       "py_sdk_grpc",
-      "py_sdk_http"
+      "py_sdk_http",
+      "java_sdk_grpc",
+      "java_sdk_http"
     ]
   },
   {
@@ -166,7 +182,9 @@
       "go_sdk_grpc",
       "go_sdk_http",
       "py_sdk_grpc",
-      "py_sdk_http"
+      "py_sdk_http",
+      "java_sdk_grpc",
+      "java_sdk_http"
     ]
   },
   {
@@ -188,7 +206,9 @@
       "go_sdk_grpc",
       "go_sdk_http",
       "py_sdk_grpc",
-      "py_sdk_http"
+      "py_sdk_http",
+      "java_sdk_grpc",
+      "java_sdk_http"
     ]
   },
   {
@@ -210,7 +230,9 @@
       "go_sdk_grpc",
       "go_sdk_http",
       "py_sdk_grpc",
-      "py_sdk_http"
+      "py_sdk_http",
+      "java_sdk_grpc",
+      "java_sdk_http"
     ]
   },
   {
@@ -228,7 +250,9 @@
       "go_sdk_grpc",
       "go_sdk_http",
       "py_sdk_grpc",
-      "py_sdk_http"
+      "py_sdk_http",
+      "java_sdk_grpc",
+      "java_sdk_http"
     ]
   },
   {
@@ -246,7 +270,9 @@
       "go_sdk_grpc",
       "go_sdk_http",
       "py_sdk_grpc",
-      "py_sdk_http"
+      "py_sdk_http",
+      "java_sdk_grpc",
+      "java_sdk_http"
     ]
   },
   {
@@ -264,7 +290,9 @@
       "go_sdk_grpc",
       "go_sdk_http",
       "py_sdk_grpc",
-      "py_sdk_http"
+      "py_sdk_http",
+      "java_sdk_grpc",
+      "java_sdk_http"
     ]
   },
   {
@@ -282,7 +310,9 @@
       "go_sdk_grpc",
       "go_sdk_http",
       "py_sdk_grpc",
-      "py_sdk_http"
+      "py_sdk_http",
+      "java_sdk_grpc",
+      "java_sdk_http"
     ]
   },
   {
@@ -304,7 +334,9 @@
       "go_sdk_grpc",
       "go_sdk_http",
       "py_sdk_grpc",
-      "py_sdk_http"
+      "py_sdk_http",
+      "java_sdk_grpc",
+      "java_sdk_http"
     ]
   },
   {
@@ -322,7 +354,9 @@
       "go_sdk_grpc",
       "go_sdk_http",
       "py_sdk_grpc",
-      "py_sdk_http"
+      "py_sdk_http",
+      "java_sdk_grpc",
+      "java_sdk_http"
     ]
   },
   {
@@ -340,7 +374,9 @@
       "go_sdk_grpc",
       "go_sdk_http",
       "py_sdk_grpc",
-      "py_sdk_http"
+      "py_sdk_http",
+      "java_sdk_grpc",
+      "java_sdk_http"
     ]
   },
   {
@@ -358,7 +394,9 @@
       "go_sdk_grpc",
       "go_sdk_http",
       "py_sdk_grpc",
-      "py_sdk_http"
+      "py_sdk_http",
+      "java_sdk_grpc",
+      "java_sdk_http"
     ]
   },
   {
@@ -376,7 +414,9 @@
       "go_sdk_grpc",
       "go_sdk_http",
       "py_sdk_grpc",
-      "py_sdk_http"
+      "py_sdk_http",
+      "java_sdk_grpc",
+      "java_sdk_http"
     ]
   },
   {
@@ -394,7 +434,9 @@
       "go_sdk_grpc",
       "go_sdk_http",
       "py_sdk_grpc",
-      "py_sdk_http"
+      "py_sdk_http",
+      "java_sdk_grpc",
+      "java_sdk_http"
     ]
   },
   {
@@ -416,7 +458,9 @@
       "go_sdk_grpc",
       "go_sdk_http",
       "py_sdk_grpc",
-      "py_sdk_http"
+      "py_sdk_http",
+      "java_sdk_grpc",
+      "java_sdk_http"
     ]
   },
   {
@@ -434,7 +478,9 @@
       "go_sdk_grpc",
       "go_sdk_http",
       "py_sdk_grpc",
-      "py_sdk_http"
+      "py_sdk_http",
+      "java_sdk_grpc",
+      "java_sdk_http"
     ]
   },
   {
@@ -452,7 +498,9 @@
       "go_sdk_grpc",
       "go_sdk_http",
       "py_sdk_grpc",
-      "py_sdk_http"
+      "py_sdk_http",
+      "java_sdk_grpc",
+      "java_sdk_http"
     ]
   },
   {
@@ -470,7 +518,9 @@
       "go_sdk_grpc",
       "go_sdk_http",
       "py_sdk_grpc",
-      "py_sdk_http"
+      "py_sdk_http",
+      "java_sdk_grpc",
+      "java_sdk_http"
     ]
   },
   {
@@ -488,7 +538,9 @@
       "go_sdk_grpc",
       "go_sdk_http",
       "py_sdk_grpc",
-      "py_sdk_http"
+      "py_sdk_http",
+      "java_sdk_grpc",
+      "java_sdk_http"
     ]
   },
   {
@@ -509,7 +561,9 @@
       "go_sdk_grpc",
       "go_sdk_http",
       "py_sdk_grpc",
-      "py_sdk_http"
+      "py_sdk_http",
+      "java_sdk_grpc",
+      "java_sdk_http"
     ]
   },
   {
@@ -527,7 +581,9 @@
       "go_sdk_grpc",
       "go_sdk_http",
       "py_sdk_grpc",
-      "py_sdk_http"
+      "py_sdk_http",
+      "java_sdk_grpc",
+      "java_sdk_http"
     ]
   },
   {
@@ -548,7 +604,9 @@
       "go_sdk_grpc",
       "go_sdk_http",
       "py_sdk_grpc",
-      "py_sdk_http"
+      "py_sdk_http",
+      "java_sdk_grpc",
+      "java_sdk_http"
     ]
   },
   {
@@ -566,7 +624,9 @@
       "go_sdk_grpc",
       "go_sdk_http",
       "py_sdk_grpc",
-      "py_sdk_http"
+      "py_sdk_http",
+      "java_sdk_grpc",
+      "java_sdk_http"
     ]
   },
   {
@@ -584,7 +644,9 @@
       "go_sdk_grpc",
       "go_sdk_http",
       "py_sdk_grpc",
-      "py_sdk_http"
+      "py_sdk_http",
+      "java_sdk_grpc",
+      "java_sdk_http"
     ]
   },
   {
@@ -605,7 +667,9 @@
       "go_sdk_grpc",
       "go_sdk_http",
       "py_sdk_grpc",
-      "py_sdk_http"
+      "py_sdk_http",
+      "java_sdk_grpc",
+      "java_sdk_http"
     ]
   },
   {
@@ -623,7 +687,9 @@
       "go_sdk_grpc",
       "go_sdk_http",
       "py_sdk_grpc",
-      "py_sdk_http"
+      "py_sdk_http",
+      "java_sdk_grpc",
+      "java_sdk_http"
     ]
   },
   {
@@ -644,7 +710,9 @@
       "go_sdk_grpc",
       "go_sdk_http",
       "py_sdk_grpc",
-      "py_sdk_http"
+      "py_sdk_http",
+      "java_sdk_grpc",
+      "java_sdk_http"
     ]
   },
   {
@@ -662,7 +730,9 @@
       "go_sdk_grpc",
       "go_sdk_http",
       "py_sdk_grpc",
-      "py_sdk_http"
+      "py_sdk_http",
+      "java_sdk_grpc",
+      "java_sdk_http"
     ]
   },
   {
@@ -680,7 +750,9 @@
       "go_sdk_grpc",
       "go_sdk_http",
       "py_sdk_grpc",
-      "py_sdk_http"
+      "py_sdk_http",
+      "java_sdk_grpc",
+      "java_sdk_http"
     ]
   },
   {
@@ -698,7 +770,9 @@
       "go_sdk_grpc",
       "go_sdk_http",
       "py_sdk_grpc",
-      "py_sdk_http"
+      "py_sdk_http",
+      "java_sdk_grpc",
+      "java_sdk_http"
     ]
   },
   {
@@ -716,7 +790,9 @@
       "go_sdk_grpc",
       "go_sdk_http",
       "py_sdk_grpc",
-      "py_sdk_http"
+      "py_sdk_http",
+      "java_sdk_grpc",
+      "java_sdk_http"
     ]
   }
 ]

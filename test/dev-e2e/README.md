@@ -27,6 +27,10 @@ the released SDK modules (`sdk/go/tipsyabconfig`, `sdk/go/tipsyauth`, the Python
 - `clients/go/` — ST4 Go SDK client-correctness driver (gRPC + HTTP transports).
 - `clients/py/` — ST4 Python SDK client-correctness driver (gRPC + HTTP) plus
   `setup_venv.sh` venv bootstrap.
+- `clients/java/` — Java SDK client-correctness driver (gRPC + HTTP); a
+  standalone Maven project (NOT in the `sdk/java` reactor) depending on the
+  locally-installed `io.tipsy:tipsy-abconfig` artifact. Build a fat-jar with
+  `mvn -q -DskipTests package`; see `clients/java/README.md`.
 - `load/` — ST5 medium-load driver (Go, stdlib only); writes `load/last-run.json`.
 
 ## Environment variables (all access info; no secrets hard-coded)
@@ -146,6 +150,13 @@ admin write call. The Agent has **no DB access**; the user runs the SQL.
    # ----- Python SDK (backend mode; released v0.5.0 via git+ssh) -----
    SDK_MODE=backend bash test/dev-e2e/clients/py/setup_venv.sh   # creates .venv-backend/
    test/dev-e2e/clients/py/.venv-backend/bin/python test/dev-e2e/clients/py/run.py
+
+   # ----- Java SDK (locally-installed io.tipsy:tipsy-abconfig) -----
+   (cd sdk/java && mvn -q -DskipTests install)                   # one-time: SDK → ~/.m2
+   (cd test/dev-e2e/clients/java && mvn -q -DskipTests package)  # build fat-jar
+   AB_CONFIG_TOKEN=... java -jar test/dev-e2e/clients/java/target/tipsy-dev-e2e-java.jar
+   # or a single transport:
+   AB_CONFIG_TOKEN=... java -jar test/dev-e2e/clients/java/target/tipsy-dev-e2e-java.jar --transport http
    ```
 
    **ST5 — medium load test:**
@@ -216,4 +227,5 @@ report; if any number is off, that's the failure signal):
 | `platform/grpc_smoke.sh` | reflection + 4 RPCs (ConfigService + AbtestService) | **5/5 PASS** |
 | `clients/go/` | 38 rows × {http, grpc} = 76 | **76/76 PASS** (both modes) |
 | `clients/py/` | 38 rows × {http, grpc} = 76 | **76/76 PASS** (both modes) |
+| `clients/java/` | 38 rows × {http, grpc} = 76 | **76/76 PASS** (driver ready; awaits a valid `AB_CONFIG_TOKEN` + seeded DEV to run) |
 | `load/` (medium) | 90–150s @ 150 workers, error-rate < 1% | 0 errors, p50 ≈ 220ms, p99 ≈ 340ms |

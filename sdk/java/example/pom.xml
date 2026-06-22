@@ -36,6 +36,18 @@
           <skip>true</skip>
         </configuration>
       </plugin>
+
+      <!-- Lets the example be run directly with `mvn -pl example exec:java`
+           (no -Dexec.mainClass needed). Version pinned locally to keep the
+           change scoped to this non-published module. -->
+      <plugin>
+        <groupId>org.codehaus.mojo</groupId>
+        <artifactId>exec-maven-plugin</artifactId>
+        <version>3.5.0</version>
+        <configuration>
+          <mainClass>io.tipsy.abconfig.example.Main</mainClass>
+        </configuration>
+      </plugin>
     </plugins>
   </build>
 </project>

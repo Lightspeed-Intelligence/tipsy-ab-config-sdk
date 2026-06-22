@@ -1,5 +1,29 @@
 # DEV 环境 e2e 测试结果报告
 
+## 2026-06-22 Java SDK dev-e2e 驱动就绪（待有效 token 实跑）
+
+新增 `test/dev-e2e/clients/java/`——Java SDK 的 dev-e2e 客户端正确性驱动，与
+现有 Go/Python 驱动同构（client tag `java_sdk_grpc` / `java_sdk_http`，两 transport
+逐条断言 `fixtures/expectations.json`）。
+
+- **bucketfind/fixtures**：`tools/bucketfind/main.go` 的 `allClients` 追加
+  `java_sdk_grpc` / `java_sdk_http`；重生成后 `expectations.json` 全部 38 行的
+  `applies_to` 均含两个 java tag（`git diff --stat`：114 insertions / 38 deletions）。
+- **形态**：独立 Maven 项目（不并入 `sdk/java` reactor），依赖本地 `mvn install`
+  的 `io.tipsy:tipsy-abconfig:0.1.0`；`maven-shade-plugin` 打 fat-jar，合并 gRPC
+  `META-INF/services/*` SPI；harness 用 Jackson 解析 fixtures、slf4j-simple 作日志后端。
+- **编译验证**：`cd test/dev-e2e/clients/java && mvn -q -DskipTests package` →
+  BUILD SUCCESS（3 source files，release 21，22MB fat-jar，Main-Class 正确）。
+- **缺 token 优雅退出**：不带 `AB_CONFIG_TOKEN` 跑 `java -jar`（及 `mvn exec:java`）→
+  打印 `FATAL: AB_CONFIG_TOKEN env var is required` 并 exit 2，不抛栈崩溃。
+- **degraded 容错验证**：用 dummy token + 不可达端点跑 → HTTP transport
+  `startupFailOpen` 吸收连接失败、health 报空缓存 → 1 FAIL（不崩）；gRPC 报
+  WARNING + 标记 degraded（不崩、不刷 FAIL）；SUMMARY + NOTE 正常打印，exit 1。
+- **实跑边界**：未真打 DEV（`docs/dev-http-token.md` 内置 token 已于 2026-06-21
+  过期，且需用户 seed DEV 数据库）。**驱动就绪，待持有有效 `AB_CONFIG_TOKEN`
+  时由用户运行**（与 Go/Python 驱动相同的执行边界）；预期 38 行 × {http, grpc} =
+  76/76 PASS。
+
 ## 2026-06-19 Headless + round_robin 验证（SDK v0.4.0 / v0.5.0 发版后）
 
 ST5 e2e 验证 — 三段全跑。

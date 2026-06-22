@@ -24,6 +24,25 @@ public final class UserInfo {
                 : Collections.unmodifiableMap(attrs);
     }
 
+    /**
+     * Builds a {@link UserInfo} from a user id and attribute map. This is the
+     * public factory web-integration callers use to return a user identity from
+     * a {@code io.tipsy.abconfig.web.HttpServerSupport.AbtestUserProvider} (the
+     * package-private constructor is reserved for {@link AbtestContext}).
+     *
+     * <p>A {@code null} {@code uid} normalises to the empty string; a
+     * {@code null} {@code attrs} normalises to an empty map. The supplied
+     * {@code attrs} map is aliased (wrapped unmodifiable), not copied, so callers
+     * must not mutate it after handing it over.
+     *
+     * @param uid   the user id (may be {@code null} → "")
+     * @param attrs the user attributes (may be {@code null} → empty)
+     * @return an immutable {@link UserInfo}
+     */
+    public static UserInfo of(String uid, Map<String, Object> attrs) {
+        return new UserInfo(uid, attrs);
+    }
+
     /** The user id this context was constructed with (never {@code null}). */
     public String uid() {
         return uid;

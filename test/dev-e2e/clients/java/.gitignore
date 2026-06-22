@@ -1,0 +1,6 @@
+# Maven build output (the shaded fat-jar is ~22MB and is rebuilt on every
+# `mvn package`; nothing under target/ is checked in).
+target/
+
+# maven-shade-plugin writes this to the project root on every `package`.
+dependency-reduced-pom.xml

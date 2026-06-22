@@ -126,7 +126,7 @@ type Expectation struct {
 // allClients is the standard client matrix every expectation applies to unless
 // a case is server-path-only (e.g. sticky, handled by the test driver, not
 // expressed here).
-var allClients = []string{"http", "grpc", "go_sdk_grpc", "go_sdk_http", "py_sdk_grpc", "py_sdk_http"}
+var allClients = []string{"http", "grpc", "go_sdk_grpc", "go_sdk_http", "py_sdk_grpc", "py_sdk_http", "java_sdk_grpc", "java_sdk_http"}
 
 func noAttrs() map[string]any { return map[string]any{} }
 
