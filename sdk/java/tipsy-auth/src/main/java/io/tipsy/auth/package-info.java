@@ -1,8 +1,10 @@
 /**
  * Tipsy AB-config HS256 JWT signing utility.
  *
- * <p>Placeholder package; the {@code JwtSigner} / {@code IssueOptions} types
- * are implemented in ST7. This file only anchors the package so the module
- * has a compilable source set under the skeleton (ST1).
+ * <p>Provides {@link io.tipsy.auth.JwtSigner} and
+ * {@link io.tipsy.auth.IssueOptions} for minting HS256 JWTs accepted by the
+ * ab-config services. Signing only; verification is the server's job. See
+ * {@link io.tipsy.auth.JwtSigner} for the compatibility contract with the Go
+ * signer and the server's internal auth boundary.
  */
 package io.tipsy.auth;
