@@ -1,7 +1,7 @@
 # Tipsy AB-config Java SDK
 
 Tipsy 配置中心 / A/B 实验平台对外公开 SDK 的 **Java** 实现，与 Go / Python SDK
-**全量对齐**。语言基线 **Java 21**，Maven groupId `io.tipsy`。
+**全量对齐**。语言基线 **Java 21**，Maven groupId `io.github.lightspeed-intelligence`。
 
 SDK 是纯 gRPC / HTTP 下游客户端：进程内维护配置缓存（启动 `PullAll` + 长连
 `Subscribe` 推送 + 周期兜底轮询），并通过 `AbtestService.GetExperimentResult`
@@ -14,12 +14,12 @@ SDK 是纯 gRPC / HTTP 下游客户端：进程内维护配置缓存（启动 `P
 
 | 模块 | artifact | 说明 |
 |---|---|---|
-| `tipsy-abconfig-proto` | `io.tipsy:tipsy-abconfig-proto` | 由 `protobuf-maven-plugin` 从 `api/proto` 生成的 protobuf message + gRPC stub（构建期生成，不入库）。 |
-| `tipsy-auth` | `io.tipsy:tipsy-auth` | HS256 JWT 签名小工具，完全独立（仅依赖 jjwt），不依赖主 SDK / proto / gRPC。 |
-| `tipsy-abconfig` | `io.tipsy:tipsy-abconfig` | 主 SDK：配置缓存、gRPC / HTTP 传输、abtest 解析、公共客户端句柄，含可选的 `io.tipsy.abconfig.web` web 集成子包。 |
+| `tipsy-abconfig-proto` | `io.github.lightspeed-intelligence:tipsy-abconfig-proto` | 由 `protobuf-maven-plugin` 从 `api/proto` 生成的 protobuf message + gRPC stub（构建期生成，不入库）。 |
+| `tipsy-auth` | `io.github.lightspeed-intelligence:tipsy-auth` | HS256 JWT 签名小工具，完全独立（仅依赖 jjwt），不依赖主 SDK / proto / gRPC。 |
+| `tipsy-abconfig` | `io.github.lightspeed-intelligence:tipsy-abconfig` | 主 SDK：配置缓存、gRPC / HTTP 传输、abtest 解析、公共客户端句柄，含可选的 `io.github.lightspeedintelligence.abconfig.web` web 集成子包。 |
 | `example` | （不发布） | 基于 JDK 内置 `com.sun.net.httpserver` 的可运行示例。 |
 
-包根：主 SDK `io.tipsy.abconfig`（web 子包 `io.tipsy.abconfig.web`）、签名 `io.tipsy.auth`。
+包根：主 SDK `io.github.lightspeedintelligence.abconfig`（web 子包 `io.github.lightspeedintelligence.abconfig.web`）、签名 `io.github.lightspeedintelligence.auth`。
 
 ## 安装
 
@@ -30,13 +30,13 @@ SDK 是纯 gRPC / HTTP 下游客户端：进程内维护配置缓存（启动 `P
 
 ```xml
 <dependency>
-  <groupId>io.tipsy</groupId>
+  <groupId>io.github.lightspeed-intelligence</groupId>
   <artifactId>tipsy-abconfig</artifactId>
   <version>0.1.0</version>
 </dependency>
 <!-- 可选：需要本地签发服务 token 时 -->
 <dependency>
-  <groupId>io.tipsy</groupId>
+  <groupId>io.github.lightspeed-intelligence</groupId>
   <artifactId>tipsy-auth</artifactId>
   <version>0.1.0</version>
 </dependency>
@@ -65,9 +65,9 @@ mvn -q -DskipTests install
 ## 快速开始
 
 ```java
-import io.tipsy.abconfig.AbtestContext;
-import io.tipsy.abconfig.Config;
-import io.tipsy.abconfig.TipsyAbConfigClient;
+import io.github.lightspeedintelligence.abconfig.AbtestContext;
+import io.github.lightspeedintelligence.abconfig.Config;
+import io.github.lightspeedintelligence.abconfig.TipsyAbConfigClient;
 import java.util.List;
 import java.util.Map;
 
@@ -92,7 +92,7 @@ try (TipsyAbConfigClient client = TipsyAbConfigClient.create(Config.builder()
 }
 ```
 
-完整可运行示例参见 [`example/src/main/java/io/tipsy/abconfig/example/Main.java`](example/src/main/java/io/tipsy/abconfig/example/Main.java)：
+完整可运行示例参见 [`example/src/main/java/io/github/lightspeedintelligence/abconfig/example/Main.java`](example/src/main/java/io/github/lightspeedintelligence/abconfig/example/Main.java)：
 基于 JDK 内置 HTTP server，演示 `/static`（`getConfigStatic`）与 `/user`
 （web helper 构造上下文 + `getConfig`），以及用 `tipsy-auth` 本地签发 token。运行：
 
@@ -175,7 +175,7 @@ Java SDK 的 web 集成是**框架无关的显式上下文对象**：
    取 `uid` 与属性），并**显式作为参数**传给每次 `getConfig`。这是跨虚拟线程 fan-out
    安全的唯一方式。
 
-2. **可选便捷件**（`io.tipsy.abconfig.web` 子包，纯 JDK、零额外依赖）：
+2. **可选便捷件**（`io.github.lightspeedintelligence.abconfig.web` 子包，纯 JDK、零额外依赖）：
    - `AbtestContextHolder`：`ThreadLocal` 持有器（`set` / `get` / `clear` /
      `runWith`）。**警示：不会跨 `newVirtualThreadPerTaskExecutor()` 等 fan-out 传播**，
      仅适用 thread-per-request 边缘；fan-out 场景必须显式传参。
@@ -198,8 +198,8 @@ HS256 JWT 签名，claims `{roles, namespaces, sub, iat, exp}`，与服务端验
 （仅签名，不实现验证）：
 
 ```java
-import io.tipsy.auth.IssueOptions;
-import io.tipsy.auth.JwtSigner;
+import io.github.lightspeedintelligence.auth.IssueOptions;
+import io.github.lightspeedintelligence.auth.JwtSigner;
 import java.time.Duration;
 import java.util.List;
 

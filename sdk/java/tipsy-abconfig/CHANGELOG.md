@@ -1,7 +1,7 @@
 # Changelog
 
 All notable changes to the Tipsy AB-config Java SDK main module
-(`io.tipsy:tipsy-abconfig`) are documented in this file.
+(`io.github.lightspeed-intelligence:tipsy-abconfig`) are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
@@ -62,7 +62,7 @@ differences).
   `ConfigValidationException`, `TransportException`, `TipsyConfigException`.
   Enums: `ExperimentType`, `ResultDisplayType`, `Transport`.
 - `Transport` selection: `Config.transport` > `TIPSY_SDK_TRANSPORT` env > gRPC.
-- Framework-agnostic web integration in the optional `io.tipsy.abconfig.web`
+- Framework-agnostic web integration in the optional `io.github.lightspeedintelligence.abconfig.web`
   subpackage (pure JDK, zero extra dependencies):
   - `AbtestContextHolder` — `ThreadLocal` holder (`set` / `get` / `clear` /
     `runWith`) with an explicit fan-out warning (not propagated across

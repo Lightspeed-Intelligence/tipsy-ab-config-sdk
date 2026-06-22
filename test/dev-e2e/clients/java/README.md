@@ -1,7 +1,7 @@
 # Java SDK dev-e2e driver (`clients/java/`)
 
 DEV-environment client-correctness driver for the **Tipsy AB-config Java SDK**
-(`io.tipsy:tipsy-abconfig`). This is the Java counterpart of
+(`io.github.lightspeed-intelligence:tipsy-abconfig`). This is the Java counterpart of
 [`clients/go/`](../go/) and [`clients/py/`](../py/): one invocation exercises
 **both transports** (gRPC and HTTP) against the seeded DEV topology and asserts
 every applicable row of [`../../fixtures/expectations.json`](../../fixtures/expectations.json).
@@ -10,7 +10,7 @@ Client tags: `java_sdk_grpc` / `java_sdk_http` (already part of `bucketfind`'s
 `allClients`, so every fixture row's `applies_to` includes them).
 
 This directory is a **standalone Maven project** (no `<parent>`): it depends on
-the *released* SDK artifact `io.tipsy:tipsy-abconfig` exactly the way a
+the *released* SDK artifact `io.github.lightspeed-intelligence:tipsy-abconfig` exactly the way a
 downstream consumer would, and is **deliberately NOT part of the `sdk/java`
 reactor** (test-harness only; it never touches product code). There is no
 `<repositories>` block — once the SDK is published, the dependency resolves
@@ -36,7 +36,7 @@ double-wrap and break admission matching.
 
 ## Build
 
-The harness resolves `io.tipsy:tipsy-abconfig` the way a real business
+The harness resolves `io.github.lightspeed-intelligence:tipsy-abconfig` the way a real business
 consumer does. Two modes:
 
 **A. Published jar from Maven Central (the real business-consumer simulation).**
@@ -46,8 +46,8 @@ the dependency is on Maven Central — no local install, no custom repo. Just se
 
 ```sh
 # (optionally first prove nothing is cached locally, so the build MUST hit Central)
-rm -rf ~/.m2/repository/io/tipsy/tipsy-abconfig
-(cd test/dev-e2e/clients/java && mvn -q -DskipTests package)   # pulls io.tipsy:tipsy-abconfig from Central
+rm -rf ~/.m2/repository/io/github/lightspeed-intelligence/tipsy-abconfig
+(cd test/dev-e2e/clients/java && mvn -q -DskipTests package)   # pulls io.github.lightspeed-intelligence:tipsy-abconfig from Central
 # → target/tipsy-dev-e2e-java.jar
 ```
 
@@ -55,7 +55,7 @@ rm -rf ~/.m2/repository/io/tipsy/tipsy-abconfig
 the SDK reactor and install it locally first:
 
 ```sh
-(cd sdk/java && mvn -q -DskipTests install)                    # → ~/.m2/io/tipsy/...
+(cd sdk/java && mvn -q -DskipTests install)                    # → ~/.m2/io/github/lightspeed-intelligence/...
 (cd test/dev-e2e/clients/java && mvn -q -DskipTests package)
 ```
 

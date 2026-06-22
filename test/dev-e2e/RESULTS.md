@@ -9,7 +9,7 @@
 - **bucketfind/fixtures**：`tools/bucketfind/main.go` 的 `allClients` 追加
   `java_sdk_grpc` / `java_sdk_http`；重生成后 `expectations.json` 全部 38 行的
   `applies_to` 均含两个 java tag（`git diff --stat`：114 insertions / 38 deletions）。
-- **形态**：独立 Maven 项目（不并入 `sdk/java` reactor），依赖 `io.tipsy:tipsy-abconfig`
+- **形态**：独立 Maven 项目（不并入 `sdk/java` reactor），依赖 `io.github.lightspeed-intelligence:tipsy-abconfig`
   ——发布后从 **Maven Central** 解析（无 `<repositories>`，与真实业务方一致），发布前可用
   本地 `mvn install` 的同坐标兜底；`maven-shade-plugin` 打 fat-jar，合并 gRPC
   `META-INF/services/*` SPI；harness 用 Jackson 解析 fixtures、slf4j-simple 作日志后端。
@@ -25,9 +25,9 @@
   时由用户运行**（与 Go/Python 驱动相同的执行边界）；预期 38 行 × {http, grpc} =
   76/76 PASS。
 - **正式发布后的业务方模拟（用户要求）**：jar 发布到 Maven Central 后，按 README §Build 模式 A
-  拉取**正式发布的 jar**（可先 `rm -rf ~/.m2/repository/io/tipsy/tipsy-abconfig` 证明走 Central）
+  拉取**正式发布的 jar**（可先 `rm -rf ~/.m2/repository/io/github/lightspeed-intelligence/tipsy-abconfig` 证明走 Central）
   打 fat-jar，再以有效 `AB_CONFIG_TOKEN` + 已 seed 的 DEV 跑 76/76，把结果回填到本节。
-  当前阻塞：① `io.tipsy` namespace 需在 Sonatype Central Portal 验证 + 配 `CENTRAL_*`/GPG secrets；
+  当前阻塞：① `io.github.lightspeed-intelligence` namespace 需在 Sonatype Central Portal 验证 + 配 `CENTRAL_*`/GPG secrets；
   ② 有效 DEV token + seed 库。二者具备后即可一条命令完成"拉正式 jar→打 DEV"闭环。
 
 ## 2026-06-19 Headless + round_robin 验证（SDK v0.4.0 / v0.5.0 发版后）

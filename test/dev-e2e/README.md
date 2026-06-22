@@ -29,7 +29,7 @@ the released SDK modules (`sdk/go/tipsyabconfig`, `sdk/go/tipsyauth`, the Python
   `setup_venv.sh` venv bootstrap.
 - `clients/java/` — Java SDK client-correctness driver (gRPC + HTTP); a
   standalone Maven project (NOT in the `sdk/java` reactor) depending on the
-  locally-installed `io.tipsy:tipsy-abconfig` artifact. Build a fat-jar with
+  locally-installed `io.github.lightspeed-intelligence:tipsy-abconfig` artifact. Build a fat-jar with
   `mvn -q -DskipTests package`; see `clients/java/README.md`.
 - `load/` — ST5 medium-load driver (Go, stdlib only); writes `load/last-run.json`.
 
@@ -151,7 +151,7 @@ admin write call. The Agent has **no DB access**; the user runs the SQL.
    SDK_MODE=backend bash test/dev-e2e/clients/py/setup_venv.sh   # creates .venv-backend/
    test/dev-e2e/clients/py/.venv-backend/bin/python test/dev-e2e/clients/py/run.py
 
-   # ----- Java SDK (locally-installed io.tipsy:tipsy-abconfig) -----
+   # ----- Java SDK (locally-installed io.github.lightspeed-intelligence:tipsy-abconfig) -----
    (cd sdk/java && mvn -q -DskipTests install)                   # one-time: SDK → ~/.m2
    (cd test/dev-e2e/clients/java && mvn -q -DskipTests package)  # build fat-jar
    AB_CONFIG_TOKEN=... java -jar test/dev-e2e/clients/java/target/tipsy-dev-e2e-java.jar

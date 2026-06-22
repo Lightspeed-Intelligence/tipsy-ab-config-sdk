@@ -9,10 +9,10 @@
     the DEV environment. This is the Java counterpart of test/dev-e2e/clients/{go,py}.
 
     It is INTENTIONALLY NOT part of the sdk/java reactor (no <parent>): the harness
-    depends on the *released* SDK artifact `io.tipsy:tipsy-abconfig` exactly the way
-    a downstream consumer would, and must never be reachable from the product build.
-    There is no <repositories> block — once published, the dependency resolves from
-    Maven Central. Two ways to get the artifact:
+    depends on the *released* SDK artifact `io.github.lightspeed-intelligence:tipsy-abconfig`
+    exactly the way a downstream consumer would, and must never be reachable from the
+    product build. There is no <repositories> block — once published, the dependency
+    resolves from Maven Central. Two ways to get the artifact:
 
       A) Published (real consumer): set <tipsy-abconfig.version> to a released
          version; the build pulls it from Maven Central. No local install needed.
@@ -24,7 +24,7 @@
     Run (no packaging):         AB_CONFIG_TOKEN=... mvn -q exec:java
   -->
 
-  <groupId>io.tipsy.deve2e</groupId>
+  <groupId>io.github.lightspeed-intelligence.deve2e</groupId>
   <artifactId>tipsy-dev-e2e-java</artifactId>
   <version>0.1.0</version>
   <packaging>jar</packaging>
@@ -63,7 +63,7 @@
          grpc-stub / protobuf-java-util transitively (compile scope), so the
          driver can dial both transports without redeclaring them. -->
     <dependency>
-      <groupId>io.tipsy</groupId>
+      <groupId>io.github.lightspeed-intelligence</groupId>
       <artifactId>tipsy-abconfig</artifactId>
       <version>${tipsy-abconfig.version}</version>
     </dependency>
@@ -123,7 +123,7 @@
                     implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
                 <transformer
                     implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
-                  <mainClass>io.tipsy.abconfig.deve2e.Main</mainClass>
+                  <mainClass>io.github.lightspeedintelligence.abconfig.deve2e.Main</mainClass>
                 </transformer>
               </transformers>
               <filters>
@@ -148,7 +148,7 @@
         <artifactId>exec-maven-plugin</artifactId>
         <version>${exec-maven-plugin.version}</version>
         <configuration>
-          <mainClass>io.tipsy.abconfig.deve2e.Main</mainClass>
+          <mainClass>io.github.lightspeedintelligence.abconfig.deve2e.Main</mainClass>
         </configuration>
       </plugin>
     </plugins>

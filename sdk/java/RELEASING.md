@@ -2,7 +2,7 @@
 
 The Java SDK is published to **Maven Central** via the Sonatype **Central
 Publisher Portal** (the same mechanism `page.liam:pine` uses). Business
-consumers depend on `io.tipsy:tipsy-abconfig` from the default Maven Central
+consumers depend on `io.github.lightspeed-intelligence:tipsy-abconfig` from the default Maven Central
 repository — no credentials, no custom `<repositories>` block.
 
 The release logic lives entirely in the `release` Maven profile of
@@ -12,8 +12,10 @@ plugin) and is driven on CI by `.github/workflows/java-sdk.yml` on a
 
 ## Prerequisites (one-time, org/CI setup)
 
-- **Maven Central namespace `io.tipsy`** must be verified on the Central
-  Portal (DNS TXT record on `tipsy.io`, or the GitHub-org verification path).
+- **Maven Central namespace `io.github.lightspeed-intelligence`** must be verified on
+  the Central Portal via the GitHub-org verification path (the company does not own
+  the `tipsy.io` domain, so DNS-TXT verification is not used; namespace ownership
+  is proven by GitHub organization control of `Lightspeed-Intelligence`).
 - Repo secrets (GitHub → Settings → Secrets → Actions):
   - `CENTRAL_USERNAME` / `CENTRAL_TOKEN` — a Central Portal **token** (user
     token pair, not your portal password).
@@ -77,7 +79,7 @@ plugin) and is driven on CI by `.github/workflows/java-sdk.yml` on a
    - After Central → Maven Central sync (minutes to ~1h), the coordinates
      resolve:
      ```bash
-     mvn dependency:get -Dartifact=io.tipsy:tipsy-abconfig:X.Y.Z
+     mvn dependency:get -Dartifact=io.github.lightspeed-intelligence:tipsy-abconfig:X.Y.Z
      ```
    - Create a GitHub Release for the `java-sdk/vX.Y.Z` tag with the CHANGELOG
      excerpt.

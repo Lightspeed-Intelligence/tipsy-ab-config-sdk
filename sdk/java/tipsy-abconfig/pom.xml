@@ -5,7 +5,7 @@
   <modelVersion>4.0.0</modelVersion>
 
   <parent>
-    <groupId>io.tipsy</groupId>
+    <groupId>io.github.lightspeed-intelligence</groupId>
     <artifactId>tipsy-ab-config-parent</artifactId>
     <version>0.1.0</version>
   </parent>
@@ -22,12 +22,12 @@
 
   <dependencies>
     <dependency>
-      <groupId>io.tipsy</groupId>
+      <groupId>io.github.lightspeed-intelligence</groupId>
       <artifactId>tipsy-abconfig-proto</artifactId>
       <version>${project.version}</version>
     </dependency>
     <dependency>
-      <groupId>io.tipsy</groupId>
+      <groupId>io.github.lightspeed-intelligence</groupId>
       <artifactId>tipsy-auth</artifactId>
       <version>${project.version}</version>
     </dependency>

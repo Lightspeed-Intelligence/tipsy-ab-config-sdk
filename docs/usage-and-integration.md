@@ -306,7 +306,7 @@ git ls-remote --tags --refs git@github.com:Lightspeed-Intelligence/tipsy-ab-conf
   | awk '{print $2}' | grep -E '^refs/tags/(python-sdk|sdk/go/tipsyabconfig)/v' | sort -V | tail -5
 
 # Java SDK 最新版（Maven Central，无需凭据）
-curl -s 'https://repo1.maven.org/maven2/io/tipsy/tipsy-abconfig/maven-metadata.xml' \
+curl -s 'https://repo1.maven.org/maven2/io/github/lightspeed-intelligence/tipsy-abconfig/maven-metadata.xml' \
   | grep -oE '<release>[^<]+' | sed 's/<release>//'
 # 或查 git tag（前缀 java-sdk/v）
 git ls-remote --tags --refs git@github.com:Lightspeed-Intelligence/tipsy-ab-config-sdk.git \
@@ -809,7 +809,7 @@ trace_id 为可选字符串。未传或空串时由 SDK / 服务端自动填充 
 
 ### 4.3 Java SDK 接入
 
-Java SDK 与 Go / Python **全量对齐**，语言基线 **Java 21**，Maven 坐标 groupId `io.tipsy`。完整文档见 [`sdk/java/README.md`](../sdk/java/README.md)。
+Java SDK 与 Go / Python **全量对齐**，语言基线 **Java 21**，Maven 坐标 groupId `io.github.lightspeed-intelligence`。完整文档见 [`sdk/java/README.md`](../sdk/java/README.md)。
 
 #### 4.3.0 接入方需要做什么（快速清单）
 
@@ -819,13 +819,13 @@ Java SDK 与 Go / Python **全量对齐**，语言基线 **Java 21**，Maven 坐
 
 ```xml
 <dependency>
-  <groupId>io.tipsy</groupId>
+  <groupId>io.github.lightspeed-intelligence</groupId>
   <artifactId>tipsy-abconfig</artifactId>
   <version>0.1.0</version>   <!-- 最新版见 §4.0 的查询命令 -->
 </dependency>
 <!-- 仅在需要本服务自签 service token 时再加： -->
 <dependency>
-  <groupId>io.tipsy</groupId>
+  <groupId>io.github.lightspeed-intelligence</groupId>
   <artifactId>tipsy-auth</artifactId>
   <version>0.1.0</version>
 </dependency>
@@ -837,7 +837,7 @@ Java SDK 与 Go / Python **全量对齐**，语言基线 **Java 21**，Maven 坐
 **② 构造 client（进程级单例，应用启动时建一次，关闭时 `close()`）**
 
 ```java
-import io.tipsy.abconfig.*;
+import io.github.lightspeedintelligence.abconfig.*;
 import java.time.Duration;
 import java.util.List;
 
@@ -870,7 +870,7 @@ String value = client.getConfig(ctx, "tipsy-chat", "rerank_threshold", "0.5");
 > **为什么显式传 `AbtestContext`（而非 ThreadLocal）**：经调研业务方 `tipsy-recsys/pine-java`——
 > 单个请求会在 `newVirtualThreadPerTaskExecutor()` 上 fan-out 到多个虚拟线程，ThreadLocal **不会**
 > 跨 fan-out 传播。因此 SDK 的契约是**显式传参**（与 Go 的显式 `abctx` 参数一致）。SDK 另提供可选的纯 JDK
-> 便捷件 `io.tipsy.abconfig.web.{AbtestContextHolder, HttpServerSupport}`（基于 `com.sun.net.httpserver`），
+> 便捷件 `io.github.lightspeedintelligence.abconfig.web.{AbtestContextHolder, HttpServerSupport}`（基于 `com.sun.net.httpserver`），
 > 仅用于 thread-per-request 边缘，且 Javadoc 明确标注 fan-out 不传播警示。**不**提供 servlet/Spring filter。
 
 #### 4.3.1 与 Go/Python 的对外差异（有意设计，非缩水）
@@ -884,7 +884,7 @@ String value = client.getConfig(ctx, "tipsy-chat", "rerank_threshold", "0.5");
 #### 4.3.2 自签 service token（可选）
 
 ```java
-import io.tipsy.auth.*;
+import io.github.lightspeedintelligence.auth.*;
 import java.time.Duration;
 import java.util.List;
 

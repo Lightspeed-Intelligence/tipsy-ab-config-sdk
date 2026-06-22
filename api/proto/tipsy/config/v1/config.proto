@@ -5,7 +5,7 @@ package tipsy.config.v1;
 option go_package = "github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk/api/gen/go/tipsy/config/v1;configv1";
 
 option java_multiple_files = true;
-option java_package = "io.tipsy.abconfig.proto.config.v1";
+option java_package = "io.github.lightspeedintelligence.abconfig.proto.config.v1";
 option java_outer_classname = "ConfigProto";
 
 // ConfigService is the read entrypoint for business SDKs AND the abtest
