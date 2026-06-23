@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Maven Central publishing actually uploads now. The `example` module's
+  `central-publishing` `skipPublishing=true` was suppressing the whole aggregate
+  bundle upload (the plugin uploads once from the last reactor module = example),
+  so a release run went green but published nothing. The example is now excluded
+  via the parent's `<excludeArtifacts>tipsy-abconfig-example</excludeArtifacts>`
+  (matched by bare artifactId). See `sdk/java/RELEASING.md` Gotchas. No
+  source/API change; `0.1.0` artifacts on Central are unaffected.
+
 ## [0.1.0] - 2026-06-22
 
 First Java SDK release. Full parity with the Go / Python SDK capability
