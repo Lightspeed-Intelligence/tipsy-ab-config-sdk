@@ -1,5 +1,30 @@
 # DEV 环境 e2e 测试结果报告
 
+## 2026-06-23 Java SDK 发布版 dev-e2e 实跑 — **76/76 PASS** ✅
+
+用**正式发布到 Maven Central 的 jar** 模拟业务方,对真实 DEV 环境跑通全部断言。
+
+- **消费的是正式发布包**:`java-sdk/v0.1.0` 已发布到 Maven Central
+  (`io.github.lightspeed-intelligence:{tipsy-abconfig,tipsy-auth,tipsy-abconfig-proto}:0.1.0`)。
+  先 `rm -rf ~/.m2/repository/io/github/lightspeed-intelligence` 清空本地缓存,
+  dev-e2e 驱动 `mvn package` 时从 `repo.maven.apache.org` 真实下载 0.1.0 jar 打成 fat-jar
+  (与下游业务方完全相同的消费方式,无 `<repositories>`、无本地 install)。
+- **token 用发布的 tipsy-auth 自签**:用 Maven Central 拉的 `tipsy-auth-0.1.0` 的
+  `JwtSigner.create(secret).issue(...)` 现签一个 `roles=[business_sdk]` /
+  `namespaces=[*]` / 2h TTL 的 HS256 token(payload 校验:
+  `{"roles":["business_sdk"],"namespaces":["*"],"sub":"java-sdk-dev-e2e","iat":…,"exp":iat+7200}`)。
+  这同时证明发布的 `tipsy-auth` 签名工具可用且与服务端 HS256 验证契约一致。
+- **DEV 端点**:HTTP `https://dev-ab-config.infra.fantacy.live`、
+  gRPC `grpcs://dev-ab-config-grpc.infra.fantacy.live:443`(标准 TLS,Cloudflare 代理)。
+- **结果**:`SUMMARY: 76 passed, 0 failed (of 76 checks)`,exit 0。
+  38 行 fixture × {`java_sdk_http`, `java_sdk_grpc`} 全绿,覆盖 experiment_group /
+  whitelist / full release / custom_params(`custom_flat_kv` Struct)各命中路径,
+  与 Go / Python 驱动的 76/76 完全对齐。
+- 备注:JDK 25 运行 gRPC 时打印 `restricted method … loadLibrary` 的 native-access
+  WARNING(netty 加载本地库),无害,不影响断言结果。
+- 至此 Java SDK 发布全链路闭环:**发包(Central)→ 业务方拉正式 jar → 自签 token →
+  打真实 DEV → 76/76 PASS**。
+
 ## 2026-06-22 Java SDK dev-e2e 驱动就绪（待有效 token 实跑）
 
 新增 `test/dev-e2e/clients/java/`——Java SDK 的 dev-e2e 客户端正确性驱动，与
