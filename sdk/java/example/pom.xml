@@ -37,17 +37,13 @@
         </configuration>
       </plugin>
 
-      <!-- The parent's `release` profile attaches the central-publishing plugin
-           (extensions=true) to every module. The example is a demo, not a
-           published library, so disable its upload to Maven Central. Harmless
-           when the release profile is inactive. -->
-      <plugin>
-        <groupId>org.sonatype.central</groupId>
-        <artifactId>central-publishing-maven-plugin</artifactId>
-        <configuration>
-          <skipPublishing>true</skipPublishing>
-        </configuration>
-      </plugin>
+      <!-- NOTE: do NOT set <skipPublishing>true</skipPublishing> on the example.
+           central-publishing-maven-plugin aggregates the whole reactor and runs
+           the single bundle upload from the LAST reactor module — which is this
+           example. skipPublishing here would suppress the entire publish (CI
+           goes green but nothing reaches Central). The example is instead
+           excluded from the bundle via <excludeArtifacts> on the parent's
+           central plugin config (see sdk/java/pom.xml release profile). -->
 
       <!-- Lets the example be run directly with `mvn -pl example exec:java`
            (no -Dexec.mainClass needed). Version pinned locally to keep the

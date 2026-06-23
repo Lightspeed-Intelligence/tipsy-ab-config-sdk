@@ -269,6 +269,18 @@
             <configuration>
               <publishingServerId>central</publishingServerId>
               <autoPublish>true</autoPublish>
+              <!-- The plugin aggregates the whole reactor and uploads ONE bundle
+                   from the last reactor module. Exclude the demo `example` module
+                   from that bundle here (instead of skipPublishing on the module,
+                   which would suppress the entire upload). The published set is
+                   then: parent (pom) + tipsy-abconfig-proto + tipsy-auth +
+                   tipsy-abconfig. -->
+              <!-- central-publishing 0.7.0 matches each exclude entry against the
+                   bare artifactId (Artifact.getArtifactId()), NOT groupId/GAV.
+                   So this must be just the artifactId. -->
+              <excludeArtifacts>
+                <artifact>tipsy-abconfig-example</artifact>
+              </excludeArtifacts>
             </configuration>
           </plugin>
         </plugins>
