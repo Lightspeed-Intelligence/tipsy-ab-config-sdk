@@ -10,9 +10,11 @@
 //     awaits the per-request AbtestContext compute future and falls back to
 //     the full-release version when abtest is unavailable.
 //   - AbtestContext for per-request user attributes + per-namespace abtest
-//     results: the project default namespace is pre-fetched eagerly; other
-//     namespaces are fetched lazily on first dynamic GetConfig and memoised so
-//     the request link issues at most one GetExperimentResult RPC per ns.
+//     results: construction issues no RPC; every namespace (including the
+//     project default) is fetched lazily on first dynamic GetConfig and
+//     memoised so the request link issues at most one GetExperimentResult RPC
+//     per ns. Opt into warming a namespace early via
+//     AbtestContext.PrefetchConfigVersionFlatKvForNamespace.
 //   - HTTP middleware adapter for any net/http compatible router; a thin
 //     adapter is provided for gin-style frameworks via the AdaptHTTPRequest
 //     helper.
@@ -40,11 +42,11 @@ var ErrStartupPullFailed = errors.New("tipsyabconfig: startup PullAll failed")
 // ErrClosed is returned by SDK calls made after Close.
 var ErrClosed = errors.New("tipsyabconfig: client closed")
 
-// ErrNamespaceRequired is returned by the ns-optional dynamic getConfig /
-// pre-request entry points when no explicit namespace is supplied AND the
-// environment variable `PROJECT_DEFAULT_NAMESPACE` was empty / unset at Init
-// (so the SDK has no defaultNamespace to fall back to). Per design 04 §B.1
-// (decision A-3) the SDK never hard-codes a default namespace.
+// ErrNamespaceRequired is returned by the ns-optional dynamic getConfig entry
+// points when no explicit namespace is supplied AND the environment variable
+// `PROJECT_DEFAULT_NAMESPACE` was empty / unset at Init (so the SDK has no
+// defaultNamespace to fall back to). Per design 04 §B.1 (decision A-3) the SDK
+// never hard-codes a default namespace.
 var ErrNamespaceRequired = errors.New("tipsyabconfig: namespace required (no explicit ns and PROJECT_DEFAULT_NAMESPACE env is empty)")
 
 // ErrNamespaceNotSubscribed is returned when the resolved namespace (explicit

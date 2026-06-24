@@ -195,13 +195,21 @@ async def main():
     cfg = client.get_config_static("feature.flags")
 
     # AbtestContext-aware lookup (resolves abtest hits via the server).
-    # Pass `trace_id=` to reuse an upstream trace; omit or pass an empty
-    # string to have the SDK auto-generate a UUID v4 for this request.
-    async with client.new_abtest_context(
-        user_info=...,
+    # `new_abtest_context` is a PURE create: it issues NO RPC at construction.
+    # The first `get_config` for a namespace lazily fetches + memoises that
+    # namespace's result (at most one GetExperimentResult per namespace per
+    # request). Pass `trace_id=` to reuse an upstream trace; omit or pass an
+    # empty string to have the SDK auto-generate a UUID v4 for this request.
+    ctx = client.new_abtest_context(
+        user_id="u-123",
+        user_attrs={"country": "US"},
         trace_id="abc-trace-from-upstream",
-    ) as ctx:
-        value = await client.get_config("feature.flags", ctx=ctx)
+    )
+    value = await client.get_config(ctx, "feature.flags", "key")
+
+    # Optional: warm a namespace up front (e.g. so it overlaps other I/O).
+    # Idempotent + non-blocking; a later get_config reuses the same fetch.
+    ctx.prefetch_config_version_flat_kv_for_namespace("feature.flags")
 
     # `get_experiment_result` accepts the same optional kwarg.
     resp = await client.get_experiment_result(
@@ -211,7 +219,7 @@ async def main():
     )
 ```
 
-The same `trace_id=` kwarg is accepted by `new_abtest_context`,
+The `trace_id=` kwarg is accepted by `new_abtest_context`,
 `abtest_scope`, and `get_experiment_result`. Empty / `None` means
 "SDK generates a fresh UUID v4". The id is propagated end-to-end:
 into the proto `trace_id` field and the server-side computation logs.
@@ -244,6 +252,20 @@ app.add_middleware(AbtestMiddleware, client=client, default_user_extractor=...)
 The middleware binds an `AbtestContext` into `contextvars` per request, so
 deep call sites can call `client.get_config(...)` without threading the
 context through.
+
+The middleware never auto-prefetches: building the context issues no RPC, and
+the first `get_config` for a namespace pays the lazy-fetch latency. To warm the
+default namespace for selected entry-point routes, opt in with an exact-match
+URL whitelist (`prefetch_paths`); requests whose path is not in the whitelist
+(or any path when the list is empty) are never prefetched, so handlers that
+never call `get_config` do not fire wasted experiment RPCs:
+
+```python
+app.add_middleware(
+    AbtestMiddleware, sdk=client, user_provider=...,
+    prefetch_paths=["/feed", "/recommend"],
+)
+```
 
 Trace propagation is built in: the middleware reads the inbound
 `X-Trace-Id` header first, falling back to `X-Request-Id`, and finally

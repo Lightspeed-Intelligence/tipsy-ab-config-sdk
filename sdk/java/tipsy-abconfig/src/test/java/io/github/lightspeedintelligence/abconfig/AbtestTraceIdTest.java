@@ -94,16 +94,21 @@ final class AbtestTraceIdTest {
     }
 
     @Test
-    @DisplayName("newAbtestContextForNamespace with explicit trace_id propagates on the eager RPC")
-    void forNamespaceExplicitTraceIdPropagates() {
+    @DisplayName("explicit prefetch with explicit trace_id propagates the trace_id on the prefetch RPC")
+    void explicitPrefetchExplicitTraceIdPropagates() {
         try (AbtestTestSupport h = base().build()) {
-            AbtestContext ctx = h.client.newAbtestContextForNamespace(
-                    NS, "u-1", Map.of(), "trace-ns-456");
+            // Construction is pure-create (no RPC); warm NS explicitly with an
+            // explicit trace_id on the context.
+            AbtestContext ctx = h.client.newAbtestContext("u-1", Map.of(), "trace-ns-456");
             assertEquals("trace-ns-456", ctx.traceId());
+            assertTrue(h.abtest.requests.isEmpty(),
+                    "construction must not issue any RPC");
 
-            // The eager prefetch RPC should carry the trace id.
+            ctx.prefetchConfigVersionFlatKvForNamespace(NS);
+
+            // The explicit prefetch RPC should carry the context trace id.
             assertTrue(AbtestTestSupport.awaitTrue(() -> !h.abtest.requests.isEmpty(), WAIT),
-                    "eager prefetch should issue the RPC");
+                    "explicit prefetch should issue the RPC");
             GetExperimentResultRequest seen = h.abtest.requests.peek();
             assertEquals("trace-ns-456", seen.getTraceId());
         }

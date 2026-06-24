@@ -4,8 +4,9 @@ Mirrors the Go SDK's ``v2_namespace_test.go`` 1:1 (design 04 §B.1–§B.6,
 decision A-3):
 
 - env / Config default-ns resolution + NamespaceRequired
-- eager pre-request fires ONLY for the prefetch ns (config_version + flat_kv)
-- no default ns ⇒ no eager RPC
+- construction issues ZERO GetExperimentResult RPC (prefetch decouple G1):
+  ``new_abtest_context`` is a pure create; the first dynamic ``get_config``
+  pays the lazy RPC; the default ns is NOT pre-fetched at construction.
 - per-ns at-most-once: concurrent get_config on the same ctx ⇒ exactly 1 RPC
 - ns-optional get_config preserves the full-release fallback (M6)
 - user_info accessor carries uid + attrs
@@ -84,7 +85,7 @@ async def test_default_namespace_from_config(
     ab_servicer: FakeAbtestServicer,
     running_servers,
 ):
-    """Configured default ns drives ns-optional get_config + eager pre-request."""
+    """Configured default ns drives ns-optional get_config; construction is RPC-free."""
     cfg_addr, ab_addr = running_servers
     cfg_servicer.set_pull_snapshot(
         make_snapshot("ns1", 1, 1, {"k": (1, {1: "full-v1", 2: "ab-v2"})})
@@ -103,10 +104,20 @@ async def test_default_namespace_from_config(
     )
     try:
         assert cli.default_namespace == "ns1"
+        before = ab_servicer.calls
         abctx = cli.new_abtest_context("u1")
-        # Eager pre-request fires for the default ns; get_config_default hits it.
+        # Construction is a pure create: NO eager RPC even though a default ns
+        # exists (prefetch decouple G1). Give any stray task a moment to prove
+        # it does not fire.
+        await asyncio.sleep(0.02)
+        assert ab_servicer.calls - before == 0, (
+            "construction must not issue any GetExperimentResult RPC"
+        )
+        # ns-optional get_config falls back to the default ns and pays the
+        # lazy RPC on first access.
         val = await cli.get_config_default(abctx, "k", "def")
         assert val == "ab-v2"
+        assert ab_servicer.calls_by_ns.get("ns1", 0) == 1
     finally:
         await cli.aclose()
 
@@ -136,22 +147,37 @@ async def test_default_namespace_from_env(
     )
     try:
         assert cli.default_namespace == "ns1"
+        before = ab_servicer.calls
         abctx = cli.new_abtest_context("u1")
+        # Construction issues no RPC (G1) even with an env-resolved default ns.
+        await asyncio.sleep(0.02)
+        assert ab_servicer.calls - before == 0
         val = await cli.get_config_default(abctx, "k", "def")
         assert val == "ab-v2"
     finally:
         await cli.aclose()
 
 
-async def test_new_abtest_context_eager_prefetch_shape(
+async def test_new_abtest_context_construction_issues_zero_rpc(
     cfg_servicer: FakeConfigServicer,
     ab_servicer: FakeAbtestServicer,
     running_servers,
 ):
-    """Eager pre-request targets ONLY the default ns + config_version + flat_kv."""
+    """Construction is a pure create: ZERO GetExperimentResult RPC, default ns or not.
+
+    Converted from the former ``test_new_abtest_context_eager_prefetch_shape``,
+    which asserted a construction-time eager pre-request for the default ns.
+    After the prefetch decouple (design G1 / D1) construction NEVER issues an
+    RPC; the first dynamic ``get_config`` pays the lazy latency instead, and the
+    shape of THAT request (config_version + flat_kv for the accessed ns) is the
+    asserted contract. ns2 is never touched until accessed.
+    """
     cfg_addr, ab_addr = running_servers
-    cfg_servicer.set_pull_snapshot(make_snapshot("ns1", 1, 1))
+    cfg_servicer.set_pull_snapshot(
+        make_snapshot("ns1", 1, 1, {"k": (1, {1: "full", 2: "ab"})})
+    )
     cfg_servicer.set_pull_snapshot(make_snapshot("ns2", 1, 1))
+    ab_servicer.set_response("ns1", make_exp_result({"k": 2}))
     cli = await init(
         Config(
             namespaces=["ns1", "ns2"],
@@ -165,13 +191,22 @@ async def test_new_abtest_context_eager_prefetch_shape(
     )
     try:
         before = ab_servicer.calls
-        _ = cli.new_abtest_context("u1")
-        assert await _wait_for(lambda: ab_servicer.calls_by_ns.get("ns1", 0) > 0), (
-            "expected eager pre-request for default ns1"
+        abctx = cli.new_abtest_context("u1")
+        # No eager pre-request fires for the default ns (or any ns) — give any
+        # stray task a window to disprove the old eager behaviour.
+        await asyncio.sleep(0.05)
+        assert ab_servicer.calls - before == 0, (
+            "construction must issue ZERO GetExperimentResult RPC (G1)"
         )
-        # Only the default ns is pre-fetched; ns2 must NOT be requested eagerly.
+        assert ab_servicer.calls_by_ns.get("ns1", 0) == 0
         assert ab_servicer.calls_by_ns.get("ns2", 0) == 0
+
+        # The first dynamic get_config on the default ns pays the lazy RPC, and
+        # that request carries the hardwired config_version + flat_kv shape.
+        val = await cli.get_config_default(abctx, "k", "def")
+        assert val == "ab"
         assert ab_servicer.calls - before == 1
+        assert ab_servicer.calls_by_ns.get("ns2", 0) == 0
         req = ab_servicer.last_req
         assert req.namespace == "ns1"
         assert (
@@ -186,12 +221,12 @@ async def test_new_abtest_context_eager_prefetch_shape(
         await cli.aclose()
 
 
-async def test_new_abtest_context_no_default_no_eager_rpc(
+async def test_new_abtest_context_no_default_construction_zero_rpc(
     cfg_servicer: FakeConfigServicer,
     ab_servicer: FakeAbtestServicer,
     running_servers,
 ):
-    """With no default ns the constructor fires no eager RPC (design 04 §B.2)."""
+    """With no default ns the constructor fires no RPC either (design G1 / §B.2)."""
     cfg_addr, ab_addr = running_servers
     cfg_servicer.set_pull_snapshot(make_snapshot("ns1", 1, 1))
     cli = await init(
@@ -207,7 +242,7 @@ async def test_new_abtest_context_no_default_no_eager_rpc(
     try:
         before = ab_servicer.calls
         _ = cli.new_abtest_context("u1")
-        # Give any (erroneous) eager task a moment.
+        # Give any (erroneous) stray task a moment to disprove a construction RPC.
         await asyncio.sleep(0.05)
         assert ab_servicer.calls - before == 0
     finally:
@@ -241,7 +276,7 @@ async def test_result_for_concurrent_at_most_once(
     )
     try:
         before = ab_servicer.calls_by_ns.get("ns1", 0)
-        # No default ns ⇒ no eager pre-request; the lazy path is exercised.
+        # No default ns ⇒ construction is RPC-free; the lazy path is exercised.
         abctx = cli.new_abtest_context("u1")
 
         async def one():

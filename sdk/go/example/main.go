@@ -64,6 +64,14 @@ func main() {
 
 	// /user — user-scoped; demonstrates GetConfig + middleware.
 	//
+	// Constructing the AbtestContext (here, inside Middleware) issues NO
+	// GetExperimentResult RPC: the namespace is fetched lazily on the first
+	// GetConfig call below. Prefetch is opt-in — pass PrefetchPaths(...) to
+	// warm the default namespace ahead of the handler only for the exact
+	// request paths you list (e.g. tipsyabconfig.PrefetchPaths("/user")).
+	// Without it, no path prefetches, avoiding useless empty experiment RPCs
+	// on handlers that never call GetConfig.
+	//
 	// Middleware automatically extracts trace_id from inbound X-Trace-Id /
 	// X-Request-Id headers (or generates one). To override or explicitly
 	// stamp a trace_id (e.g. when bridging from another system that already
@@ -79,7 +87,10 @@ func main() {
 			"country": r.Header.Get("X-Country"),
 		}, nil
 	}
-	withCtx := sdk.Middleware(userProvider)
+	// Opt this handler's path into default-namespace prefetch. Drop the
+	// PrefetchPaths option to keep construction pure-create (lazy fetch on
+	// first GetConfig).
+	withCtx := sdk.Middleware(userProvider, tipsyabconfig.PrefetchPaths("/user"))
 	mux.Handle("/user", withCtx(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		abctx := tipsyabconfig.AbtestContextFromContext(r.Context())
 		val, err := sdk.GetConfig(r.Context(), abctx, "tipsy-chat", "rerank.threshold", "0.5")

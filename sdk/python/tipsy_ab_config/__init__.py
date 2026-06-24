@@ -11,10 +11,10 @@ This package mirrors the Go SDK 1:1:
   default > :class:`NamespaceRequired`), awaits the per-request
   :class:`~tipsy_ab_config.abtest_context.AbtestContext`, and resolves the
   value (abtest hit > full release fallback).
-- :func:`Client.new_abtest_context` eagerly pre-fetches ONLY the prefetch
-  namespace (explicit-or-default) via one ``GetExperimentResult`` task; other
-  namespaces are fetched lazily and memoised at-most-once on first dynamic
-  ``get_config`` (design 04 §B.2/§B.3).
+- :func:`Client.new_abtest_context` purely creates the per-request context and
+  issues no RPC; each namespace is fetched lazily and memoised at-most-once on
+  first dynamic ``get_config`` (or warmed up front via
+  ``AbtestContext.prefetch_config_version_flat_kv_for_namespace``).
 - :func:`Client.get_experiment_result` exposes the full wire request
   (namespace / user_info / layer_ids / type / display) for custom_params.
 - :class:`tipsy_ab_config.fastapi_middleware.AbtestMiddleware` wires the
@@ -35,7 +35,7 @@ from .exceptions import (
 from .abtest_context import AbtestContext, UserInfo, abtest_ctx_var
 from .client import Client, init, Config
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"
 
 __all__ = [
     "AbtestContext",

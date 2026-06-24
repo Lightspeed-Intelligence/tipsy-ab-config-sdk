@@ -112,8 +112,21 @@ TIPSY_TOKEN=... CONFIG_ADDR=grpcs://config.example.com:443 \
 | `getExperimentResult(ExperimentResultRequest)` | 直通 `AbtestService.GetExperimentResult`，返回原始 proto 响应（读 `config_flat_kv` / `custom_flat_kv` / `groups` / `gray_hits`）。 |
 
 `AbtestContext` 工厂：`newAbtestContext(uid, attrs)` / `(…, traceId)` /
-`newAbtestContextForNamespace(ns, uid, attrs[, traceId])` / `emptyAbtestContext()`
-（无用户身份的路径，永不发 RPC）。读访问器 `userId()` / `userInfo()` / `traceId()`。
+`emptyAbtestContext()`（无用户身份的路径，永不发 RPC）。读访问器 `userId()` /
+`userInfo()` / `traceId()`。
+
+**构造不发 RPC（纯创建）**：`newAbtestContext(...)` 只创建上下文，**不**做任何
+`GetExperimentResult` 预请求。每个 ns 在首次对该 ns 调 `getConfig` 时惰性拉取并
+memoize（首次 `getConfig` 因此承担 RPC 延迟），每个请求链路每 ns 至多一次 RPC。
+**正确用法是一次业务服务调用创建一个 `AbtestContext`,并在该次调用内对所有
+`getConfig` 复用同一个 ctx**(不要每次 `getConfig` 都新建)。
+
+**可选显式预热**：若想在 `getConfig` 之前预热某 ns,调
+`abctx.prefetchConfigVersionFlatKvForNamespace(ns)`——非阻塞、幂等、at-most-once,
+随后对同一 ns 的 `getConfig` 直接复用预热结果;空/mock ctx 或未订阅 ns 走短路、不发
+RPC。Java 无网络中间件;若自建 thread-per-request 入口想在入口层预热,**应自行用
+URL 白名单 gate 后再调用 `prefetchConfigVersionFlatKvForNamespace`**,否则会对每个
+穿过入口的请求产生大量用不上的空实验请求。
 
 **命名空间解析**：显式 ns > 项目默认 ns（`Config.defaultNamespace` 覆盖环境变量
 `PROJECT_DEFAULT_NAMESPACE`）> `NamespaceRequiredException`；解析出的 ns 未订阅 →

@@ -3,9 +3,9 @@ package tipsyabconfig
 // SubTask B test file (sdk-trace-id design §4 + Testing Plan §SDK Go bullet 5).
 //
 // Covers AbtestContext.traceID semantics and propagation onto every outbound
-// GetExperimentResultRequest issued via either the eager prefetch goroutine
-// (NewAbtestContext / NewAbtestContextWithTraceID with a prefetch ns) OR the
-// lazy WaitForAbtest path.
+// GetExperimentResultRequest. Construction no longer pre-fetches (G1), so the
+// trace_id-propagation intent is now asserted via the explicit prefetch API
+// (PrefetchConfigVersionFlatKvForNamespace) and the lazy WaitForAbtest path.
 //
 // Design contract under test:
 //   - NewAbtestContextWithTraceID(ctx, uid, attrs, "explicit-id")
@@ -14,7 +14,8 @@ package tipsyabconfig
 //        ⇒ AbtestContext.traceID == fresh UUID v4 (NOT empty)
 //   - Old NewAbtestContext(ctx, uid, attrs) (backward compat)
 //        ⇒ AbtestContext.traceID == fresh UUID v4 (NOT empty)
-//   - Eager prefetch goroutine ⇒ outbound proto TraceId == a.traceID
+//   - Explicit PrefetchConfigVersionFlatKvForNamespace ⇒ outbound proto
+//     TraceId == a.traceID
 //   - Lazy WaitForAbtest         ⇒ outbound proto TraceId == a.traceID
 //   - Concurrent first-access dedup ⇒ exactly ONE RPC fires AND its TraceId
 //     matches the AbtestContext's traceID.
@@ -34,21 +35,22 @@ import (
 )
 
 // newClientWithCaptureAbtestAndPrefetch builds a *Client wired to a capture
-// transport AND a configured default+subscribed namespace so the eager
-// prefetch goroutine in newAbtestContext fires. The cache stays empty (no
-// pull).
+// transport AND a configured default+subscribed namespace so the explicit
+// prefetch API (PrefetchConfigVersionFlatKvForNamespace) has a real subscribed
+// ns to warm. The cache stays empty (no pull). Construction itself never fires
+// an RPC; the returned transport only records calls once prefetch / GetConfig
+// drives them.
 func newClientWithCaptureAbtestAndPrefetch(t *testing.T, ns string) (*Client, *captureAbtestTransport) {
 	t.Helper()
 	cli, tr := newClientWithCaptureAbtest(t, ns)
-	// defaultNamespace + defaultNsSubscribed already set by helper; eager
-	// prefetch path in newAbtestContext targets c.defaultNamespace by default.
+	// defaultNamespace + defaultNsSubscribed already set by the base helper.
 	return cli, tr
 }
 
 func TestNewAbtestContextWithTraceID_ExplicitIDStored(t *testing.T) {
 	cli, _ := newClientWithCaptureAbtest(t, "ns1")
-	// Drop defaultNamespace/defaultNsSubscribed so no eager goroutine fires —
-	// this test is purely about constructor field assignment.
+	// This test is purely about constructor field assignment; construction
+	// never fires an RPC regardless of the default ns.
 	cli.defaultNamespace = ""
 	cli.defaultNsSubscribed = false
 
@@ -97,7 +99,12 @@ func TestNewAbtestContext_BackwardCompat_AutoGeneratesTraceID(t *testing.T) {
 	}
 }
 
-func TestNewAbtestContext_EagerPrefetchUsesContextTraceID(t *testing.T) {
+// TestPrefetchAPI_UsesContextTraceID is the converted form of the old
+// TestNewAbtestContext_EagerPrefetchUsesContextTraceID. The trace_id-propagation
+// intent (the RPC warmed for a ctx carries that ctx's trace_id) is preserved,
+// but the trigger moves from the deleted construction-time eager prefetch to
+// the explicit PrefetchConfigVersionFlatKvForNamespace API.
+func TestPrefetchAPI_UsesContextTraceID(t *testing.T) {
 	cli, tr := newClientWithCaptureAbtestAndPrefetch(t, "ns1")
 
 	abctx := cli.NewAbtestContextWithTraceID(context.Background(), "u1", nil, "prefetch-id")
@@ -107,29 +114,35 @@ func TestNewAbtestContext_EagerPrefetchUsesContextTraceID(t *testing.T) {
 	if abctx.traceID != "prefetch-id" {
 		t.Fatalf("traceID = %q, want %q", abctx.traceID, "prefetch-id")
 	}
-	// Eager prefetch is fired by NewAbtestContextWithTraceID. Wait for the
-	// capture to register the request before asserting the proto field.
+	// Construction is pure-create: no RPC yet.
+	if got := tr.Calls(); got != 0 {
+		t.Fatalf("construction must issue no RPC; got %d", got)
+	}
+	// Explicit prefetch fires exactly one RPC for the subscribed ns. Wait for
+	// the capture to register the request before asserting the proto field.
+	abctx.PrefetchConfigVersionFlatKvForNamespace("ns1")
 	if !waitFor(t, 2*time.Second, func() bool { return tr.Calls() >= 1 }) {
-		t.Fatalf("eager prefetch RPC never observed; calls=%d", tr.Calls())
+		t.Fatalf("explicit prefetch RPC never observed; calls=%d", tr.Calls())
 	}
 	req := tr.LastRequest()
 	if got := req.GetTraceId(); got != "prefetch-id" {
-		t.Fatalf("eager prefetch proto TraceId = %q, want %q", got, "prefetch-id")
+		t.Fatalf("prefetch proto TraceId = %q, want %q", got, "prefetch-id")
 	}
 	if req.GetNamespace() != "ns1" {
-		t.Fatalf("eager prefetch targeted wrong ns: %q", req.GetNamespace())
+		t.Fatalf("prefetch targeted wrong ns: %q", req.GetNamespace())
 	}
 }
 
 func TestAbtestContext_LazyWaitForAbtestUsesContextTraceID(t *testing.T) {
 	cli, tr := newClientWithCaptureAbtest(t, "ns1")
-	// Force the lazy path by zeroing the default ns (no eager prefetch).
+	// Zero the default ns (no functional effect now that construction never
+	// pre-fetches; kept for parity with the field-assignment tests).
 	cli.defaultNamespace = ""
 	cli.defaultNsSubscribed = false
 
 	abctx := cli.NewAbtestContextWithTraceID(context.Background(), "u1", nil, "lazy-id")
 	if tr.Calls() != 0 {
-		t.Fatalf("expected no eager call without default ns; got %d", tr.Calls())
+		t.Fatalf("expected no RPC at construction; got %d", tr.Calls())
 	}
 
 	// Lazy entry: WaitForAbtest on a subscribed-but-not-prefetched ns must

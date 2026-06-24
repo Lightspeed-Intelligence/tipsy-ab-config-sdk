@@ -8,6 +8,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-06-25
+
+### Changed (BREAKING)
+
+- `Client.new_abtest_context` and `Client.abtest_scope` no longer accept a
+  `namespace` parameter. Construction is now a pure create and issues **no**
+  `GetExperimentResult` RPC. Every namespace is fetched lazily and memoised
+  at-most-once on first dynamic `get_config`. **Latency-shape change:** the
+  default namespace is no longer eagerly pre-fetched at construction, so the
+  first `get_config` for it now pays the GetExperimentResult RPC latency
+  inline (previously that RPC was overlapped with construction).
+- `AbtestMiddleware` no longer auto-prefetches on every request. It gained a
+  `prefetch_paths: Optional[Sequence[str]] = None` parameter (an exact-match
+  URL whitelist). The **default is no prefetch**; only requests whose
+  `request.url.path` exactly matches a whitelisted path warm the default
+  namespace. This removes the "every request through the middleware fires a
+  possibly-wasted experiment RPC" behaviour.
+
+### Added
+
+- `AbtestContext.prefetch_config_version_flat_kv_for_namespace(ns)` — explicit,
+  opt-in, single-namespace prefetch API. Non-blocking and idempotent; spawns
+  the single per-ns `GetExperimentResult` (config_version + flat_kv) task so a
+  later `get_config` for that namespace reuses it (at-most-once). Empty /
+  identity-less / mock contexts and unsubscribed namespaces short-circuit
+  without issuing any RPC. Requires a running asyncio event loop.
+
+### Internal
+
+- Renamed the internal `Client._get_experiment_result_for_ns` →
+  `Client._fetch_config_version_flat_kv_for_ns` (hardwired config_version +
+  flat_kv), to disambiguate it from the public general-purpose
+  `Client.get_experiment_result` (unchanged). The slot-creation logic moved
+  into a single shared `AbtestContext._ensure_fetch` primitive (synchronous,
+  lock-free) used by both `wait_for_abtest` and the new prefetch API, removing
+  the per-context `asyncio.Lock`.
+
 ## [0.5.0] - 2026-06-19
 
 ### Fixed

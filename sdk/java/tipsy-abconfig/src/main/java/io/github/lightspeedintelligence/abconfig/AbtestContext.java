@@ -19,21 +19,23 @@ import org.slf4j.Logger;
  * pass it through to every {@link TipsyAbConfigClient#getConfig} call within the
  * request, then let it go out of scope at request end.
  *
- * <p>Mirrors the Go SDK's {@code AbtestContext}. Construction does NOT fan out
- * to every subscribed namespace: it eagerly pre-fetches AT MOST the prefetch
- * namespace (the explicit construction ns, else the client default namespace);
- * other namespaces are fetched lazily on first dynamic {@code getConfig} for
- * that ns and memoised into {@code results} so the whole request link issues AT
- * MOST ONE {@code GetExperimentResult} RPC per namespace.
+ * <p>Mirrors the Go SDK's {@code AbtestContext}. Construction is pure-create: it
+ * issues NO {@code GetExperimentResult} RPC. Every namespace is fetched lazily
+ * on first dynamic {@code getConfig} for that ns and memoised into
+ * {@code results} so the whole request link issues AT MOST ONE
+ * {@code GetExperimentResult} RPC per namespace. Callers that want to warm a
+ * namespace ahead of {@code getConfig} can opt in via
+ * {@link #prefetchConfigVersionFlatKvForNamespace(String)} (non-blocking).
  *
  * <p>Safe for concurrent use by all threads participating in the same request:
  * the per-ns lazy fetch deduplicates concurrent first-access via a shared
  * {@link CompletableFuture} (exactly one RPC, the rest wait on the same future).
- * Per the F5 invariant (design 05) the eager-prefetch and lazy paths SHARE
- * {@link #getExperimentResultForNamespace}, which swallows every RPC error into
- * {@link AbtestComputeResult#EMPTY_RESULT}; therefore every future in
- * {@code results} only ever completes normally with some result (a successful
- * value or {@code EMPTY_RESULT}) and never completes exceptionally.
+ * Per the F5 invariant (design 05) the lazy {@code resultFor} path and the
+ * explicit prefetch API SHARE {@link #ensureFetch(String)} (and through it
+ * {@link #fetchConfigVersionFlatKvForNamespace(String)}), which swallows every
+ * RPC error into {@link AbtestComputeResult#EMPTY_RESULT}; therefore every
+ * future in {@code results} only ever completes normally with some result (a
+ * successful value or {@code EMPTY_RESULT}) and never completes exceptionally.
  */
 public final class AbtestContext {
 
@@ -51,7 +53,7 @@ public final class AbtestContext {
 
     /**
      * The per-request trace id propagated to every {@code GetExperimentResult}
-     * RPC issued from this context (eager prefetch + lazy {@code resultFor}).
+     * RPC issued from this context (lazy {@code resultFor} + explicit prefetch).
      * Always non-empty post-construction.
      */
     private final String traceId;
@@ -117,27 +119,27 @@ public final class AbtestContext {
     // ------------------------------------------------------------------
 
     /**
-     * Returns the memoised abtest result for {@code ns} within this request
-     * link, fetching it asynchronously exactly once on first access (design
-     * 05). Concurrency: under {@code synchronized(this)} the per-ns future is
-     * double-checked; the first caller creates it (an eager pre-resolved future
-     * for empty/unsubscribed ns, otherwise an executor-backed future running
-     * {@link #getExperimentResultForNamespace}), while every racing caller finds
-     * the existing future and blocks on it. Net effect: AT MOST ONE
-     * {@code GetExperimentResult} RPC per ns per request link.
+     * Ensures {@code ns} is being fetched (or has been resolved) exactly once
+     * within this request link and returns the memoised future. Idempotent: a
+     * second call for the same ns returns the existing future without spawning a
+     * new fetch. This is the single primitive SHARED by the lazy
+     * {@link #resultFor(String)} wait path and the explicit
+     * {@link #prefetchConfigVersionFlatKvForNamespace(String)} API; centralising
+     * the slot-creation critical section here keeps the at-most-once /
+     * concurrency-dedup invariant in one place.
      *
-     * <p>The future never completes exceptionally (F5): a per-ns RPC failure is
-     * degraded inside {@code getExperimentResultForNamespace} to
-     * {@link AbtestComputeResult#EMPTY_RESULT}. The only exception this method
-     * can surface is a thread interrupt while waiting; per design the
-     * {@code getConfig} path must not throw a business exception for abtest, so
-     * the interrupt restores the interrupt flag and degrades to
-     * {@code EMPTY_RESULT}.
+     * <p>Owns the {@code synchronized(this)} critical section: under the lock the
+     * per-ns future is double-checked; the first caller creates it (a completed
+     * {@link AbtestComputeResult#EMPTY_RESULT} future for an empty/owner-null or
+     * unsubscribed ns — no RPC — otherwise an executor-backed future running
+     * {@link #fetchConfigVersionFlatKvForNamespace(String)}), while every racing
+     * caller finds and reuses the existing future. Net effect: AT MOST ONE
+     * {@code GetExperimentResult} RPC per ns per request link. The returned
+     * future never completes exceptionally (F5).
      */
-    AbtestComputeResult resultFor(String ns) {
-        CompletableFuture<AbtestComputeResult> future;
+    CompletableFuture<AbtestComputeResult> ensureFetch(String ns) {
         synchronized (this) {
-            future = results.get(ns);
+            CompletableFuture<AbtestComputeResult> future = results.get(ns);
             if (future == null) {
                 if (empty || owner == null) {
                     // Identity-less / mock ctx: resolve to empty without an RPC.
@@ -149,14 +151,33 @@ public final class AbtestContext {
                     // the low-level path.
                     future = CompletableFuture.completedFuture(AbtestComputeResult.EMPTY_RESULT);
                 } else {
-                    // Lazy fetch on the client's abtest executor. Shares
-                    // getExperimentResultForNamespace with eager prefetch so the
-                    // future never completes exceptionally (F5).
+                    // Lazy fetch on the client's abtest executor via
+                    // fetchConfigVersionFlatKvForNamespace so the future never
+                    // completes exceptionally (F5).
                     future = submitFetch(ns);
                 }
                 results.put(ns, future);
             }
+            return future;
         }
+    }
+
+    /**
+     * Returns the memoised abtest result for {@code ns} within this request
+     * link, fetching it asynchronously exactly once on first access (design
+     * 05). Delegates the at-most-once slot creation to {@link #ensureFetch} and
+     * then blocks on the returned future for the resolved value.
+     *
+     * <p>The future never completes exceptionally (F5): a per-ns RPC failure is
+     * degraded inside {@code fetchConfigVersionFlatKvForNamespace} to
+     * {@link AbtestComputeResult#EMPTY_RESULT}. The only exception this method
+     * can surface is a thread interrupt while waiting; per design the
+     * {@code getConfig} path must not throw a business exception for abtest, so
+     * the interrupt restores the interrupt flag and degrades to
+     * {@code EMPTY_RESULT}.
+     */
+    AbtestComputeResult resultFor(String ns) {
+        CompletableFuture<AbtestComputeResult> future = ensureFetch(ns);
         try {
             AbtestComputeResult r = future.get();
             return r == null ? AbtestComputeResult.EMPTY_RESULT : r;
@@ -166,10 +187,10 @@ public final class AbtestContext {
             Thread.currentThread().interrupt();
             return AbtestComputeResult.EMPTY_RESULT;
         } catch (ExecutionException ee) {
-            // Defensive: getExperimentResultForNamespace swallows all RPC errors,
-            // so the future should never complete exceptionally (F5). Treat any
-            // unexpected exceptional completion as a silent degrade rather than
-            // propagating it to the getConfig caller.
+            // Defensive: fetchConfigVersionFlatKvForNamespace swallows all RPC
+            // errors, so the future should never complete exceptionally (F5).
+            // Treat any unexpected exceptional completion as a silent degrade
+            // rather than propagating it to the getConfig caller.
             if (owner != null) {
                 owner.metricsInternal().abtestFallback.inc(ns);
                 owner.logger().warn(
@@ -182,20 +203,43 @@ public final class AbtestContext {
     }
 
     /**
+     * Explicit, opt-in prefetch (warm-up) of the {@code config_version flat_kv}
+     * result for {@code ns} within this request link. Non-blocking: it triggers
+     * the at-most-once fetch via {@link #ensureFetch} and returns immediately
+     * without awaiting the result, so a subsequent {@link
+     * TipsyAbConfigClient#getConfig} for the same ns reuses the warmed future
+     * instead of paying the RPC latency inline.
+     *
+     * <p>Idempotent and at-most-once: calling this more than once for the same
+     * ns (or prefetching then {@code getConfig}-ing) issues AT MOST ONE
+     * {@code GetExperimentResult} RPC. An empty / mock context or an unsubscribed
+     * ns short-circuits inside {@code ensureFetch} and issues NO RPC.
+     *
+     * <p>Construction itself never prefetches; this is the only way to warm a
+     * namespace ahead of first use.
+     */
+    public void prefetchConfigVersionFlatKvForNamespace(String ns) {
+        // Trigger the shared at-most-once primitive and discard the future:
+        // prefetch never blocks on the result.
+        ensureFetch(ns);
+    }
+
+    /**
      * Submits an async fetch of {@code ns} onto the owner's abtest executor.
-     * Used by BOTH the eager-prefetch constructor path and the lazy
-     * {@link #resultFor} path, guaranteeing they share one future mechanism and
-     * the never-exceptional contract.
+     * Called by {@link #ensureFetch} for the live-fetch branch (shared by both
+     * the lazy {@link #resultFor} wait path and the explicit prefetch API),
+     * guaranteeing they share one future mechanism and the never-exceptional
+     * contract.
      */
     CompletableFuture<AbtestComputeResult> submitFetch(String ns) {
         CompletableFuture<AbtestComputeResult> f = new CompletableFuture<>();
         owner.abtestExecutor().submit(() -> {
-            // getExperimentResultForNamespace never throws (F5): it degrades to
-            // EMPTY_RESULT internally. complete(...) is therefore always with a
-            // non-null result. The try/catch is a last-resort guard so a stray
+            // fetchConfigVersionFlatKvForNamespace never throws (F5): it degrades
+            // to EMPTY_RESULT internally. complete(...) is therefore always with
+            // a non-null result. The try/catch is a last-resort guard so a stray
             // RuntimeException can never leave the future exceptional.
             try {
-                f.complete(getExperimentResultForNamespace(ns));
+                f.complete(fetchConfigVersionFlatKvForNamespace(ns));
             } catch (Throwable t) {
                 if (owner != null) {
                     owner.metricsInternal().abtestFallback.inc(ns);
@@ -213,12 +257,15 @@ public final class AbtestContext {
     /**
      * Wraps {@code AbtestService.GetExperimentResult} with the per-call timeout
      * for the {@code config_version flat_kv} shape the dynamic {@code getConfig}
-     * fast path consumes. On ANY error (including a missing abtest connection) it
-     * returns {@link AbtestComputeResult#EMPTY_RESULT} and bumps the per-ns
-     * fallback counter so the caller can monitor degraded mode. NEVER throws
-     * (F5): eager and lazy paths both rely on this.
+     * fast path consumes (the experiment type and display type are hardwired to
+     * {@code CONFIG_VERSION} / {@code FLAT_KV}; this is NOT the general-purpose
+     * {@link TipsyAbConfigClient#getExperimentResult} API). On ANY error
+     * (including a missing abtest connection) it returns
+     * {@link AbtestComputeResult#EMPTY_RESULT} and bumps the per-ns fallback
+     * counter so the caller can monitor degraded mode. NEVER throws (F5): the
+     * lazy fetch and explicit prefetch paths both rely on this.
      */
-    AbtestComputeResult getExperimentResultForNamespace(String ns) {
+    AbtestComputeResult fetchConfigVersionFlatKvForNamespace(String ns) {
         AbtestTransport transport = owner.abtestTransport();
         if (transport == null) {
             owner.metricsInternal().abtestFallback.inc(ns);

@@ -16,12 +16,13 @@ import (
 // GetConfig call within the request, then let it go out of scope at request
 // end.
 //
-// v2 semantics (design 04 §B.2/§B.3): construction does NOT fan out to every
-// subscribed namespace. It eagerly pre-fetches AT MOST the prefetch namespace
-// (the explicit construction ns, else the client defaultNamespace); other
-// namespaces are fetched lazily on first dynamic GetConfig for that ns and
-// memoised into results so the whole request link issues AT MOST ONE
-// GetExperimentResult RPC per namespace.
+// Construction is pure-create: NewAbtestContext does NOT issue any
+// GetExperimentResult RPC (no eager pre-fetch of any namespace). Every
+// namespace — including the client defaultNamespace — is fetched lazily on
+// first dynamic GetConfig for that ns and memoised into results so the whole
+// request link issues AT MOST ONE GetExperimentResult RPC per namespace. To
+// warm a namespace ahead of first GetConfig, call the explicit, opt-in
+// PrefetchConfigVersionFlatKvForNamespace.
 //
 // AbtestContext is safe for concurrent use by all goroutines participating in
 // the same request: the per-ns lazy fetch deduplicates concurrent first-access
@@ -49,14 +50,14 @@ type AbtestContext struct {
 	owner *Client
 
 	// traceID is the per-request trace identifier propagated to every
-	// GetExperimentResult RPC issued from this ctx (eager prefetch + lazy
-	// resultFor). Always non-empty post-construction: the constructor falls
+	// GetExperimentResult RPC issued from this ctx (lazy resultFor / explicit
+	// prefetch). Always non-empty post-construction: the constructor falls
 	// back to uuid.New().String() when the caller passes "".
 	//
 	// Concurrency note: traceID is assigned exactly once inside
-	// newAbtestContext before the eager-prefetch goroutine is started AND
-	// before the constructor returns, so the lazy resultFor goroutines have a
-	// happens-before edge on the read. No mutex needed.
+	// newAbtestContext before the constructor returns, so the lazy resultFor /
+	// prefetch goroutines have a happens-before edge on the read. No mutex
+	// needed.
 	traceID string
 }
 
@@ -92,55 +93,36 @@ type abtestComputeResult struct {
 // over it; callers must construct fresh AbtestContext instances per request.
 var emptyAbtestResult = &abtestComputeResult{keyVersions: map[string]int64{}}
 
-// NewAbtestContext creates a fresh per-request AbtestContext and, when the
-// client has a project default namespace, eagerly pre-fetches ONLY that
-// namespace's config_version flat_kv result in the background (design 04
-// §B.2). Other namespaces are fetched lazily and memoised on first dynamic
-// GetConfig (design 04 §B.3). Returns synchronously; the eager result is
-// awaited lazily via GetConfig / WaitForAbtest.
+// NewAbtestContext creates a fresh per-request AbtestContext. Construction is
+// pure-create: it issues NO GetExperimentResult RPC. Every namespace is
+// fetched lazily and memoised on first dynamic GetConfig (design 04 §B.3); to
+// warm a specific namespace ahead of time, call the opt-in
+// PrefetchConfigVersionFlatKvForNamespace.
 //
-// To pre-fetch a specific namespace (rather than the default), use
-// NewAbtestContextForNamespace.
-//
-// parentCtx is the parent ctx whose deadline / cancel signal propagates to the
-// eager pre-request AND every lazy per-ns GetExperimentResult RPC. Pass the
-// request ctx.
+// parentCtx is the parent ctx whose deadline / cancel signal propagates to
+// every lazy per-ns GetExperimentResult RPC (and any explicit prefetch). Pass
+// the request ctx.
 //
 // userAttrs is converted to abtestv1.Value entries on the wire. Supported
 // concrete types: string, int, int32, int64, float32, float64, bool.
 // Unsupported values are skipped with a WARN log.
 func (c *Client) NewAbtestContext(parentCtx context.Context, userID string, userAttrs map[string]any) *AbtestContext {
-	return c.newAbtestContext(parentCtx, "", userID, userAttrs, "")
+	return c.newAbtestContext(parentCtx, userID, userAttrs, "")
 }
 
 // NewAbtestContextWithTraceID is NewAbtestContext with an explicit per-request
 // trace_id (sdk-trace-id §4). Empty traceID ⇒ the SDK generates a fresh
 // uuid.New().String(); non-empty ⇒ passed through verbatim. Every
-// GetExperimentResult RPC issued from this ctx (eager prefetch + lazy per-ns
-// fetch) carries this trace_id.
+// GetExperimentResult RPC issued from this ctx (lazy per-ns fetch / explicit
+// prefetch) carries this trace_id.
 //
 // Use this in Gin / net/http middleware to propagate an inbound X-Trace-Id /
 // X-Request-Id from the upstream request; see Middleware / GinMiddleware.
 func (c *Client) NewAbtestContextWithTraceID(parentCtx context.Context, userID string, userAttrs map[string]any, traceID string) *AbtestContext {
-	return c.newAbtestContext(parentCtx, "", userID, userAttrs, traceID)
+	return c.newAbtestContext(parentCtx, userID, userAttrs, traceID)
 }
 
-// NewAbtestContextForNamespace is NewAbtestContext with an explicit prefetch
-// namespace. When ns is non-empty AND subscribed, the eager pre-request
-// targets ns instead of the client defaultNamespace. When ns is empty it
-// behaves exactly like NewAbtestContext.
-func (c *Client) NewAbtestContextForNamespace(parentCtx context.Context, ns, userID string, userAttrs map[string]any) *AbtestContext {
-	return c.newAbtestContext(parentCtx, ns, userID, userAttrs, "")
-}
-
-// NewAbtestContextForNamespaceWithTraceID combines NewAbtestContextForNamespace
-// (explicit prefetch ns) with the explicit trace_id of
-// NewAbtestContextWithTraceID. See those two helpers for semantics.
-func (c *Client) NewAbtestContextForNamespaceWithTraceID(parentCtx context.Context, ns, userID string, userAttrs map[string]any, traceID string) *AbtestContext {
-	return c.newAbtestContext(parentCtx, ns, userID, userAttrs, traceID)
-}
-
-func (c *Client) newAbtestContext(parentCtx context.Context, prefetchNs, userID string, userAttrs map[string]any, traceID string) *AbtestContext {
+func (c *Client) newAbtestContext(parentCtx context.Context, userID string, userAttrs map[string]any, traceID string) *AbtestContext {
 	if parentCtx == nil {
 		parentCtx = context.Background()
 	}
@@ -150,7 +132,10 @@ func (c *Client) newAbtestContext(parentCtx context.Context, prefetchNs, userID 
 	if traceID == "" {
 		traceID = uuid.New().String()
 	}
-	ctx := &AbtestContext{
+	// Pure-create: build the struct only. No GetExperimentResult RPC is issued
+	// at construction; the first dynamic GetConfig (or an explicit
+	// PrefetchConfigVersionFlatKvForNamespace) lazily fetches the needed ns.
+	return &AbtestContext{
 		userID:    userID,
 		userAttrs: userAttrs,
 		parentCtx: parentCtx,
@@ -158,22 +143,6 @@ func (c *Client) newAbtestContext(parentCtx context.Context, prefetchNs, userID 
 		owner:     c,
 		traceID:   traceID,
 	}
-	// Resolve the prefetch ns: explicit construction ns wins, else the client
-	// default namespace. Empty (or unsubscribed) ⇒ no eager pre-request; the
-	// first dynamic GetConfig lazily fetches its ns instead (design 04 §B.2).
-	if prefetchNs == "" {
-		prefetchNs = c.defaultNamespace
-	}
-	if prefetchNs == "" || !c.isSubscribed(prefetchNs) {
-		return ctx
-	}
-	st := &computeStatus{done: make(chan struct{})}
-	ctx.results[prefetchNs] = st
-	go func() {
-		st.result, st.err = c.getExperimentResultForNamespace(parentCtx, prefetchNs, userID, userAttrs, ctx.traceID)
-		close(st.done)
-	}()
-	return ctx
 }
 
 // EmptyAbtestContext returns a ctx whose abtest results resolve to the empty
@@ -249,14 +218,57 @@ func (a *AbtestContext) TraceID() string {
 	return a.traceID
 }
 
+// ensureFetch guarantees that ns is being fetched (at most once) into this
+// ctx's results map and returns its computeStatus. It owns the full critical
+// section: it takes a.mu itself, double-checks the per-ns computeStatus, and —
+// only when the ns is not yet present — creates it (with an open done channel)
+// and either short-circuits to the empty result (identity-less / mock ctx, or
+// an unsubscribed ns; no RPC) or spawns the single fetch goroutine. Idempotent:
+// when ns is already present it returns the existing computeStatus without
+// issuing a new RPC. This is the shared dedup primitive behind both the lazy
+// resultFor wait path and the explicit PrefetchConfigVersionFlatKvForNamespace
+// warm path, so concurrent first-accessors of the same ns share one RPC.
+func (a *AbtestContext) ensureFetch(ns string) *computeStatus {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	st, ok := a.results[ns]
+	if ok {
+		return st
+	}
+	st = &computeStatus{done: make(chan struct{})}
+	a.results[ns] = st
+	switch {
+	case a.empty || a.owner == nil:
+		// Identity-less / mock ctx: resolve to empty without an RPC.
+		st.result = emptyAbtestResult
+		close(st.done)
+	case !a.owner.isSubscribed(ns):
+		// Unsubscribed ns: the SDK only consumes subscribed namespaces and
+		// has no cache for it, so degrade to empty without an RPC. Dynamic
+		// GetConfig rejects unsubscribed ns earlier via resolveNamespace;
+		// this guards the low-level WaitForAbtest entry.
+		st.result = emptyAbtestResult
+		close(st.done)
+	default:
+		parent := a.parentCtx
+		if parent == nil {
+			parent = context.Background()
+		}
+		go func() {
+			st.result, st.err = a.owner.fetchConfigVersionFlatKvForNamespace(parent, ns, a.userID, a.userAttrs, a.traceID)
+			close(st.done)
+		}()
+	}
+	return st
+}
+
 // resultFor returns the memoised abtest result for ns within this request
 // link, fetching it synchronously exactly once on first access (design 04
-// §B.3). Concurrency: under a.mu we double-check the per-ns computeStatus; the
-// first goroutine creates it (with an open done channel) and is responsible for
-// the RPC, while every other goroutine that races on the same not-yet-fetched
-// ns finds the existing computeStatus, releases the lock, and blocks on the
-// SAME done channel. Net effect: AT MOST ONE GetExperimentResult RPC per ns
-// per request link.
+// §B.3). Concurrency: ensureFetch owns a.mu and creates/looks up the per-ns
+// computeStatus; the first goroutine to reach a not-yet-fetched ns is
+// responsible for the RPC, while every other goroutine racing on the same ns
+// finds the existing computeStatus and blocks on the SAME done channel. Net
+// effect: AT MOST ONE GetExperimentResult RPC per ns per request link.
 //
 // The fetch runs under the ctx the AbtestContext captured at construction
 // (parentCtx); the caller's ctx only governs the wait. A per-ns RPC failure
@@ -266,35 +278,7 @@ func (a *AbtestContext) resultFor(ctx context.Context, ns string) (*abtestComput
 	if a == nil {
 		return nil, ErrAbtestContextMissing
 	}
-	a.mu.Lock()
-	st, ok := a.results[ns]
-	if !ok {
-		st = &computeStatus{done: make(chan struct{})}
-		a.results[ns] = st
-		switch {
-		case a.empty || a.owner == nil:
-			// Identity-less / mock ctx: resolve to empty without an RPC.
-			st.result = emptyAbtestResult
-			close(st.done)
-		case !a.owner.isSubscribed(ns):
-			// Unsubscribed ns: the SDK only consumes subscribed namespaces and
-			// has no cache for it, so degrade to empty without an RPC. Dynamic
-			// GetConfig rejects unsubscribed ns earlier via resolveNamespace;
-			// this guards the low-level WaitForAbtest entry.
-			st.result = emptyAbtestResult
-			close(st.done)
-		default:
-			parent := a.parentCtx
-			if parent == nil {
-				parent = context.Background()
-			}
-			go func() {
-				st.result, st.err = a.owner.getExperimentResultForNamespace(parent, ns, a.userID, a.userAttrs, a.traceID)
-				close(st.done)
-			}()
-		}
-	}
-	a.mu.Unlock()
+	st := a.ensureFetch(ns)
 
 	select {
 	case <-st.done:
@@ -308,6 +292,24 @@ func (a *AbtestContext) resultFor(ctx context.Context, ns string) (*abtestComput
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
+}
+
+// PrefetchConfigVersionFlatKvForNamespace warms the config_version flat_kv
+// experiment result for ns into this ctx ahead of the first GetConfig, at
+// most once (idempotent). It is non-blocking: it triggers the shared
+// ensureFetch primitive and returns immediately without waiting for the RPC to
+// complete; a subsequent GetConfig / WaitForAbtest for the same ns reuses the
+// in-flight or completed result rather than issuing a second RPC, preserving
+// the at-most-once invariant.
+//
+// This is the explicit, opt-in prefetch API (construction itself never
+// pre-fetches). A nil receiver, an empty / mock ctx, or an unsubscribed ns all
+// short-circuit inside ensureFetch and issue NO RPC.
+func (a *AbtestContext) PrefetchConfigVersionFlatKvForNamespace(ns string) {
+	if a == nil {
+		return
+	}
+	a.ensureFetch(ns)
 }
 
 // WaitForAbtest blocks until the abtest result for ns is available (or the
@@ -328,18 +330,21 @@ func (a *AbtestContext) WaitForAbtest(ctx context.Context, ns string) (*abtestCo
 	return a.resultFor(ctx, ns)
 }
 
-// getExperimentResultForNamespace wraps AbtestService.GetExperimentResult with
-// the per-call timeout for the config_version flat_kv shape the dynamic
-// getConfig fast path consumes. On any error (including a missing abtest
-// connection) it returns the empty result and bumps the per-ns fallback counter
-// so the caller can monitor degraded mode.
+// fetchConfigVersionFlatKvForNamespace wraps AbtestService.GetExperimentResult
+// with the per-call timeout, hardwired to the config_version flat_kv shape the
+// dynamic getConfig fast path consumes (ExperimentType_CONFIG_VERSION +
+// RESULT_DISPLAY_TYPE_FLAT_KV). It is the internal per-ns fetch primitive and
+// must not be confused with the public custom_params GetExperimentResult. On
+// any error (including a missing abtest connection) it returns the empty result
+// and bumps the per-ns fallback counter so the caller can monitor degraded
+// mode.
 //
 // traceID is the per-request id stamped onto the proto request. It is assumed
 // already-normalised by the caller (newAbtestContext / *WithTraceID
 // constructors); empty here is technically valid wire-wise (server-side
 // normalisation generates one), but the AbtestContext constructors never leave
 // it empty.
-func (c *Client) getExperimentResultForNamespace(parentCtx context.Context, ns, userID string, userAttrs map[string]any, traceID string) (*abtestComputeResult, error) {
+func (c *Client) fetchConfigVersionFlatKvForNamespace(parentCtx context.Context, ns, userID string, userAttrs map[string]any, traceID string) (*abtestComputeResult, error) {
 	if c.abtestTr == nil {
 		c.metrics.abtestFallback.inc(ns)
 		return emptyAbtestResult, errors.New("abtest service not configured")

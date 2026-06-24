@@ -11,8 +11,8 @@ Contract under test (design §5 / decision #2 / decision #4):
   ``str(uuid.uuid4())`` so ``ctx.trace_id`` is the canonical 36-char dashed
   UUID v4 string and never empty.
 - The trace_id stored on the context is the value sent on every subsequent
-  ``GetExperimentResult`` for the request link (eager prefetch + lazy
-  per-ns).
+  ``GetExperimentResult`` for the request link (lazy first-access per-ns or an
+  explicit ``prefetch_config_version_flat_kv_for_namespace`` warm-up).
 """
 
 from __future__ import annotations
@@ -169,11 +169,12 @@ async def test_stored_trace_id_flows_to_experiment_result_fetch(
     ab_servicer: FakeAbtestServicer,
     running_servers,
 ):
-    """The trace_id stashed on AbtestContext is the one sent on Compute.
+    """The trace_id stashed on AbtestContext is the one sent on the fetch.
 
-    Drives the lazy per-ns fetch path (``_get_experiment_result_for_ns``)
-    via a normal ``get_config`` so the eager-prefetch / lazy split doesn't
-    matter — both sites must read the AbtestContext's trace_id.
+    Drives the lazy per-ns fetch path (``_fetch_config_version_flat_kv_for_ns``)
+    via a normal ``get_config`` — construction issues no RPC after the prefetch
+    decouple (G1), so the fetch site here is the first-access lazy path, which
+    must read the AbtestContext's trace_id.
     """
     cfg_addr, ab_addr = running_servers
     cfg_servicer.set_pull_snapshot(

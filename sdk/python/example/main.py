@@ -72,6 +72,14 @@ async def _ctx_middleware(request: Request, call_next):
     # Equivalent to AbtestMiddleware; we inline here because lifespan-time
     # add_middleware isn't allowed. For a more idiomatic setup pre-create
     # the SDK and register AbtestMiddleware before ``app = FastAPI(...)``.
+    #
+    # Construction is a pure create: new_abtest_context issues NO RPC. The
+    # first get_config for a namespace pays the GetExperimentResult latency.
+    # To warm a namespace up front for selected entry-point routes, opt in
+    # via AbtestMiddleware(prefetch_paths=[...]) (exact path match) or call
+    # ctx.prefetch_config_version_flat_kv_for_namespace(ns) yourself. The
+    # SDK never auto-prefetches every request (that would fire wasted
+    # experiment RPCs on handlers that never call get_config).
     if _sdk is None:
         return await call_next(request)
     # trace_id (sdk-trace-id §5): reuse the inbound X-Trace-Id / X-Request-Id

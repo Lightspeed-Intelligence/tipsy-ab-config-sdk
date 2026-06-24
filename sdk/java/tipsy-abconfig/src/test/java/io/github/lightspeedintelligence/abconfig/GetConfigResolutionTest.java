@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import io.github.lightspeedintelligence.abconfig.AbtestTestSupport.NsCache;
 import java.time.Duration;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -272,6 +273,176 @@ final class GetConfigResolutionTest {
 
             AbtestContext ctx = h.client.emptyAbtestContext();
             assertEquals("vDefault", h.client.getConfigDefault(ctx, "k", "DEF"));
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // G1: construction is pure-create (no eager prefetch RPC). G2/G3:
+    // explicit prefetch primitive (prefetchConfigVersionFlatKvForNamespace)
+    // is non-blocking, at-most-once, idempotent, and short-circuits on
+    // empty/mock ctx + unsubscribed ns.
+    // ------------------------------------------------------------------
+
+    @Test
+    @DisplayName("G1: newAbtestContext (no trace_id) issues ZERO RPC at construction")
+    void constructionIssuesNoRpc() {
+        NsCache cache = new NsCache(2, 2)
+                .key("color", 7L, Map.of(7L, "blue", 9L, "gold"));
+        try (AbtestTestSupport h = AbtestTestSupport.newBuilder()
+                .namespaces(NS)
+                .defaultNamespace(NS) // would have triggered the old eager default-ns prefetch
+                .snapshot(NS, cache)
+                .abtestConfigFlatKv(NS, Map.of("color", 9L))
+                .build()) {
+
+            AbtestContext ctx = h.client.newAbtestContext("u-1", Map.of());
+            assertNotNull(ctx);
+            // No getConfig / prefetch has run yet: the construction must be silent.
+            assertEquals(0, h.abtest.totalCalls.get(),
+                    "pure-create: construction must not issue any GetExperimentResult RPC");
+            assertEquals(0, h.abtest.callsFor(NS));
+        }
+    }
+
+    @Test
+    @DisplayName("G1: newAbtestContext (explicit trace_id) issues ZERO RPC at construction")
+    void constructionWithTraceIdIssuesNoRpc() {
+        NsCache cache = new NsCache(2, 2)
+                .key("color", 7L, Map.of(7L, "blue", 9L, "gold"));
+        try (AbtestTestSupport h = AbtestTestSupport.newBuilder()
+                .namespaces(NS)
+                .defaultNamespace(NS)
+                .snapshot(NS, cache)
+                .abtestConfigFlatKv(NS, Map.of("color", 9L))
+                .build()) {
+
+            AbtestContext ctx = h.client.newAbtestContext("u-1", Map.of(), "trace-xyz");
+            assertNotNull(ctx);
+            assertEquals(0, h.abtest.totalCalls.get(),
+                    "pure-create with explicit trace_id: still zero RPC at construction");
+        }
+    }
+
+    @Test
+    @DisplayName("explicit prefetch issues exactly ONE RPC and returns immediately (non-blocking void)")
+    void explicitPrefetchIssuesOneRpcNonBlocking() {
+        NsCache cache = new NsCache(2, 2)
+                .key("color", 7L, Map.of(7L, "blue", 9L, "gold"));
+        try (AbtestTestSupport h = AbtestTestSupport.newBuilder()
+                .namespaces(NS)
+                .snapshot(NS, cache)
+                .abtestConfigFlatKv(NS, Map.of("color", 9L))
+                // Hold the RPC open so we can prove prefetch did NOT block on it.
+                .abtestTimeout(Duration.ofSeconds(30))
+                .build()) {
+
+            CountDownLatch gate = new CountDownLatch(1);
+            h.abtest.releaseGate = gate;
+
+            AbtestContext ctx = h.client.newAbtestContext("u-1", Map.of());
+
+            // Non-blocking: prefetch returns immediately even though the server's
+            // RPC handler is still parked on the gate.
+            ctx.prefetchConfigVersionFlatKvForNamespace(NS);
+
+            // The single prefetch RPC reaches the server while we have NOT released
+            // the gate, proving prefetch did not synchronously wait for completion.
+            assertTrue(AbtestTestSupport.awaitTrue(() -> h.abtest.callsFor(NS) >= 1, WAIT),
+                    "prefetch should trigger exactly one RPC asynchronously");
+            assertEquals(1, h.abtest.callsFor(NS), "prefetch issues exactly one RPC");
+
+            gate.countDown(); // let it complete; a later getConfig reuses the future.
+            assertEquals("gold", h.client.getConfig(ctx, NS, "color", "DEF"));
+            assertEquals(1, h.abtest.callsFor(NS),
+                    "prefetch + subsequent getConfig reuse one future -> at-most-once");
+            assertEquals(1, h.abtest.totalCalls.get());
+        }
+    }
+
+    @Test
+    @DisplayName("idempotent prefetch: two prefetch calls for the same ns issue only ONE RPC")
+    void idempotentPrefetchSameNsIssuesOneRpc() {
+        NsCache cache = new NsCache(2, 2)
+                .key("color", 7L, Map.of(7L, "blue", 9L, "gold"));
+        try (AbtestTestSupport h = AbtestTestSupport.newBuilder()
+                .namespaces(NS)
+                .snapshot(NS, cache)
+                .abtestConfigFlatKv(NS, Map.of("color", 9L))
+                .build()) {
+
+            AbtestContext ctx = h.client.newAbtestContext("u-1", Map.of());
+            ctx.prefetchConfigVersionFlatKvForNamespace(NS);
+            ctx.prefetchConfigVersionFlatKvForNamespace(NS);
+
+            assertTrue(AbtestTestSupport.awaitTrue(() -> h.abtest.callsFor(NS) >= 1, WAIT),
+                    "the first prefetch should issue the RPC");
+            // Give any (erroneous) duplicate a chance to land before asserting.
+            assertEquals("gold", h.client.getConfig(ctx, NS, "color", "DEF"));
+            assertEquals(1, h.abtest.callsFor(NS),
+                    "a second prefetch for the same ns must reuse the memoised future");
+            assertEquals(1, h.abtest.totalCalls.get());
+        }
+    }
+
+    @Test
+    @DisplayName("empty ctx prefetch short-circuits: ZERO RPC")
+    void emptyContextPrefetchIssuesNoRpc() {
+        NsCache cache = new NsCache(2, 2)
+                .key("color", 7L, Map.of(7L, "blue", 9L, "gold"));
+        try (AbtestTestSupport h = AbtestTestSupport.newBuilder()
+                .namespaces(NS)
+                .snapshot(NS, cache)
+                .abtestConfigFlatKv(NS, Map.of("color", 9L))
+                .build()) {
+
+            AbtestContext ctx = h.client.emptyAbtestContext();
+            ctx.prefetchConfigVersionFlatKvForNamespace(NS);
+
+            // Empty ctx short-circuits inside ensureFetch -> no RPC, even on
+            // a subsequent getConfig.
+            assertEquals("blue", h.client.getConfig(ctx, NS, "color", "DEF"));
+            assertEquals(0, h.abtest.totalCalls.get(),
+                    "empty ctx prefetch must never call the AbtestService");
+        }
+    }
+
+    @Test
+    @DisplayName("mock ctx prefetch short-circuits: ZERO RPC")
+    void mockContextPrefetchIssuesNoRpc() {
+        NsCache cache = new NsCache(2, 2)
+                .key("color", 7L, Map.of(7L, "blue", 9L, "gold"));
+        try (AbtestTestSupport h = AbtestTestSupport.newBuilder()
+                .namespaces(NS)
+                .snapshot(NS, cache)
+                .abtestConfigFlatKv(NS, Map.of("color", 9L))
+                .build()) {
+
+            AbtestContext ctx = h.client.mockAbtestContext("u-1", Map.of(NS, Map.of("color", 9L)));
+            ctx.prefetchConfigVersionFlatKvForNamespace(NS);
+
+            assertEquals("gold", h.client.getConfig(ctx, NS, "color", "DEF"),
+                    "mock ctx resolves the pre-seeded value");
+            assertEquals(0, h.abtest.totalCalls.get(),
+                    "mock ctx prefetch must never call the AbtestService");
+        }
+    }
+
+    @Test
+    @DisplayName("unsubscribed-ns prefetch short-circuits: ZERO RPC")
+    void unsubscribedNsPrefetchIssuesNoRpc() {
+        try (AbtestTestSupport h = AbtestTestSupport.newBuilder()
+                .namespaces(NS)
+                .snapshot(NS, new NsCache(1, 1).key("k", 4L, Map.of(4L, "v")))
+                .build()) {
+
+            AbtestContext ctx = h.client.newAbtestContext("u-1", Map.of());
+            // The low-level prefetch primitive guards an unsubscribed ns and
+            // short-circuits to the empty result without an RPC.
+            ctx.prefetchConfigVersionFlatKvForNamespace("not-subscribed");
+
+            assertEquals(0, h.abtest.totalCalls.get(),
+                    "prefetching an unsubscribed ns must not call the AbtestService");
+            assertEquals(0, h.abtest.callsFor("not-subscribed"));
         }
     }
 

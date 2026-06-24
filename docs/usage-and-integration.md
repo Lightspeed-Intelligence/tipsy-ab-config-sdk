@@ -613,15 +613,64 @@ value, ok := sdk.GetConfigStatic("tipsy-chat", "rerank_threshold", "0.5")
 - `GetConfigDefault(ctx, abctx, key, default)` 会使用默认 namespace。
 - 默认 namespace 必须在 `Config.Namespaces` 中，否则返回 `ErrNamespaceNotSubscribed`。
 
-请求入口 middleware 与异步预请求：
+AbtestContext 的构造、惰性拉取与复用（重要）：
 
-- Go SDK 已提供 `Client.Middleware(userProvider)`，gin 场景可用 `Client.GinMiddleware(gc, userProvider)` 包一层 gin handler。
-- middleware 会在每个业务 HTTP 请求入口调用 `userProvider` 提取 `uid` 和 `attrs`，创建请求级 `AbtestContext`，并挂到 request context。
-- 创建 `AbtestContext` 时，SDK 会对默认 namespace 异步预请求一次 `GetExperimentResult(type=config_version, display=flat_kv)`；非默认 namespace 不会预请求，会在本请求链路第一次 `GetConfig` 该 namespace 时同步拉取并缓存。
-- 业务代码不需要也不应该直接读取这个预请求 map。正确消费方式是在同一个请求里取出 `AbtestContext`，调用 `GetConfig` / `GetConfigDefault`。如果预请求已经完成，`GetConfig` 直接复用缓存；如果还没完成，`GetConfig` 会等待同一个请求级结果；如果预请求失败，则静默回退 full release。
+- **构造 `AbtestContext` 不再发起任何 `GetExperimentResult` RPC**。`NewAbtestContext` / `NewAbtestContextWithTraceID` 现在是纯创建：只填充 uid / attrs / trace_id，不对任何 namespace（包括默认 namespace）做预请求。
+- 实验结果改为**惰性拉取**：在本请求链路里第一次对某 namespace 调用 `GetConfig` 时，SDK 才同步拉取该 namespace 的 config_version 实验结果（`type=config_version, display=flat_kv`），并在该 `AbtestContext` 内缓存。同一 namespace 在本 ctx 内**最多拉取一次**（at-most-once）；之后的 `GetConfig` 直接复用缓存。默认 namespace 与非默认 namespace 现在走完全一致的惰性路径。
 - 这个请求级缓存只覆盖 config_version 实验结果，用于动态配置取值。custom_params 结果不走该缓存，需要调用 `GetExperimentResult`。
+- **一次业务服务调用创建一个 `AbtestContext`，并在该次调用内对所有 `GetConfig` 复用同一个 ctx**（不要每次 `GetConfig` 都新建 ctx——那样会丢失请求级 memoize，导致同一 namespace 被重复拉取）。
 
-net/http 接入示例：
+构造一次 + 多次 `GetConfig` 复用：
+
+```go
+// 一次业务服务调用内构造一个 ctx
+abctx := sdk.NewAbtestContext(ctx, "user-123", map[string]any{
+    "country": "US",
+    "vip":     true,
+})
+
+// 在本次调用内对所有 GetConfig 复用同一个 abctx
+threshold, err := sdk.GetConfig(ctx, abctx, "tipsy-chat", "rerank_threshold", "0.5")
+if err != nil {
+    return err
+}
+topK, err := sdk.GetConfig(ctx, abctx, "tipsy-chat", "rerank_top_k", "20")
+if err != nil {
+    return err
+}
+// 上面两次 GetConfig 共享 abctx，tipsy-chat 的实验结果只拉取一次
+_ = threshold
+_ = topK
+```
+
+显式预热（可选）：
+
+- 如果业务在构造 ctx 之后、首次 `GetConfig` 之前还有一段可与 RPC 重叠的逻辑，可以**显式**触发预热：`abctx.PrefetchConfigVersionFlatKvForNamespace(ns)`。
+- 该 API 非阻塞（只触发异步拉取，立即返回）、幂等、at-most-once：预热后随后的 `GetConfig` 会复用同一次拉取，对同一 namespace 预热 + `GetConfig` 合计仍只发一次 RPC。空 ctx / 未订阅的 namespace 不发任何 RPC（短路）。
+
+```go
+abctx := sdk.NewAbtestContext(ctx, "user-123", map[string]any{"country": "US"})
+
+// 显式预热：触发 tipsy-chat 的实验结果异步拉取，不阻塞
+abctx.PrefetchConfigVersionFlatKvForNamespace("tipsy-chat")
+
+// ... 这里可以做别的与 RPC 重叠的工作 ...
+
+// 首次 GetConfig 复用预热结果，不会再发一次 RPC
+value, err := sdk.GetConfig(ctx, abctx, "tipsy-chat", "rerank_threshold", "0.5")
+_ = value
+_ = err
+```
+
+请求入口 middleware 与 URL 白名单预热：
+
+- Go SDK 已提供 `Client.Middleware(userProvider, opts...)`，gin 场景可用 `Client.GinMiddleware(gc, userProvider, opts...)` 包一层 gin handler。
+- middleware 会在每个业务 HTTP 请求入口调用 `userProvider` 提取 `uid` 和 `attrs`，创建请求级 `AbtestContext`，并挂到 request context。
+- **middleware 默认不做任何预热**（构造 ctx 即返回）。要在流量入口层预热，必须传入 URL 路径白名单选项 `sdk.PrefetchPaths("/chat", "/recommend")`，**只有请求路径精确命中白名单时，middleware 才对默认 namespace 触发一次预热**（等价于调用 `PrefetchConfigVersionFlatKvForNamespace(defaultNs)`）。
+- **警告**：若要在流量入口层做预热（如用网络中间件包裹 handler），**必须用 URL 白名单控制，只有命中白名单的 URL 才预热**；否则会对每个穿过中间件的请求都发起一次实验 RPC，造成大量无用空请求（很多 handler 根本不读 `GetConfig`）。不配白名单 = 不预热，是安全的默认。
+- 路径匹配是**精确匹配** `r.URL.Path`（不做前缀 / 正则）。默认 namespace 为空时预热 no-op（无 ns 可热）。
+
+net/http 接入示例（带 URL 白名单预热）：
 
 ```go
 userProvider := func(ctx context.Context, r *http.Request) (string, map[string]any, error) {
@@ -630,7 +679,9 @@ userProvider := func(ctx context.Context, r *http.Request) (string, map[string]a
     }, nil
 }
 
-withAbtest := sdk.Middleware(userProvider)
+// 只有 /chat、/recommend 命中白名单的请求才预热默认 namespace；
+// 不传 PrefetchPaths 则任何路径都不预热。
+withAbtest := sdk.Middleware(userProvider, sdk.PrefetchPaths("/chat", "/recommend"))
 
 mux.Handle("/chat", withAbtest(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
     abctx := tipsyabconfig.AbtestContextFromContext(r.Context())
@@ -640,11 +691,11 @@ mux.Handle("/chat", withAbtest(http.HandlerFunc(func(w http.ResponseWriter, r *h
 })))
 ```
 
-gin 接入示例：
+gin 接入示例（带 URL 白名单预热）：
 
 ```go
 r.Use(func(gc *gin.Context) {
-    sdk.GinMiddleware(gc, userProvider)
+    sdk.GinMiddleware(gc, userProvider, sdk.PrefetchPaths("/chat"))
     gc.Next()
 })
 
@@ -688,8 +739,7 @@ abctx := sdk.NewAbtestContextWithTraceID(ctx, "user-123", map[string]any{
 // 留空 traceID ⇒ SDK 端 uuid.New().String() 自动生成
 abctx = sdk.NewAbtestContextWithTraceID(ctx, "user-123", nil, "")
 
-// 老接口 NewAbtestContext / NewAbtestContextForNamespace 保持不变；
-// 内部会等价于 NewAbtestContextWithTraceID(..., "")，由 SDK 自动生成 trace_id。
+// NewAbtestContext 等价于 NewAbtestContextWithTraceID(..., "")，由 SDK 自动生成 trace_id。
 ```
 
 `Middleware` / `GinMiddleware` 会优先从入站请求头复用 trace_id：先读 `X-Trace-Id`，再读 `X-Request-Id`，两者都缺时由 SDK 端生成 UUID v4。这样上游网关 / 调用方已有的 trace 链路天然贯通。
@@ -746,15 +796,55 @@ value = sdk.get_config_static("tipsy-chat", "rerank_threshold", "0.5")
 value = await sdk.get_config_default(ctx, "rerank_threshold", "0.5")
 ```
 
-请求入口 middleware 与异步预请求：
+AbtestContext 的构造、惰性拉取与复用（重要）：
+
+- **构造 `AbtestContext` 不再发起任何 `GetExperimentResult` RPC**。`new_abtest_context(...)` 现在是纯创建：只填充 user_id / user_attrs / trace_id，不对任何 namespace（包括默认 namespace）做预请求。
+- 实验结果改为**惰性拉取**：在本请求链路里第一次对某 namespace 调用 `get_config` 时，SDK 才拉取该 namespace 的 config_version 实验结果（`type=config_version, display=flat_kv`）并在该 `AbtestContext` 内缓存。同一 namespace 在本 ctx 内**最多拉取一次**（at-most-once）；之后的 `get_config` 直接复用。默认 namespace 与非默认 namespace 现在走完全一致的惰性路径。
+- 这个请求级缓存只覆盖 config_version 实验结果。custom_params 结果不走该缓存，需要调用 `sdk.get_experiment_result(...)`。
+- **一次业务服务调用创建一个 `AbtestContext`，并在该次调用内对所有 `get_config` 复用同一个 ctx**（不要每次 `get_config` 都新建 ctx）。
+
+构造一次 + 多次 `get_config` 复用：
+
+```python
+# 一次业务服务调用内构造一个 ctx
+ctx = sdk.new_abtest_context(
+    user_id="user-123",
+    user_attrs={"country": "US", "vip": True},
+)
+
+# 在本次调用内对所有 get_config 复用同一个 ctx
+threshold = await sdk.get_config(ctx, "tipsy-chat", "rerank_threshold", "0.5")
+top_k = await sdk.get_config(ctx, "tipsy-chat", "rerank_top_k", "20")
+# 上面两次 get_config 共享 ctx，tipsy-chat 的实验结果只拉取一次
+```
+
+显式预热（可选）：
+
+- 若构造 ctx 后、首次 `get_config` 前还有可与 RPC 重叠的逻辑，可显式触发预热：`ctx.prefetch_config_version_flat_kv_for_namespace(ns)`。
+- 该 API 非阻塞（同步签名，内部触发异步拉取后立即返回）、幂等、at-most-once：预热后随后的 `get_config` 复用同一次拉取，对同一 namespace 预热 + `get_config` 合计仍只发一次 RPC。空 ctx / 未订阅的 namespace 不发任何 RPC。
+
+```python
+ctx = sdk.new_abtest_context(user_id="user-123", user_attrs={"country": "US"})
+
+# 显式预热：触发 tipsy-chat 实验结果异步拉取，不阻塞
+ctx.prefetch_config_version_flat_kv_for_namespace("tipsy-chat")
+
+# ... 这里可以做别的与 RPC 重叠的工作 ...
+
+# 首次 get_config 复用预热结果，不会再发一次 RPC
+value = await sdk.get_config(ctx, "tipsy-chat", "rerank_threshold", "0.5")
+```
+
+请求入口 middleware 与 URL 白名单预热：
 
 - Python SDK 已提供 ASGI/FastAPI middleware：`AbtestMiddleware`。
 - middleware 会在每个 HTTP 请求入口调用 `user_provider` 提取 `uid` 和 `attrs`，创建请求级 `AbtestContext`，并写入 `abtest_ctx_var`。
-- 创建 `AbtestContext` 时，SDK 会对默认 namespace 异步预请求一次 `GetExperimentResult(type=config_version, display=flat_kv)`；非默认 namespace 在本请求链路第一次 `get_config` 该 namespace 时拉取并缓存。
-- 业务代码通常不直接读取预请求结果，而是在同一请求中调用 `sdk.get_config(ctx, namespace, key, default)` 或 `sdk.get_config_default(ctx, key, default)`；当 `ctx` 传 `None` 时，`get_config` 会从 `abtest_ctx_var` 读取 middleware 注入的上下文。
-- custom_params 结果不走请求级 config_version 缓存，需要调用 `sdk.get_experiment_result(...)`。
+- **middleware 默认不做任何预热**。要在流量入口层预热，必须传入 URL 路径白名单 `prefetch_paths=["/chat"]`，**只有 `request.url.path` 精确命中白名单时，middleware 才对默认 namespace 触发一次预热**（等价于 `ctx.prefetch_config_version_flat_kv_for_namespace(default_ns)`）。
+- **警告**：若要在流量入口层做预热（如用网络中间件包裹 handler），**必须用 URL 白名单控制，只有命中白名单的 URL 才预热**；否则会对每个穿过中间件的请求都发起一次实验 RPC，造成大量无用空请求。不配 `prefetch_paths` = 不预热，是安全的默认。
+- 路径匹配是**精确匹配** `request.url.path`（不做前缀 / 正则）。默认 namespace 为空时预热 no-op。
+- 业务代码通常不直接读取实验结果，而是在同一请求中调用 `sdk.get_config(ctx, namespace, key, default)` 或 `sdk.get_config_default(ctx, key, default)`；当 `ctx` 传 `None` 时，`get_config` 会从 `abtest_ctx_var` 读取 middleware 注入的上下文。
 
-FastAPI 接入示例：
+FastAPI 接入示例（带 URL 白名单预热）：
 
 ```python
 from fastapi import FastAPI, Request
@@ -766,7 +856,14 @@ async def user_provider(request: Request):
     uid = request.headers.get("X-User-Id", "anonymous")
     return uid, {"country": request.headers.get("X-Country", "")}
 
-app.add_middleware(AbtestMiddleware, sdk=sdk, user_provider=user_provider)
+# 只有 /chat 命中白名单的请求才预热默认 namespace；
+# 不传 prefetch_paths 则任何路径都不预热。
+app.add_middleware(
+    AbtestMiddleware,
+    sdk=sdk,
+    user_provider=user_provider,
+    prefetch_paths=["/chat"],
+)
 
 @app.get("/chat")
 async def chat():
@@ -856,16 +953,25 @@ TipsyAbConfigClient client = TipsyAbConfigClient.create(
 > 裸 `host:port` / `grpc://host:port` 走明文 h2c；`dns:///svc.ns.svc.cluster.local:port` 自动启用
 > 客户端 `round_robin`；`http(s)://` 需配 `.transport(Transport.HTTP)`（HTTP 模式 protojson POST，仅轮询、无 Subscribe）。
 
-**③ 每个业务请求构造 `AbtestContext` 并显式传给 `getConfig`**
+**③ 每次业务服务调用构造一个 `AbtestContext` 并显式传给 `getConfig`（在该次调用内复用）**
 
 ```java
-// 进站请求里拿到 uid + 属性后：
+// 进站请求里拿到 uid + 属性后，构造一个 ctx：
 AbtestContext ctx = client.newAbtestContext(
     userId, Map.of("country", "US"));   // 也可带 trace_id 重载
-String value = client.getConfig(ctx, "tipsy-chat", "rerank_threshold", "0.5");
+// 在本次调用内对所有 getConfig 复用同一个 ctx（不要每个 getConfig 都新建）：
+String threshold = client.getConfig(ctx, "tipsy-chat", "rerank_threshold", "0.5");
+String topK = client.getConfig(ctx, "tipsy-chat", "rerank_top_k", "20");
+// 上面两次 getConfig 共享 ctx，tipsy-chat 的实验结果只拉取一次
 // 无用户身份的服务级读取：client.getConfigStatic("tipsy-chat", key).orElse("0.5");
 // 直接读实验结果（custom_params / 分组）：client.getExperimentResult(ExperimentResultRequest.builder()...build());
 ```
+
+> **构造不发 RPC、惰性拉取**：`newAbtestContext(...)` 是纯创建，不对任何 namespace（含默认 namespace）做预请求。第一次对某 namespace 调用 `getConfig` 时才拉取该 ns 的 config_version 实验结果，并在该 ctx 内缓存（at-most-once）。
+>
+> **显式预热（可选）**：若构造 ctx 后、首次 `getConfig` 前有可与 RPC 重叠的逻辑，可显式调用 `ctx.prefetchConfigVersionFlatKvForNamespace("tipsy-chat")`（非阻塞、幂等、at-most-once；空 ctx / 未订阅 ns 不发 RPC）。
+>
+> **Java 无网络中间件**：SDK 不提供 servlet/Spring filter，也没有自动预热入口。若自建 thread-per-request 入口（如基于 `com.sun.net.httpserver` 的 `HttpServerSupport`）想在入口层预热，必须**自行用 URL 白名单 gate**——只对命中白名单的路径调用 `ctx.prefetchConfigVersionFlatKvForNamespace(defaultNs)`，否则会对每个请求发起一次无用的实验 RPC。
 
 > **为什么显式传 `AbtestContext`（而非 ThreadLocal）**：经调研业务方 `tipsy-recsys/pine-java`——
 > 单个请求会在 `newVirtualThreadPerTaskExecutor()` 上 fan-out 到多个虚拟线程，ThreadLocal **不会**
@@ -1218,9 +1324,10 @@ AI agent 或脚本执行接入时，按以下不变式检查：
 
 1. 使用 SDK。
 2. 进程启动时 Init，订阅需要的 namespace。
-3. 每个请求创建一个 AbtestContext。
-4. 业务中调用 `GetConfig` / `get_config`。
+3. 每次业务服务调用（= 一次入站 HTTP 请求，或一次异步任务执行）创建一个 `AbtestContext`；它是 **User 粒度**（每个 User 每次服务调用一个 ctx），并在该次调用内**复用同一个 ctx 给所有 `GetConfig`**（不要每个 `GetConfig` 都新建——会丢失请求级 memoize，导致同一 namespace 被重复拉取）。
+4. 业务中调用 `GetConfig` / `get_config`。构造 ctx 不发任何实验 RPC；首次 `GetConfig` 才惰性拉取该 namespace 的实验结果（at-most-once，本次调用内缓存）。
 5. 非用户场景调用 `GetConfigStatic` / `get_config_static`。
+6. 若要在流量入口层（如网络中间件包裹 handler）预热，**必须用 URL 白名单控制**（Go `sdk.PrefetchPaths(...)` / Python `prefetch_paths=[...]`），只有命中白名单的 URL 才预热；否则会对每个穿过中间件的请求发起一次无用空实验请求。也可在业务代码里按需显式调用 `PrefetchConfigVersionFlatKvForNamespace` / `prefetch_config_version_flat_kv_for_namespace`。
 
 离线脚本或低频服务：
 

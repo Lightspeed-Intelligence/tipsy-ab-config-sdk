@@ -3,21 +3,23 @@
 Mirrors the Go ``AbtestContext`` semantics (design 04 §B.2/§B.3/§B.4),
 adapted for asyncio:
 
-- :meth:`Client.new_abtest_context` is a synchronous factory that eagerly
-  pre-fetches AT MOST the prefetch namespace (the explicit construction ns,
-  else the client ``default_namespace``) via one ``GetExperimentResult``
-  ``asyncio.Task``. It does NOT fan out to every subscribed namespace.
-- Other namespaces are fetched lazily on first dynamic ``get_config`` for
-  that ns and memoised into ``results`` so the whole request link issues
-  AT MOST ONE ``GetExperimentResult`` RPC per namespace.
+- :meth:`Client.new_abtest_context` is a synchronous factory that purely
+  CREATES the context: construction issues NO ``GetExperimentResult`` RPC.
+  Every namespace is fetched lazily on first dynamic ``get_config`` for that
+  ns (or eagerly via the explicit
+  :meth:`AbtestContext.prefetch_config_version_flat_kv_for_namespace` API)
+  and memoised into ``results`` so the whole request link issues AT MOST ONE
+  ``GetExperimentResult`` RPC per namespace.
 - Concurrency: business code may fan out multiple ``asyncio.Task``s within
   one request that share the same AbtestContext (the contract is
   "AbtestContext is safe for concurrent use by all tasks participating in
   the same request"). Per-ns first-access is deduplicated via a shared
-  ``_NsResult`` slot guarded by an ``asyncio.Lock``: the first accessor of a
-  not-yet-fetched ns creates the slot + spawns the single RPC task, every
-  other accessor awaits the SAME task. Net effect mirrors Go's
-  ``computeStatus`` (done channel).
+  ``_NsResult`` slot created by the synchronous :meth:`_ensure_fetch` helper:
+  the first accessor of a not-yet-fetched ns creates the slot + spawns the
+  single RPC task, every other accessor awaits the SAME task. The slot-
+  creation critical section crosses no ``await`` (single-threaded event loop),
+  so it needs no lock. Net effect mirrors Go's ``computeStatus`` (done
+  channel).
 - :meth:`Client.empty_abtest_context` returns an identity-less ctx whose
   every not-yet-resolved ns short-circuits to the empty result (no RPC).
 
@@ -82,7 +84,7 @@ class _NsResult:
 
     Mirrors Go's ``computeStatus``: ``task`` is the single in-flight (or
     completed) ``GetExperimentResult`` task for this ns within the request
-    link, or ``None`` for a pre-resolved (eager/mock/empty) ns whose
+    link, or ``None`` for a pre-resolved (mock/empty/unsubscribed) ns whose
     ``result`` is already set. Concurrent first-accessors share one
     ``_NsResult`` and await the same ``task``, so AT MOST ONE RPC is issued
     per ns per request.
@@ -102,12 +104,13 @@ class _NsResult:
 class AbtestContext:
     """Per-request abtest result memo.
 
-    Construct via :meth:`Client.new_abtest_context` (eager prefetch of the
-    default/explicit ns only), :meth:`Client.empty_abtest_context`
-    (identity-less, no RPC), or :meth:`Client.mock_abtest_context` (test
-    helper). ``AbtestContext`` survives only the lifetime of a single inbound
-    request and is bound to the issuing ``Client`` (which owns the local cache
-    referenced during ``get_config``).
+    Construct via :meth:`Client.new_abtest_context` (pure create — issues NO
+    RPC), :meth:`Client.empty_abtest_context` (identity-less, no RPC), or
+    :meth:`Client.mock_abtest_context` (test helper). ``AbtestContext``
+    survives only the lifetime of a single inbound request and is bound to the
+    issuing ``Client`` (which owns the local cache referenced during
+    ``get_config``). To warm a namespace up front, call
+    :meth:`prefetch_config_version_flat_kv_for_namespace` explicitly.
     """
 
     def __init__(
@@ -127,12 +130,9 @@ class AbtestContext:
         # with-dashes form) to match the Go side / the server's
         # ``uuid.New().String()``.
         self.trace_id: str = trace_id if trace_id else str(uuid.uuid4())
-        # ns → _NsResult. Populated eagerly for the prefetch ns (if any) and
-        # lazily on first dynamic get_config for any other ns.
+        # ns → _NsResult. Populated lazily on first dynamic get_config for a
+        # ns (or eagerly via prefetch_config_version_flat_kv_for_namespace).
         self._results: Dict[str, _NsResult] = {}
-        # Guards _results mutation so concurrent first-access of the same ns
-        # dedups to a single RPC task (mirrors Go's mutex + computeStatus).
-        self._lock = asyncio.Lock()
         # owner is the Client that issued this ctx; used to fire the lazy
         # per-ns RPC and to check subscription.
         self._owner = owner
@@ -157,57 +157,77 @@ class AbtestContext:
         """Pre-resolve ``ns`` to ``result`` (mock / eager-sync helpers)."""
         self._results[ns] = _NsResult(result=result)
 
-    def _spawn_prefetch(self, ns: str) -> None:
-        """Eagerly fetch ``ns`` in the background (NewAbtestContext path).
+    def _ensure_fetch(self, ns: str) -> _NsResult:
+        """Ensure ``ns`` is fetched (or short-circuited) exactly once.
 
-        Spawns the single per-ns RPC task and memoises its slot so the first
-        dynamic get_config for ``ns`` reuses it (at-most-once). Must be called
-        from within a running event loop.
+        The single slot-creation primitive shared by :meth:`wait_for_abtest`
+        and :meth:`prefetch_config_version_flat_kv_for_namespace`. Looks up the
+        per-ns ``_NsResult`` slot; when absent it either short-circuits to the
+        empty result (identity-less / mock / owner-less / unsubscribed ns — NO
+        RPC) or spawns the single ``GetExperimentResult`` task and memoises its
+        slot. Idempotent: an already-present ns returns the existing slot
+        without spawning a new task, preserving at-most-once.
+
+        Synchronous and lock-free: the lookup-then-create section crosses no
+        ``await``, so on the single-threaded event loop it is atomic with
+        respect to other tasks. Spawning the task requires a running event loop
+        (``asyncio.ensure_future``).
         """
-        assert self._owner is not None
-        task = asyncio.ensure_future(
-            self._owner._get_experiment_result_for_ns(
-                ns, self.user_id, self.user_attrs, self.trace_id
-            )
-        )
-        self._results[ns] = _NsResult(task=task)
+        slot = self._results.get(ns)
+        if slot is None:
+            if (
+                self._empty
+                or self._owner is None
+                or not self._owner.is_subscribed(ns)
+            ):
+                # Identity-less / mock / unsubscribed ns: resolve to empty
+                # without an RPC. (Dynamic get_config rejects unsubscribed
+                # ns earlier via resolve_namespace; this guards the
+                # low-level entry.)
+                slot = _NsResult(result=_EMPTY_RESULT)
+            else:
+                task = asyncio.ensure_future(
+                    self._owner._fetch_config_version_flat_kv_for_ns(
+                        ns, self.user_id, self.user_attrs, self.trace_id
+                    )
+                )
+                slot = _NsResult(task=task)
+            self._results[ns] = slot
+        return slot
+
+    def prefetch_config_version_flat_kv_for_namespace(self, ns: str) -> None:
+        """Eagerly warm the ``config_version`` flat_kv result for ``ns``.
+
+        Explicit opt-in prefetch: spawns the single per-ns
+        ``GetExperimentResult`` (type=config_version, display=flat_kv) task in
+        the background and memoises its slot, so a later ``get_config`` for
+        ``ns`` reuses the SAME task (at-most-once). Returns immediately — it
+        does NOT await the result.
+
+        Idempotent: prefetching an already-fetched ns is a no-op. An empty /
+        identity-less / mock ctx and an unsubscribed ns short-circuit inside
+        :meth:`_ensure_fetch` without issuing any RPC.
+
+        Must be called from within a running asyncio event loop (the spawn uses
+        ``asyncio.ensure_future``).
+        """
+        self._ensure_fetch(ns)
 
     async def wait_for_abtest(self, namespace: str) -> _ComputeResult:
         """Return the memoised abtest result for ``namespace``.
 
-        First access for a not-yet-fetched ns fetches it synchronously exactly
-        once and memoises it (design 04 §B.3). Concurrency: under ``_lock`` we
-        double-check the per-ns slot; the first task creates it + spawns the
-        single RPC task, every other task that races on the same ns finds the
-        existing slot and awaits the SAME task. Net effect: AT MOST ONE
+        First access for a not-yet-fetched ns fetches it exactly once and
+        memoises it (design 04 §B.3) via the shared :meth:`_ensure_fetch`
+        primitive; the first accessor creates the slot + spawns the single RPC
+        task, every other task that races on the same ns finds the existing
+        slot and awaits the SAME task. Net effect: AT MOST ONE
         GetExperimentResult RPC per ns per request link.
 
         Returns the empty result (no hits) when the per-ns call failed —
         a single-ns failure degrades that ns silently so the awaiting
         ``get_config`` falls through to the full-release branch.
         """
-        async with self._lock:
-            slot = self._results.get(namespace)
-            if slot is None:
-                if (
-                    self._empty
-                    or self._owner is None
-                    or not self._owner.is_subscribed(namespace)
-                ):
-                    # Identity-less / mock / unsubscribed ns: resolve to empty
-                    # without an RPC. (Dynamic get_config rejects unsubscribed
-                    # ns earlier via resolve_namespace; this guards the
-                    # low-level entry.)
-                    slot = _NsResult(result=_EMPTY_RESULT)
-                else:
-                    task = asyncio.ensure_future(
-                        self._owner._get_experiment_result_for_ns(
-                            namespace, self.user_id, self.user_attrs, self.trace_id
-                        )
-                    )
-                    slot = _NsResult(task=task)
-                self._results[namespace] = slot
-
+        slot = self._ensure_fetch(namespace)
         if slot.result is not None:
             return slot.result
         assert slot.task is not None

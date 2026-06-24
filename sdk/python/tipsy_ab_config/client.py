@@ -11,10 +11,11 @@ Mirrors ``sdk/go/tipsyabconfig/sdk.go`` with asyncio semantics:
 - ``Client.get_config`` is async; it resolves the namespace (explicit >
   default > NamespaceRequired) and awaits the per-ns memoised
   ``GetExperimentResult`` result.
-- ``Client.new_abtest_context`` is synchronous: per design 04 §B.2 it eagerly
-  pre-fetches ONLY the prefetch namespace (explicit-or-default) via one
-  ``GetExperimentResult`` task; other namespaces are fetched lazily and
-  memoised at-most-once on first dynamic ``get_config``.
+- ``Client.new_abtest_context`` is synchronous and a PURE create: per design
+  it issues NO ``GetExperimentResult`` RPC at construction. Every namespace is
+  fetched lazily and memoised at-most-once on first dynamic ``get_config``, or
+  warmed up front via
+  ``AbtestContext.prefetch_config_version_flat_kv_for_namespace``.
 - ``Client.get_experiment_result`` is the thin client that exposes every
   wire parameter (namespace / user_info / layer_ids / type / display) for
   custom_params results (design 04 §B.6).
@@ -279,8 +280,7 @@ class Client:
             # ns-optional get_config will still resolve to it and then surface
             # NamespaceNotSubscribed from resolve_namespace.
             logger.warning(
-                "tipsy_ab_config: project default namespace is not in subscribed namespaces; "
-                "eager pre-request disabled",
+                "tipsy_ab_config: project default namespace is not in subscribed namespaces",
                 extra={"default_namespace": default_ns, "namespaces": self._namespaces},
             )
 
@@ -471,38 +471,29 @@ class Client:
         self,
         user_id: str,
         user_attrs: Optional[Mapping[str, Any]] = None,
-        namespace: Optional[str] = None,
         *,
         trace_id: Optional[str] = None,
     ) -> AbtestContext:
-        """Synchronously create an AbtestContext and eagerly pre-fetch ONE ns.
+        """Synchronously create an AbtestContext (pure create — NO RPC).
 
-        v2 semantics (design 04 §B.2): construction does NOT fan out to every
-        subscribed namespace. It eagerly pre-fetches AT MOST the prefetch
-        namespace — the explicit ``namespace`` argument, else the client
-        :attr:`default_namespace` — via one ``GetExperimentResult`` task
-        (type=config_version, display=flat_kv). When the prefetch ns is empty
-        or not subscribed, NO eager RPC is issued and every ns is fetched
-        lazily on first dynamic ``get_config`` (design 04 §B.3).
+        Construction issues NO ``GetExperimentResult`` RPC: it only builds the
+        per-request context. Every namespace is fetched lazily and memoised
+        at-most-once on first dynamic ``get_config`` (design 04 §B.3). To warm
+        a namespace up front, call
+        :meth:`AbtestContext.prefetch_config_version_flat_kv_for_namespace`
+        explicitly (e.g. from a URL-whitelisted middleware).
 
         ``trace_id`` (sdk-trace-id §5): the request-scoped identifier shared
         by every RPC this ctx issues. ``None`` / ``""`` ⇒ the SDK generates
         a fresh UUID v4 (36-char with-dashes). Any other string is preserved
         verbatim and forwarded to the server.
-
-        Must be called from within a running asyncio event loop (the eager
-        pre-request spawns an ``asyncio`` task).
         """
-        ctx = AbtestContext(
+        return AbtestContext(
             user_id=user_id,
             user_attrs=user_attrs,
             owner=self,
             trace_id=trace_id,
         )
-        prefetch_ns = namespace or self._default_namespace
-        if prefetch_ns and self.is_subscribed(prefetch_ns):
-            ctx._spawn_prefetch(prefetch_ns)
-        return ctx
 
     def empty_abtest_context(self) -> AbtestContext:
         """Return an identity-less AbtestContext that never issues an RPC.
@@ -518,7 +509,6 @@ class Client:
         self,
         user_id: str,
         user_attrs: Optional[Mapping[str, Any]] = None,
-        namespace: Optional[str] = None,
         *,
         trace_id: Optional[str] = None,
     ):
@@ -527,11 +517,11 @@ class Client:
         Used by non-web pipelines so ``get_config`` calls inside the block
         automatically see the per-user AbtestContext. ``trace_id`` follows
         the same rule as :meth:`new_abtest_context` (None/"" ⇒ SDK-generated
-        UUID v4).
+        UUID v4). Construction issues no RPC; warm a namespace explicitly via
+        :meth:`AbtestContext.prefetch_config_version_flat_kv_for_namespace` if
+        desired.
         """
-        ctx = self.new_abtest_context(
-            user_id, user_attrs, namespace, trace_id=trace_id
-        )
+        ctx = self.new_abtest_context(user_id, user_attrs, trace_id=trace_id)
         token = abtest_ctx_var.set(ctx)
         try:
             yield ctx
@@ -612,7 +602,7 @@ class Client:
             timeout=self._cfg.abtest_timeout,
         )
 
-    async def _get_experiment_result_for_ns(
+    async def _fetch_config_version_flat_kv_for_ns(
         self,
         ns: str,
         user_id: str,
@@ -621,10 +611,13 @@ class Client:
     ) -> _ComputeResult:
         """Fetch the config_version flat_kv result the get_config fast path uses.
 
-        On any error (missing abtest connection, timeout, RPC failure) it bumps
-        the per-ns fallback counter and returns the empty result so the caller
-        degrades to full release silently (design 04 §B.3). Mirrors Go's
-        ``getExperimentResultForNamespace``.
+        Hardwires ``type=config_version`` + ``display=flat_kv`` (hence the
+        explicit name — distinct from the general-purpose public
+        :meth:`get_experiment_result`). On any error (missing abtest
+        connection, timeout, RPC failure) it bumps the per-ns fallback counter
+        and returns the empty result so the caller degrades to full release
+        silently (design 04 §B.3). Mirrors Go's
+        ``fetchConfigVersionFlatKvForNamespace``.
 
         ``trace_id`` is forwarded verbatim onto the proto request so the SDK
         log line, the server log line and any downstream report channel all

@@ -40,7 +40,8 @@ func TestGetConfigDefault_ErrNamespaceRequired(t *testing.T) {
 }
 
 // TestDefaultNamespace_FromConfig verifies that the configured default
-// namespace drives ns-optional getConfig and the eager pre-request.
+// namespace drives ns-optional getConfig. Construction issues no RPC; the
+// default ns is fetched lazily on first GetConfigDefault.
 func TestDefaultNamespace_FromConfig(t *testing.T) {
 	h := newHarness(t)
 	h.cfgServer.SetPullSnapshot(makeSnapshot("ns1", 1, 1, map[string]struct {
@@ -63,7 +64,8 @@ func TestDefaultNamespace_FromConfig(t *testing.T) {
 	}
 
 	abctx := cli.NewAbtestContext(context.Background(), "u1", nil)
-	// Eager pre-request fires for the default ns; GetConfigDefault must hit it.
+	// Construction issues no RPC; GetConfigDefault lazily fetches the default ns
+	// and resolves to the experiment value.
 	val, err := cli.GetConfigDefault(context.Background(), abctx, "k", "def")
 	if err != nil {
 		t.Fatalf("GetConfigDefault: %v", err)
@@ -73,10 +75,15 @@ func TestDefaultNamespace_FromConfig(t *testing.T) {
 	}
 }
 
-// TestNewAbtestContext_EagerPrefetchShape asserts the eager pre-request targets
-// ONLY the default ns with type=config_version + display=flat_kv (design 04
-// §B.2).
-func TestNewAbtestContext_EagerPrefetchShape(t *testing.T) {
+// TestNewAbtestContext_ConstructionIssuesNoRPC is the converted form of the old
+// TestNewAbtestContext_EagerPrefetchShape. The previous contract asserted that
+// constructing an AbtestContext eagerly pre-fetched the default ns with
+// type=config_version + display=flat_kv. Under the decoupled design (G1)
+// construction is pure-create: it issues ZERO GetExperimentResult RPCs, for the
+// default ns or any other ns. The config_version + flat_kv shape assertion that
+// used to live here now lives in TestPrefetchAPI_Shape (the explicit prefetch
+// API is the only request-shape carrier left).
+func TestNewAbtestContext_ConstructionIssuesNoRPC(t *testing.T) {
 	h := newHarness(t)
 	h.cfgServer.SetPullSnapshot(makeSnapshot("ns1", 1, 1, nil))
 	cfg := h.baseConfig([]string{"ns1", "ns2"})
@@ -89,31 +96,67 @@ func TestNewAbtestContext_EagerPrefetchShape(t *testing.T) {
 
 	before := h.abServer.TotalCalls()
 	_ = cli.NewAbtestContext(context.Background(), "u1", nil)
-	if !waitFor(t, 2*time.Second, func() bool { return h.abServer.Calls("ns1") > 0 }) {
-		t.Fatal("expected eager pre-request for default ns1")
+	_ = cli.NewAbtestContextWithTraceID(context.Background(), "u2", nil, "tid")
+	// Give any (erroneous) construction-time goroutine a moment to fire so a
+	// regression that re-introduces eager prefetch would be caught.
+	time.Sleep(100 * time.Millisecond)
+	if got := h.abServer.TotalCalls() - before; got != 0 {
+		t.Fatalf("construction must issue NO GetExperimentResult RPC; got %d (default ns1, ns2)", got)
 	}
-	// Only the default ns is pre-fetched; ns2 must NOT be requested eagerly.
+	if got := h.abServer.Calls("ns1"); got != 0 {
+		t.Fatalf("default ns1 must NOT be eagerly pre-fetched at construction; got %d", got)
+	}
 	if got := h.abServer.Calls("ns2"); got != 0 {
-		t.Fatalf("eager pre-request must NOT fan out to ns2; got %d calls", got)
-	}
-	if got := h.abServer.TotalCalls() - before; got != 1 {
-		t.Fatalf("expected exactly 1 eager pre-request, got %d", got)
-	}
-	req := h.abServer.LastRequest()
-	if req.GetNamespace() != "ns1" {
-		t.Fatalf("pre-request ns = %q, want ns1", req.GetNamespace())
-	}
-	if req.GetExperimentType() != abtestv1.ExperimentType_EXPERIMENT_TYPE_CONFIG_VERSION {
-		t.Fatalf("pre-request type = %v, want CONFIG_VERSION", req.GetExperimentType())
-	}
-	if req.GetDisplayType() != abtestv1.ResultDisplayType_RESULT_DISPLAY_TYPE_FLAT_KV {
-		t.Fatalf("pre-request display = %v, want FLAT_KV", req.GetDisplayType())
+		t.Fatalf("ns2 must NOT be requested at construction; got %d", got)
 	}
 }
 
-// TestNewAbtestContext_NoDefaultNoEagerRPC asserts that with no default ns the
-// constructor fires no eager RPC (design 04 §B.2 — prefetchNs empty ⇒ skip).
-func TestNewAbtestContext_NoDefaultNoEagerRPC(t *testing.T) {
+// TestPrefetchAPI_Shape replaces the request-shape half of the old
+// EagerPrefetchShape test: the explicit prefetch API targets exactly the
+// requested ns with type=config_version + display=flat_kv, and only that ns.
+func TestPrefetchAPI_Shape(t *testing.T) {
+	h := newHarness(t)
+	h.cfgServer.SetPullSnapshot(makeSnapshot("ns1", 1, 1, nil))
+	cfg := h.baseConfig([]string{"ns1", "ns2"})
+	cfg.DefaultNamespace = "ns1"
+	cli, err := Init(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	defer cli.Close()
+
+	before := h.abServer.TotalCalls()
+	abctx := cli.NewAbtestContext(context.Background(), "u1", nil)
+	abctx.PrefetchConfigVersionFlatKvForNamespace("ns1")
+	if !waitFor(t, 2*time.Second, func() bool { return h.abServer.Calls("ns1") > 0 }) {
+		t.Fatal("expected explicit prefetch RPC for ns1")
+	}
+	// Prefetch warms only the requested ns; ns2 must NOT be requested.
+	if got := h.abServer.Calls("ns2"); got != 0 {
+		t.Fatalf("prefetch must NOT fan out to ns2; got %d calls", got)
+	}
+	if got := h.abServer.TotalCalls() - before; got != 1 {
+		t.Fatalf("expected exactly 1 prefetch RPC, got %d", got)
+	}
+	req := h.abServer.LastRequest()
+	if req.GetNamespace() != "ns1" {
+		t.Fatalf("prefetch ns = %q, want ns1", req.GetNamespace())
+	}
+	if req.GetExperimentType() != abtestv1.ExperimentType_EXPERIMENT_TYPE_CONFIG_VERSION {
+		t.Fatalf("prefetch type = %v, want CONFIG_VERSION", req.GetExperimentType())
+	}
+	if req.GetDisplayType() != abtestv1.ResultDisplayType_RESULT_DISPLAY_TYPE_FLAT_KV {
+		t.Fatalf("prefetch display = %v, want FLAT_KV", req.GetDisplayType())
+	}
+}
+
+// TestNewAbtestContext_NoDefaultConstructionNoRPC is the converted form of the
+// old TestNewAbtestContext_NoDefaultNoEagerRPC. With no default ns the old
+// constructor skipped its eager pre-request; under the new design construction
+// never fires an RPC regardless of whether a default ns is configured, so the
+// no-default case is just one instance of the universal "construction RPC=0"
+// contract.
+func TestNewAbtestContext_NoDefaultConstructionNoRPC(t *testing.T) {
 	h := newHarness(t)
 	h.cfgServer.SetPullSnapshot(makeSnapshot("ns1", 1, 1, nil))
 	cfg := h.baseConfig([]string{"ns1"}) // no default ns
@@ -125,10 +168,10 @@ func TestNewAbtestContext_NoDefaultNoEagerRPC(t *testing.T) {
 
 	before := h.abServer.TotalCalls()
 	_ = cli.NewAbtestContext(context.Background(), "u1", nil)
-	// Give any (erroneous) eager goroutine a moment.
+	// Give any (erroneous) construction goroutine a moment.
 	time.Sleep(50 * time.Millisecond)
 	if got := h.abServer.TotalCalls() - before; got != 0 {
-		t.Fatalf("no default ns must fire no eager pre-request; got %d", got)
+		t.Fatalf("construction must fire no RPC (no default ns); got %d", got)
 	}
 }
 
@@ -156,7 +199,7 @@ func TestResultFor_ConcurrentAtMostOnce(t *testing.T) {
 	defer cli.Close()
 
 	before := h.abServer.Calls("ns1")
-	// No default ns ⇒ no eager pre-request; the lazy path is exercised.
+	// Construction fires no RPC; the lazy GetConfig path is exercised below.
 	abctx := cli.NewAbtestContext(context.Background(), "u1", nil)
 
 	const goroutines = 16

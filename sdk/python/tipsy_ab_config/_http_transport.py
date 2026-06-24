@@ -23,7 +23,7 @@ existing gRPC ``_AuthInterceptor``).
 
 These classes are internal implementation detail; only :func:`init` constructs
 them and only the gRPC/HTTP-uniform transport interface is used at the call
-sites (``_pull_once`` / ``get_experiment_result`` / ``_get_experiment_result_for_ns``).
+sites (``_pull_once`` / ``get_experiment_result`` / ``_fetch_config_version_flat_kv_for_ns``).
 """
 
 from __future__ import annotations

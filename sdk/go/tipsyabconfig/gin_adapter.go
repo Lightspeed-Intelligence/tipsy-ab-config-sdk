@@ -32,10 +32,15 @@ type GinLikeContext interface {
 // headers, so reading via gc.Request().Header is exactly equivalent and
 // avoids broadening the GinLikeContext interface.
 //
+// Like Middleware, construction issues NO prefetch RPC by default. Pass
+// PrefetchPaths(...) to opt specific exact request paths into
+// default-namespace prefetch (gated on a real user ctx + non-empty
+// defaultNamespace).
+//
 // Callers wrap this in a tiny gin.HandlerFunc closure in their own glue
 // code; doing so avoids any compile-time dep on the gin module from this
 // package.
-func (c *Client) GinMiddleware(gc GinLikeContext, provider UserProvider) {
+func (c *Client) GinMiddleware(gc GinLikeContext, provider UserProvider, opts ...MiddlewareOption) {
 	if gc == nil {
 		return
 	}
@@ -43,9 +48,11 @@ func (c *Client) GinMiddleware(gc GinLikeContext, provider UserProvider) {
 	if req == nil {
 		return
 	}
+	mc := resolveMiddlewareConfig(opts)
 	ctx := req.Context()
 	traceID := extractTraceFromRequest(req)
 	var abctx *AbtestContext
+	realUser := false
 	if provider == nil {
 		abctx = c.EmptyAbtestContext()
 	} else {
@@ -55,7 +62,13 @@ func (c *Client) GinMiddleware(gc GinLikeContext, provider UserProvider) {
 			abctx = c.EmptyAbtestContext()
 		} else {
 			abctx = c.NewAbtestContextWithTraceID(ctx, uid, attrs, traceID)
+			realUser = true
 		}
+	}
+	// Whitelist-gated prefetch: only for a real user ctx on an exactly matched
+	// request path; empty defaultNamespace ⇒ no-op inside prefetch.
+	if realUser && c.defaultNamespace != "" && mc.shouldPrefetch(req.URL.Path) {
+		abctx.PrefetchConfigVersionFlatKvForNamespace(c.defaultNamespace)
 	}
 	gc.Set("abtest_ctx", abctx)
 	gc.SetRequest(req.WithContext(WithAbtestContext(ctx, abctx)))

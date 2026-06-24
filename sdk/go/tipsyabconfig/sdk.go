@@ -227,15 +227,17 @@ type Client struct {
 
 	// defaultNamespace is the project default namespace resolved once at Init
 	// (Config.DefaultNamespace override > `PROJECT_DEFAULT_NAMESPACE` env >
-	// ""). It is the fallback for ns-optional dynamic getConfig and the eager
-	// pre-request ns. May be empty (decision A-3 — never hard-coded).
+	// ""). It is the fallback for ns-optional dynamic getConfig and the
+	// namespace warmed by middleware PrefetchPaths. May be empty (decision A-3
+	// — never hard-coded).
 	defaultNamespace string
 
 	// defaultNsSubscribed records whether defaultNamespace is in
-	// subscribedNamespaces. When false (or defaultNamespace == "") the eager
-	// pre-request in NewAbtestContext is skipped; ns-optional getConfig still
-	// resolves to defaultNamespace and surfaces a validation error to the
-	// caller via resolveNamespace.
+	// subscribedNamespaces. When false (or defaultNamespace == "") an
+	// explicit PrefetchConfigVersionFlatKvForNamespace(defaultNamespace)
+	// short-circuits to the empty result; ns-optional getConfig still resolves
+	// to defaultNamespace and surfaces a validation error to the caller via
+	// resolveNamespace.
 	defaultNsSubscribed bool
 
 	// health is the mutex-protected background-link health state surfaced via
@@ -352,8 +354,10 @@ func Init(ctx context.Context, cfg Config) (*Client, error) {
 		} else {
 			// Default ns is not subscribed: warn so misconfiguration is
 			// visible. ns-optional getConfig will still resolve to it and
-			// then surface ErrNamespaceNotSubscribed from resolveNamespace.
-			cli.logger.Warn("tipsyabconfig: project default namespace is not in subscribed Namespaces; eager pre-request disabled",
+			// then surface ErrNamespaceNotSubscribed from resolveNamespace;
+			// an explicit PrefetchConfigVersionFlatKvForNamespace for it is a
+			// no-op (short-circuits to empty without an RPC).
+			cli.logger.Warn("tipsyabconfig: project default namespace is not in subscribed Namespaces; prefetch disabled",
 				"default_namespace", cfg.DefaultNamespace, "namespaces", subs)
 		}
 	}

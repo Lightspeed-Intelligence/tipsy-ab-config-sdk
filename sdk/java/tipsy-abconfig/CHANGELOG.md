@@ -8,6 +8,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-06-25
+
+### Changed
+
+- **BREAKING — `AbtestContext` construction no longer eager-prefetches.**
+  `newAbtestContext(uid, attrs)` / `(…, traceId)` are now pure-create: they issue
+  NO `GetExperimentResult` RPC at construction time. Previously construction
+  eagerly pre-fetched the project default namespace's `config_version flat_kv`
+  result in the background. **Latency-shape change**: the default namespace is no
+  longer warmed at construction, so the FIRST `getConfig` for a namespace now
+  pays the `GetExperimentResult` RPC latency inline (every namespace is fetched
+  lazily and memoised on first use, at-most-once per ns per request).
+- **BREAKING — renamed internal fetch** `getExperimentResultForNamespace` →
+  `fetchConfigVersionFlatKvForNamespace` (package-private; the name now reflects
+  the hardwired `config_version` + `flat_kv` shape and is no longer confusable
+  with the public general-purpose `getExperimentResult`). The public
+  `getExperimentResult(ExperimentResultRequest)` API is unchanged.
+
+### Removed
+
+- **BREAKING — removed both `newAbtestContextForNamespace(...)` overloads**
+  (`newAbtestContextForNamespace(ns, uid, attrs)` and
+  `newAbtestContextForNamespace(ns, uid, attrs, traceId)`). Their only purpose
+  was choosing the construction-time eager-prefetch namespace, which no longer
+  exists. No compatibility shim. Migrate to `newAbtestContext(uid, attrs[,
+  traceId])` plus an explicit
+  `abctx.prefetchConfigVersionFlatKvForNamespace(ns)` if warm-up is desired.
+
+### Added
+
+- `AbtestContext.prefetchConfigVersionFlatKvForNamespace(String ns)` — explicit,
+  opt-in, non-blocking prefetch (warm-up) of a single namespace's
+  `config_version flat_kv` result. Idempotent and at-most-once: a subsequent
+  `getConfig` for the same ns reuses the warmed future. An empty / mock context
+  or an unsubscribed ns short-circuits and issues no RPC. (Java has no network
+  middleware; if warming at a self-built thread-per-request entry point, the
+  caller should URL-whitelist-gate the call to avoid mass empty experiment RPCs.)
+
 ### Fixed
 
 - Maven Central publishing actually uploads now. The `example` module's

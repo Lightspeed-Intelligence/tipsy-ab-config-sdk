@@ -102,7 +102,8 @@ public final class TipsyAbConfigClient implements AutoCloseable {
     private final List<Thread> backgroundThreads = new ArrayList<>();
 
     /**
-     * Daemon executor handed to ST4 for eager pre-request / lazy abtest fan-out.
+     * Daemon executor handed to ST4 for the lazy abtest fan-out (lazy
+     * {@code getConfig} fetch + explicit {@code AbtestContext} prefetch).
      * A virtual-thread-per-task executor keeps the fan-out cheap; it is shut down
      * on {@link #close()}.
      */
@@ -214,11 +215,6 @@ public final class TipsyAbConfigClient implements AutoCloseable {
 
         // Resolve the default namespace once (Config override > env > "").
         String defaultNamespace = resolveDefaultNamespace(cfg.defaultNamespace());
-        if (!defaultNamespace.isEmpty() && !subs.contains(defaultNamespace)) {
-            LOG.warn("tipsyabconfig: project default namespace is not in subscribed Namespaces; "
-                    + "eager pre-request disabled (default_namespace={}, namespaces={})",
-                    defaultNamespace, subs);
-        }
 
         TokenSource tokenSource = TokenSource.of(cfg.token(), cfg.tokenProvider());
 
@@ -390,12 +386,13 @@ public final class TipsyAbConfigClient implements AutoCloseable {
     // ------------------------------------------------------------------
 
     /**
-     * Creates a fresh per-request {@link AbtestContext} and, when the client has
-     * a project default namespace that is subscribed, eagerly pre-fetches ONLY
-     * that namespace's {@code config_version flat_kv} result in the background
-     * (design 05). Other namespaces are fetched lazily and memoised on first
-     * dynamic {@link #getConfig}. Returns synchronously; the eager result is
-     * awaited lazily via {@code getConfig}.
+     * Creates a fresh per-request {@link AbtestContext}. Pure-create: construction
+     * issues NO {@code GetExperimentResult} RPC. Every namespace is fetched
+     * lazily and memoised on first dynamic {@link #getConfig} for that ns, so the
+     * first {@code getConfig} for a namespace pays the RPC latency inline. To warm
+     * a namespace ahead of {@code getConfig}, opt in via
+     * {@link AbtestContext#prefetchConfigVersionFlatKvForNamespace(String)}
+     * (non-blocking).
      *
      * <p>{@code attrs} is converted to {@code abtestv1.Value} entries on the
      * wire. Supported concrete types: {@code String}, {@code Boolean},
@@ -403,7 +400,7 @@ public final class TipsyAbConfigClient implements AutoCloseable {
      * {@code Float}/{@code Double}. Unsupported values are skipped with a WARN.
      */
     public AbtestContext newAbtestContext(String userId, Map<String, Object> attrs) {
-        return newAbtestContextInternal("", userId, attrs, "");
+        return newAbtestContextInternal(userId, attrs, "");
     }
 
     /**
@@ -413,58 +410,21 @@ public final class TipsyAbConfigClient implements AutoCloseable {
      * issued from this context carries this trace id.
      */
     public AbtestContext newAbtestContext(String userId, Map<String, Object> attrs, String traceId) {
-        return newAbtestContextInternal("", userId, attrs, traceId);
-    }
-
-    /**
-     * {@link #newAbtestContext(String, Map)} with an explicit prefetch
-     * namespace. When {@code ns} is non-empty AND subscribed, the eager
-     * pre-request targets {@code ns} instead of the client default namespace.
-     * When {@code ns} is empty it behaves exactly like
-     * {@link #newAbtestContext(String, Map)}.
-     */
-    public AbtestContext newAbtestContextForNamespace(
-            String ns, String userId, Map<String, Object> attrs) {
-        return newAbtestContextInternal(ns, userId, attrs, "");
-    }
-
-    /**
-     * {@link #newAbtestContextForNamespace(String, String, Map)} with an
-     * explicit per-request trace id (see
-     * {@link #newAbtestContext(String, Map, String)} for trace-id semantics).
-     */
-    public AbtestContext newAbtestContextForNamespace(
-            String ns, String userId, Map<String, Object> attrs, String traceId) {
-        return newAbtestContextInternal(ns, userId, attrs, traceId);
+        return newAbtestContextInternal(userId, attrs, traceId);
     }
 
     private AbtestContext newAbtestContextInternal(
-            String prefetchNs, String userId, Map<String, Object> attrs, String traceId) {
+            String userId, Map<String, Object> attrs, String traceId) {
         // trace_id: empty ⇒ generate locally so SDK-side and server-side log
         // lines for this request share the same id.
         String resolvedTraceId = (traceId == null || traceId.isEmpty())
                 ? UUID.randomUUID().toString() : traceId;
         Map<String, CompletableFuture<AbtestComputeResult>> results = new HashMap<>(1);
-        AbtestContext ctx = new AbtestContext(userId, attrs, this, resolvedTraceId, false, results);
-
-        // Resolve the prefetch ns: explicit construction ns wins, else the
-        // client default namespace. Empty (or unsubscribed) ⇒ no eager
-        // pre-request; the first dynamic getConfig lazily fetches its ns.
-        //
-        // closed() short-circuit (F3): once the client is closed the
-        // abtestExecutor is shut down, so an eager submitFetch would throw
-        // RejectedExecutionException out of the constructor. Skip the eager
-        // pre-request after close — like an unsubscribed ns, the context simply
-        // degrades (the lazy getConfig/getExperimentResult paths already gate on
-        // closed()), mirroring Go's degrade-on-cancel.
-        String ns = (prefetchNs == null || prefetchNs.isEmpty()) ? defaultNamespace : prefetchNs;
-        if (!ns.isEmpty() && isSubscribed(ns) && !closed()) {
-            // Eager prefetch shares getExperimentResultForNamespace with the lazy
-            // path (F5): the future never completes exceptionally. No lock needed
-            // here — the ctx is not yet visible to other threads.
-            results.put(ns, ctx.submitFetch(ns));
-        }
-        return ctx;
+        // Pure-create: no eager pre-request. The results map starts empty; the
+        // first dynamic getConfig (or an explicit
+        // AbtestContext.prefetchConfigVersionFlatKvForNamespace call) lazily
+        // fetches and memoises each ns.
+        return new AbtestContext(userId, attrs, this, resolvedTraceId, false, results);
     }
 
     /**
@@ -1010,7 +970,7 @@ public final class TipsyAbConfigClient implements AutoCloseable {
         return closed.get() || closeStarted.get();
     }
 
-    /** The daemon executor for ST4's eager pre-request / lazy abtest fan-out. */
+    /** The daemon executor for ST4's lazy abtest fan-out (lazy getConfig fetch + explicit prefetch). */
     ExecutorService abtestExecutor() {
         return abtestExecutor;
     }

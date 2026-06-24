@@ -20,6 +20,55 @@ bump first, then an SDK tag bump.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-06-25
+
+### Removed (BREAKING)
+
+- `Client.NewAbtestContextForNamespace` and
+  `Client.NewAbtestContextForNamespaceWithTraceID`. These existed only to pick
+  the construction-time eager-prefetch namespace, which no longer happens (see
+  Changed). Use the retained `NewAbtestContext` /
+  `NewAbtestContextWithTraceID` to construct, then opt into warming a specific
+  namespace via `AbtestContext.PrefetchConfigVersionFlatKvForNamespace`. No
+  compatibility shim — this is a deliberate breaking change.
+
+### Changed (BREAKING)
+
+- `AbtestContext` construction is now pure-create and issues NO
+  `GetExperimentResult` RPC. Previously `NewAbtestContext*` eagerly pre-fetched
+  the project default namespace in the background. **Latency-shape change**:
+  the default namespace is no longer warmed at construction, so the first
+  `GetConfig` for it now pays the `GetExperimentResult` RPC latency inline
+  (previously that cost was often hidden by the background prefetch). All
+  namespaces are now fetched lazily on first dynamic `GetConfig` and memoised
+  (still at most one RPC per namespace per request link).
+- `Client.Middleware` and `Client.GinMiddleware` no longer prefetch on every
+  request. They gained a variadic `...MiddlewareOption`; pass
+  `PrefetchPaths(paths...)` to opt specific **exact** request paths into
+  default-namespace prefetch. Default (no option) = no prefetch on any path,
+  avoiding a flood of useless empty experiment RPCs for handlers that never
+  call `GetConfig`. Existing callers that pass no options still compile and now
+  simply attach the context without prefetching.
+
+### Added
+
+- `AbtestContext.PrefetchConfigVersionFlatKvForNamespace(ns)` — explicit,
+  opt-in, non-blocking, idempotent (at-most-once) warm of the config_version
+  flat_kv experiment result for `ns` into the context. A subsequent
+  `GetConfig` / `WaitForAbtest` for the same `ns` reuses the in-flight or
+  completed result (no second RPC). Empty / mock contexts and unsubscribed
+  namespaces short-circuit without an RPC.
+
+### Internal
+
+- Renamed the misleading internal per-ns fetch helper
+  `getExperimentResultForNamespace` →
+  `fetchConfigVersionFlatKvForNamespace` (it is hardwired to
+  `CONFIG_VERSION` + `RESULT_DISPLAY_TYPE_FLAT_KV`, distinct from the public
+  custom_params `GetExperimentResult`, which is unchanged). Extracted the
+  per-ns at-most-once ensure-fetch critical section into a shared internal
+  `ensureFetch` primitive used by both `resultFor` and the new prefetch API.
+
 ## [0.4.0] - 2026-06-19
 
 ### Added
@@ -66,6 +115,8 @@ bump first, then an SDK tag bump.
   delegate with `""` and auto-generate. `EmptyAbtestContext` and
   `MockAbtestContext` also carry an auto-generated trace_id so every
   context is uniformly attributable.
+  (Historical: the `*ForNamespace*` constructors and the eager prefetch they
+  fed were REMOVED in the Unreleased section above.)
 - `Middleware` and `GinMiddleware` now resolve the per-request trace_id
   from inbound headers: `X-Trace-Id` first, then `X-Request-Id`, with a
   fresh UUID as the final fallback. Whitespace-only header values are
@@ -111,13 +162,17 @@ Initial public release of the Tipsy AB-config Go SDK.
 - `Client.NewAbtestContext` / `NewAbtestContextForNamespace` — eagerly
   pre-fetches the prefetch namespace; lazy per-ns fetch + dedup on first
   access.
+  (Historical: eager prefetch and the `NewAbtestContextForNamespace`
+  constructor were REMOVED in the Unreleased section above; construction is
+  now pure-create.)
 - `Client.GetExperimentResult` — low-level proxy for
   `AbtestService.GetExperimentResult`.
 - `Middleware` (net/http) + `GinMiddleware` adapter.
 - `ExposureEvent`, `ExposureSink`, `ExposureSinkFunc`, default `logSink`
   + async `exposureEmitter` with per-process 5-min dedup.
 
-[Unreleased]: https://github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk/compare/sdk/go/tipsyabconfig/v0.3.0...HEAD
+[Unreleased]: https://github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk/compare/sdk/go/tipsyabconfig/v0.5.0...HEAD
+[0.5.0]: https://github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk/releases/tag/sdk%2Fgo%2Ftipsyabconfig%2Fv0.5.0
 [0.3.0]: https://github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk/releases/tag/sdk%2Fgo%2Ftipsyabconfig%2Fv0.3.0
 [0.2.0]: https://github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk/releases/tag/sdk%2Fgo%2Ftipsyabconfig%2Fv0.2.0
 [0.1.0]: https://github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk/releases/tag/sdk%2Fgo%2Ftipsyabconfig%2Fv0.1.0
