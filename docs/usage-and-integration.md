@@ -300,6 +300,29 @@ SDK 里有直接获取实验结果的 API，不需要绕到裸 HTTP：
 
 准入条件（admission）的配置位置（domain / layer / experiment / group 级）见 §3.3–§3.5、§3.7；其 JSON 形态、计算与命中语义、属性类型的比较规则参见 tipsy-ab-config 平台文档与本文 §5 开头的 "`user_attrs` 值的格式"。
 
+#### 准入条件举例（按国家 / 语言 / 注册时间筛人）
+
+准入条件在 Console 配置、由平台引擎计算；下面是一个常见组合范例——按国家、语言（多选其一）加注册时间区间筛人：
+
+```json
+{
+  "op": "and",
+  "children": [
+    { "field": "country",       "op": "in", "value": ["US", "CA", "GB"] },
+    { "field": "language",      "op": "in", "value": ["en", "zh"] },
+    { "field": "register_time", "op": ">=", "value": 1704067200 },
+    { "field": "register_time", "op": "<=", "value": 1735689599 }
+  ]
+}
+```
+
+- `in` = 命中列表中任一即可（国家 / 语言用列表表达"多选其一"）。`field` 是任意属性键，按键名逐字匹配，引擎不对 `country` / `language` 等字段名做任何特殊处理；Console 字段字典里常预置这些键只是填写便利，不是引擎层面的"保留字段"。
+- **IN 的"列表"在准入条件 JSON 里，不在 attrs 里**：业务侧 `user_attrs` 仍传单个标量值（`country="US"`、`language="en"`、`register_time=<epoch 秒整数>`），SDK 自动按类型包装；裸 HTTP/gRPC 按 §5 开头 "`user_attrs` 值的格式" 传。
+- `register_time` 用 epoch 秒整数（int64）；区间用两个叶子（`>=` 起、`<=` 止）以 `and` 组合（引擎无单独 `between`）；用字符串 / ISO 日期做不了数值区间比较、只会不命中。
+- `{}` 表示全部用户；支持 `and` / `or` / `not`，嵌套深度上限 5。
+
+操作符全集、字段约定、更多范例与计算 / 命中语义以 **tipsy-ab-config 平台文档**为权威来源（平台 cookbook 的「附录：准入条件 admission 怎么写」与 console 文档 §3.4 受众），本文不复制完整算子表。
+
 ### 4.0 SDK 版本查询（怎么知道最新版本是哪个）
 
 本仓使用 monorepo multi-module 管理，每条 SDK 走独立版本号、独立 git tag。要查"现在最新版是多少"有 4 个权威入口，任选其一即可，**不要去问平台维护方**：
