@@ -49,7 +49,25 @@ jobs:
       # checked-in *.pb.go is stale OR the local toolchain (protoc /
       # protoc-gen-go / protoc-gen-go-grpc) differs from the canonical
       # versions documented at the top of scripts/gen-proto.sh.
+      #
+      # The drift step needs protoc + the two Go plugins on PATH; without them
+      # scripts/gen-proto.sh aborts at its front-check. Pin the exact canonical
+      # versions so regeneration is byte-reproducible (apt's protoc is too old
+      # and would emit a different descriptor, producing false drift).
+      - name: Install proto toolchain (pinned)
+        run: |
+          set -euo pipefail
+          PROTOC_VERSION=34.1
+          curl -fsSL -o /tmp/protoc.zip \
+            "https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/protoc-${PROTOC_VERSION}-linux-x86_64.zip"
+          unzip -q -o /tmp/protoc.zip -d "$HOME/.protoc"
+          echo "$HOME/.protoc/bin" >> "$GITHUB_PATH"
+          go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.11
+          go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.6.2
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
       - name: Proto drift check
         run: |
+          protoc --version
           bash scripts/gen-proto.sh
           git diff --exit-code -- api/gen/go

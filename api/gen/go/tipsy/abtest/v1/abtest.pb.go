@@ -999,7 +999,8 @@ const file_tipsy_abtest_v1_abtest_proto_rawDesc = "" +
 	"\rAbtestService\x12p\n" +
 	"\x13GetExperimentResult\x12+.tipsy.abtest.v1.GetExperimentResultRequest\x1a,.tipsy.abtest.v1.GetExperimentResultResponse\x12\xb8\x01\n" +
 	"+GetPossibleVersionsAndExperimentSnapshotSeq\x12C.tipsy.abtest.v1.GetPossibleVersionsAndExperimentSnapshotSeqRequest\x1aD.tipsy.abtest.v1.GetPossibleVersionsAndExperimentSnapshotSeqResponse\x12\x7f\n" +
-	"\x18GetExperimentSnapshotSeq\x120.tipsy.abtest.v1.GetExperimentSnapshotSeqRequest\x1a1.tipsy.abtest.v1.GetExperimentSnapshotSeqResponseB\\ZZgithub.com/Lightspeed-Intelligence/tipsy-ab-config-sdk/api/gen/go/tipsy/abtest/v1;abtestv1b\x06proto3"
+	"\x18GetExperimentSnapshotSeq\x120.tipsy.abtest.v1.GetExperimentSnapshotSeqRequest\x1a1.tipsy.abtest.v1.GetExperimentSnapshotSeqResponseB\xa6\x01\n" +
+	"9io.github.lightspeedintelligence.abconfig.proto.abtest.v1B\vAbtestProtoP\x01ZZgithub.com/Lightspeed-Intelligence/tipsy-ab-config-sdk/api/gen/go/tipsy/abtest/v1;abtestv1b\x06proto3"
 
 var (
 	file_tipsy_abtest_v1_abtest_proto_rawDescOnce sync.Once

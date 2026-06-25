@@ -1498,7 +1498,8 @@ const file_tipsy_config_v1_config_proto_rawDesc = "" +
 	"\x12ListConfigVersions\x12*.tipsy.config.v1.ListConfigVersionsRequest\x1a+.tipsy.config.v1.ListConfigVersionsResponse\x12\x8e\x01\n" +
 	"\x1dNotifyBusinessNamespaceChange\x125.tipsy.config.v1.NotifyBusinessNamespaceChangeRequest\x1a6.tipsy.config.v1.NotifyBusinessNamespaceChangeResponse\x12g\n" +
 	"\x10GetDynamicConfig\x12(.tipsy.config.v1.GetDynamicConfigRequest\x1a).tipsy.config.v1.GetDynamicConfigResponse\x12d\n" +
-	"\x0fGetStaticConfig\x12'.tipsy.config.v1.GetStaticConfigRequest\x1a(.tipsy.config.v1.GetStaticConfigResponseB\\ZZgithub.com/Lightspeed-Intelligence/tipsy-ab-config-sdk/api/gen/go/tipsy/config/v1;configv1b\x06proto3"
+	"\x0fGetStaticConfig\x12'.tipsy.config.v1.GetStaticConfigRequest\x1a(.tipsy.config.v1.GetStaticConfigResponseB\xa6\x01\n" +
+	"9io.github.lightspeedintelligence.abconfig.proto.config.v1B\vConfigProtoP\x01ZZgithub.com/Lightspeed-Intelligence/tipsy-ab-config-sdk/api/gen/go/tipsy/config/v1;configv1b\x06proto3"
 
 var (
 	file_tipsy_config_v1_config_proto_rawDescOnce sync.Once
