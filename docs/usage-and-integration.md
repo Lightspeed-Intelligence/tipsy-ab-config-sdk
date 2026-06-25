@@ -278,6 +278,28 @@ SDK 里有直接获取实验结果的 API，不需要绕到裸 HTTP：
 
 获取实验结果 API 是 `AbtestService.GetExperimentResult` 的 SDK 包装，适合直接读取 `custom_params`、查看命中的 group，或按 `layer_ids` / `experiment_type` / `display_type` 控制结果形态。它和 `GetConfig` 不同：不会读本地 config cache，不会做配置 value 合成，也不会自动发曝光事件；它返回原始实验计算结果。
 
+### 4.0.0 实验入参语义：UID 与 attrs（被分流对象的身份与属性）
+
+所有实验相关 API（`GetConfig` / `GetExperimentResult` 以及裸 HTTP/gRPC）都需要一个 `uid` 和一组 `attrs`（在 SDK 里通过 `AbtestContext` 或 `UserInfo` 携带，裸接口里是 `user_id` / `user_attrs`）。它们的语义是**被分流对象**的 ID 和属性，而不局限于"自然人用户"：
+
+- **`uid`（被分流对象 ID）**：实验分桶（hashing / bucketing）所基于的唯一标识。
+- **`attrs`（被分流对象属性）**：用于实验/分组/domain/layer 的**准入条件**判断的键值属性。
+
+"被分流对象"是谁，由业务接入方按实验设计决定：
+
+| 被分流对象 | `uid` 传什么 | `attrs` 传什么 |
+| --- | --- | --- |
+| 用户（最常见） | 用户 ID | 用户属性（如 country、vip、age 等） |
+| 角色 | 角色 ID | 角色属性 |
+| 项目 | 项目 ID | 项目属性 |
+| 其它（设备、租户、会话……） | 该对象的唯一 ID | 该对象的属性 |
+
+> 字段名沿用 `uid` / `user_id` / `user_attrs` 只是历史命名；语义上它代表"当前实验所分流的对象"，多数实验分流用户因而是用户 ID / 用户属性，但当实验按角色 / 项目等维度分流时，应传入对应对象的 ID 与属性。同一个 namespace 下不同实验若按不同维度分流，接入方需为每个调用传入与该实验设计一致的对象 ID 和属性。
+
+**关于 `attrs` 的职责边界**：`attrs` 仅用于**实验准入条件（admission / audience）**的计算判断。平台方只负责"按配置的准入条件对传入的属性做计算和命中判断"，**不规定也不校验**具体应该传哪些字段、字段的业务语义是什么——**传入哪些属性键、各自代表什么含义，由实验填写者（在 Console 配置准入条件时）与业务接入方（在调用时传入属性时）共同约定、各自负责并自行保证一致**。平台不对属性字段做语义层面的校验：键名拼错、漏传、或类型选错（见 §5 开头 "`user_attrs` 值的格式"）通常表现为**准入不命中**而非报错。
+
+准入条件（admission）的配置位置（domain / layer / experiment / group 级）见 §3.3–§3.5、§3.7；其 JSON 形态、计算与命中语义、属性类型的比较规则参见 tipsy-ab-config 平台文档与本文 §5 开头的 "`user_attrs` 值的格式"。
+
 ### 4.0 SDK 版本查询（怎么知道最新版本是哪个）
 
 本仓使用 monorepo multi-module 管理，每条 SDK 走独立版本号、独立 git tag。要查"现在最新版是多少"有 4 个权威入口，任选其一即可，**不要去问平台维护方**：
