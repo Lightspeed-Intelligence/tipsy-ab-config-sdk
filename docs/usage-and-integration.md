@@ -183,6 +183,8 @@ Layer 是一组互斥流量槽位，实验必须挂在某个 layer 下。
 | Traffic Total | 默认 `10000`，表示万分桶 |
 | Admission | JSON 准入条件，`{}` 表示所有用户 |
 
+> Salt 留空时用 layer.id / 实验 id 作为分桶 hash 种子。这意味着**删除并重建一个同名 layer / 实验时，新对象是新的 UUID，同一用户会被重新分桶、可能跳到不同组**，灰度/实验的用户黏性随之断裂。需要分桶可复现、可迁移、或重建后保持稳定时，显式设一个稳定的 Salt，别依赖留空回落。
+
 Layer 详情页用于管理：
 
 - 当前 layer 下的 slot。
@@ -209,6 +211,8 @@ Layer 详情页用于管理：
 | Traffic Total | 默认 `10000` |
 | Admission | 实验准入条件 JSON，`{}` 表示所有用户 |
 | Sticky enabled | 开启后用户保持首次命中的 group |
+
+> Salt 留空→用实验 ID 作分桶种子的稳定性后果同 §3.4 的 Salt 说明（重建换 ID = 换分桶）。
 
 实验类型：
 
@@ -1126,6 +1130,9 @@ curl -sS -H "$AUTH" -H 'Content-Type: application/json' \
 - `experiment_type` 可用 `EXPERIMENT_TYPE_CONFIG_VERSION`、`EXPERIMENT_TYPE_CUSTOM_PARAMS`、`EXPERIMENT_TYPE_ALL`。
 - `display_type` 可用 `RESULT_DISPLAY_TYPE_FLAT_KV`、`RESULT_DISPLAY_TYPE_EACH_EXPERIMENT_GROUP`。
 - `layer_ids` 为空表示计算所有 layer。
+- `config_flat_kv` / `custom_flat_kv` 是**该 namespace 下所有命中实验的扁平聚合**：把每个命中实验/组的参数拍平进同一个 map。**不同实验若用了相同的 key 名，会互相覆盖**（后写覆盖先写），响应里看不出某个 key 来自哪个实验。要按实验/组精确归属，请用 `display_type=RESULT_DISPLAY_TYPE_EACH_EXPERIMENT_GROUP` 看 `groups[].experiment_id` / `group_id`；或给自定义参数 key 名加实验前缀避免撞车。（注意这与 §3.7「结果里没有某 key → 回退 full release」是两回事：那是“缺 key”，这是“多实验同名 key 撞车”。）
+- `groups[]` 只在 `display_type=RESULT_DISPLAY_TYPE_EACH_EXPERIMENT_GROUP` 时填充；用 `RESULT_DISPLAY_TYPE_FLAT_KV` 或省略 `display_type`（默认 `UNSPECIFIED`）时 `groups` 恒为空数组，但 `config_flat_kv` / `custom_flat_kv` 仍照常返回值。想读“命中了哪些组”务必显式传 `EACH_EXPERIMENT_GROUP`，否则会误判成“没命中”。
+- `experiment_type` 是**类型隔离过滤**：只返回与该类型匹配的实验。用 `EXPERIMENT_TYPE_CONFIG_VERSION` 过滤一个 `custom_params` 实验（或反之）会得到**空结果且不报错**。不确定时用 `EXPERIMENT_TYPE_ALL`，或传与目标实验一致的精确类型。
 - `trace_id` 为可选字符串。未传或空串时由服务端自动填充 UUID v4（36 字符带 `-`）；最大 128 字符，超出会被服务端截断并打 WARN。该字段会出现在服务端实验结果计算路径的日志中，并作为后续"实验结果数据上报"的同一标识。**业务方可按自身需求选择传什么 ID**：搜推服务可以传服务侧的 `request_id`、接入了 OpenTelemetry 的服务可以传 OTel trace id、有自建链路追踪系统的传它的 trace id；平台不做格式校验，原样保留。
 - Public-read HTTP 已设置 `UseProtoNames: true` + `EmitUnpopulated: true`：字段名为 snake_case，零值字段也会输出——空 map 序列化为 `{}`、空 repeated 为 `[]`、未填 timestamp 与数值/字符串零值同样出现。因此 `config_flat_kv`、`custom_flat_kv`、`groups`、`exposures`、`computed_at` 这些字段恒在，接入方可按字段恒存在解析（但仍需判断 map / 数组是否为空）。
 - `config_flat_kv` 的 value、`exposures[].version`、`exposures[].release_id` 等 int64 字段在 JSON 中按 protojson 规则表现为字符串，接入方不要转成 JavaScript `Number`。
@@ -1317,6 +1324,8 @@ AI agent 或脚本执行接入时，按以下不变式检查：
 11. 实验创建后已 Start，否则不会参与计算。
 12. Console/Admin API 使用人类会话 token，且用户在 `console_admin` 白名单。
 13. SDK / HTTP / gRPC 读接口的 `trace_id` 字段为可选字符串：未传或空串由服务端自动填充 UUID v4，外部传入任意非空字符串原样保留（不做格式校验、不重写），最大 128 字符，超出会被服务端截断并打 WARN。`trace_id` 是"关联标识"——把同一次业务请求在 SDK 日志、服务端实验结果日志、未来的实验结果数据上报里串到一起；业务方可按自身需求选择传什么 ID（搜推服务可以传 `request_id`、接入了 OpenTelemetry 的服务可以传 OTel trace id），平台不规定字面格式。SDK 高阶 API 把 trace_id 附在 `AbtestContext` 上（一个请求一个 ID）；Gin / FastAPI middleware 默认从入站头 `X-Trace-Id` → `X-Request-Id` 复用，否则生成。后台 PullAll / Subscribe 等定时调用会生成独立 trace_id（同一 SDK 实例的日志可能落到多个 trace 下，这是预期：trace_id 是请求维度而非实例维度）。
+
+14. 读 `experiment_result` 时按响应形态选对参数：要分组明细传 `display_type=EACH_EXPERIMENT_GROUP`（否则 `groups` 恒空）；`experiment_type` 是类型隔离过滤，类型传错会得到空结果而非报错；`config_flat_kv`/`custom_flat_kv` 是 namespace 级聚合，跨实验同名 key 会互相覆盖（自定义参数 key 名建议带实验前缀）。
 
 ## 9. int64 与 JSON 精度
 
