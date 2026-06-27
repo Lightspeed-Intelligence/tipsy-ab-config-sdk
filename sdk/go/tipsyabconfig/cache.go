@@ -19,6 +19,13 @@ type KeyState struct {
 	// (if any) plus every version that abtest reports as "possibly
 	// applicable" for the namespace.
 	Versions map[int64]string
+	// HasDynamicResolution mirrors the proto's `optional bool` presence
+	// semantics: nil = field absent (old server), &false = explicit "pure
+	// full-release, no gray/experiment", &true = needs abtest resolution.
+	// GetConfig only takes the fast-path (skip abtest) when this is present
+	// AND false; nil (old server) or true keeps the existing abtest path so a
+	// new SDK against an old server never silently skips a live experiment.
+	HasDynamicResolution *bool
 }
 
 // NamespaceSnapshot is the per-ns immutable view the cache hands out to
@@ -70,6 +77,25 @@ func (c *configCache) fullReleaseVersion(ns, key string) (int64, bool) {
 		return 0, false
 	}
 	return ks.FullReleaseVersion, true
+}
+
+// hasDynamicResolution reports the cached has_dynamic_resolution flag for
+// (ns, key) with presence semantics. It returns (val, true) only when a
+// snapshot for ns exists, the key is present, AND the field was explicitly set
+// by the server. It returns (false, false) when the ns, key, or field is
+// absent — i.e. present == false means "unknown / old server", NOT false.
+// GetConfig MUST gate its fast-path on present == true && val == false so an
+// absent field never triggers a skip.
+func (c *configCache) hasDynamicResolution(ns, key string) (val bool, present bool) {
+	s := c.snapshot(ns)
+	if s == nil {
+		return false, false
+	}
+	ks, ok := s.Keys[key]
+	if !ok || ks.HasDynamicResolution == nil {
+		return false, false
+	}
+	return *ks.HasDynamicResolution, true
 }
 
 // valueOf returns (value, true) when a specific (ns, key, versionID) is
@@ -129,6 +155,12 @@ func (c *configCache) applyProto(pb *configv1.NamespaceSnapshot) (replaced, busi
 		ks := KeyState{Versions: make(map[int64]string, len(k.Versions))}
 		if k.FullReleaseVersion != nil {
 			ks.FullReleaseVersion = *k.FullReleaseVersion
+		}
+		// Preserve presence: copy the pointer's value into a fresh local
+		// pointer iff set, leaving nil when the proto field is absent.
+		if k.HasDynamicResolution != nil {
+			hdr := *k.HasDynamicResolution
+			ks.HasDynamicResolution = &hdr
 		}
 		for vid, val := range k.Versions {
 			ks.Versions[vid] = val

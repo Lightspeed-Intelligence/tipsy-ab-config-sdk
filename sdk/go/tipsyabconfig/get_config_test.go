@@ -8,6 +8,7 @@ import (
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 
 	abtestv1 "github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk/api/gen/go/tipsy/abtest/v1"
 )
@@ -309,6 +310,171 @@ func TestAbtestContext_NilReceiver(t *testing.T) {
 	_, err := nilCtx.WaitForAbtest(context.Background(), "ns")
 	if !errors.Is(err, ErrAbtestContextMissing) {
 		t.Fatalf("expected ErrAbtestContextMissing, got %v", err)
+	}
+}
+
+// TestGetConfig_FastPath_FalseHDR_NoRPC is the core S5 assertion: a key whose
+// snapshot carries has_dynamic_resolution = explicit false must resolve via the
+// full-release/default branch WITHOUT issuing any GetExperimentResult RPC.
+//
+// RPC-count==0 is the proof mechanism (design Testing Plan S5 "跳等证明优先用
+// RPC 次数==0"). We assert via h.abServer.Calls("ns1") delta == 0 — the fake
+// AbtestService increments callsByNS on every GetExperimentResult.
+//
+// Memoization caveat (design §B.3 / S5): abctx.resultFor memoises per ns per
+// request link, so a single co-queried true-key would fire the ns RPC and make
+// a later false-key read see calls>0 spuriously (false green) OR see calls==0
+// only because the memo was already warm. To keep the assertion honest each
+// sub-case below uses a FRESH abctx and queries ONLY the false-key in that link
+// — no other key in the same ns is touched on that abctx before the assertion.
+func TestGetConfig_FastPath_FalseHDR_NoRPC(t *testing.T) {
+	h := newHarness(t)
+
+	// pureFull: has_dynamic_resolution=false, has a full release -> returns full.
+	// pureNoFull: has_dynamic_resolution=false, NO full release -> returns default.
+	pb := makeSnapshot("ns1", 1, 1, map[string]struct {
+		full     int64
+		versions map[int64]string
+	}{
+		"pureFull":   {full: 1, versions: map[int64]string{1: "full-v1"}},
+		"pureNoFull": {full: 0, versions: map[int64]string{}},
+	})
+	setHDR(t, pb, "pureFull", proto.Bool(false))
+	setHDR(t, pb, "pureNoFull", proto.Bool(false))
+	h.cfgServer.SetPullSnapshot(pb)
+	// Arm the abtest server so that IF the SDK wrongly calls it, the call is
+	// counted (the response itself is irrelevant — the test fails on count>0).
+	h.abServer.SetResponse("ns1", &abtestv1.GetExperimentResultResponse{
+		ConfigFlatKv: map[string]int64{"pureFull": 1},
+	})
+
+	cfg := h.baseConfig([]string{"ns1"})
+	cli, err := Init(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	defer cli.Close()
+
+	// Sub-case 1: false-key WITH full release -> full value, ZERO RPC.
+	// Fresh abctx, only this key queried in the link.
+	before := h.abServer.Calls("ns1")
+	abctx1 := cli.NewAbtestContext(context.Background(), "u1", nil)
+	v, err := cli.GetConfig(context.Background(), abctx1, "ns1", "pureFull", "def")
+	if err != nil {
+		t.Fatalf("pureFull GetConfig: %v", err)
+	}
+	if v != "full-v1" {
+		t.Fatalf("pureFull: got %q, want full-v1", v)
+	}
+	if got := h.abServer.Calls("ns1") - before; got != 0 {
+		t.Fatalf("pureFull fast-path must issue ZERO GetExperimentResult RPC, got %d", got)
+	}
+
+	// Sub-case 2: false-key with NO full release -> default, ZERO RPC.
+	// Fresh abctx again so the link has no warm memo and no co-queried true-key.
+	before = h.abServer.Calls("ns1")
+	abctx2 := cli.NewAbtestContext(context.Background(), "u2", nil)
+	v, err = cli.GetConfig(context.Background(), abctx2, "ns1", "pureNoFull", "def")
+	if err != nil {
+		t.Fatalf("pureNoFull GetConfig: %v", err)
+	}
+	if v != "def" {
+		t.Fatalf("pureNoFull: got %q, want def", v)
+	}
+	if got := h.abServer.Calls("ns1") - before; got != 0 {
+		t.Fatalf("pureNoFull fast-path must issue ZERO GetExperimentResult RPC, got %d", got)
+	}
+
+	// Guard against a delayed/async RPC fired by a regression: pause and re-check
+	// the total is still zero across the whole test.
+	time.Sleep(50 * time.Millisecond)
+	if got := h.abServer.Calls("ns1"); got != 0 {
+		t.Fatalf("fast-path total RPC count must be 0, got %d", got)
+	}
+}
+
+// TestGetConfig_TrueHDR_StillCallsAbtest is the no-regression half: a key with
+// has_dynamic_resolution=true must STILL go through abctx.resultFor (one RPC)
+// and resolve the ab-hit rule value. Asserts the RPC IS issued.
+func TestGetConfig_TrueHDR_StillCallsAbtest(t *testing.T) {
+	h := newHarness(t)
+	pb := makeSnapshot("ns1", 1, 1, map[string]struct {
+		full     int64
+		versions map[int64]string
+	}{
+		"k": {full: 1, versions: map[int64]string{1: "full-v1", 2: "ab-v2"}},
+	})
+	setHDR(t, pb, "k", proto.Bool(true))
+	h.cfgServer.SetPullSnapshot(pb)
+	h.abServer.SetResponse("ns1", &abtestv1.GetExperimentResultResponse{
+		ConfigFlatKv: map[string]int64{"k": 2},
+	})
+
+	cfg := h.baseConfig([]string{"ns1"})
+	cli, err := Init(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	defer cli.Close()
+
+	before := h.abServer.Calls("ns1")
+	abctx := cli.NewAbtestContext(context.Background(), "u1", nil)
+	v, err := cli.GetConfig(context.Background(), abctx, "ns1", "k", "def")
+	if err != nil {
+		t.Fatalf("GetConfig: %v", err)
+	}
+	if v != "ab-v2" {
+		t.Fatalf("true-HDR key must resolve ab rule value, got %q", v)
+	}
+	if got := h.abServer.Calls("ns1") - before; got != 1 {
+		t.Fatalf("true-HDR key must issue exactly 1 GetExperimentResult RPC, got %d", got)
+	}
+}
+
+// TestGetConfig_AbsentHDR_StillCallsAbtest is the other no-regression half: a
+// key with the field ABSENT (nil — simulating an old server that never set it)
+// must keep the existing safe abtest path (RPC issued), never silently skipping
+// a possibly-live experiment. Asserts the RPC IS issued and the ab value wins.
+func TestGetConfig_AbsentHDR_StillCallsAbtest(t *testing.T) {
+	h := newHarness(t)
+	pb := makeSnapshot("ns1", 1, 1, map[string]struct {
+		full     int64
+		versions map[int64]string
+	}{
+		"k": {full: 1, versions: map[int64]string{1: "full-v1", 2: "ab-v2"}},
+	})
+	// Deliberately DO NOT call setHDR for "k": the field stays nil (absent),
+	// modelling an old server. makeSnapshot never sets it, so this is the
+	// genuine "field absent" frame.
+	h.cfgServer.SetPullSnapshot(pb)
+	h.abServer.SetResponse("ns1", &abtestv1.GetExperimentResultResponse{
+		ConfigFlatKv: map[string]int64{"k": 2},
+	})
+
+	cfg := h.baseConfig([]string{"ns1"})
+	cli, err := Init(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	defer cli.Close()
+
+	// Sanity: confirm the cached field really is absent so this test exercises
+	// the nil branch and not an accidentally-set false (which would also skip).
+	if _, present := cli.cache.hasDynamicResolution("ns1", "k"); present {
+		t.Fatal("precondition: expected has_dynamic_resolution ABSENT for old-server simulation")
+	}
+
+	before := h.abServer.Calls("ns1")
+	abctx := cli.NewAbtestContext(context.Background(), "u1", nil)
+	v, err := cli.GetConfig(context.Background(), abctx, "ns1", "k", "def")
+	if err != nil {
+		t.Fatalf("GetConfig: %v", err)
+	}
+	if v != "ab-v2" {
+		t.Fatalf("absent-HDR key must keep abtest path and resolve ab value, got %q", v)
+	}
+	if got := h.abServer.Calls("ns1") - before; got != 1 {
+		t.Fatalf("absent-HDR key must issue exactly 1 GetExperimentResult RPC (safe default), got %d", got)
 	}
 }
 
