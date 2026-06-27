@@ -176,7 +176,24 @@ def make_snapshot(
     biz: int,
     exp: int,
     keys: Optional[Dict[str, Tuple[Optional[int], Dict[int, str]]]] = None,
+    has_dynamic_resolution: Optional[Dict[str, Optional[bool]]] = None,
 ) -> config_pb2.NamespaceSnapshot:
+    """Build a NamespaceSnapshot proto.
+
+    ``keys`` maps configKey → ``(full_release_version_or_None, {version_id:value})``.
+
+    ``has_dynamic_resolution`` optionally controls the per-key
+    ``optional bool has_dynamic_resolution`` proto field in three states:
+
+    - ``True``  → ``ks.has_dynamic_resolution = True`` (key carries gray/exp).
+    - ``False`` → ``ks.has_dynamic_resolution = False`` (explicitly pure-full).
+    - ``None``  → field left UNSET on the wire, exercising the ``HasField``
+      False branch (an old server that predates the field). This is also the
+      default for any key not listed in the dict, so existing callers that pass
+      no ``has_dynamic_resolution`` keep building snapshots whose keys leave the
+      field absent — i.e. identical to before this field existed.
+    """
+    hdr = has_dynamic_resolution or {}
     snap = config_pb2.NamespaceSnapshot(
         namespace=ns,
         business_snapshot_seq=biz,
@@ -188,6 +205,13 @@ def make_snapshot(
             ks.full_release_version = full
         for vid, val in versions.items():
             ks.versions[vid] = val
+        # Only set the optional field when the caller asked for an explicit
+        # True/False. A missing entry (or an explicit None) leaves the proto
+        # field UNSET so ``KeyState.HasField("has_dynamic_resolution")`` is
+        # False on the wire — the old-server / absent state.
+        flag = hdr.get(k)
+        if flag is not None:
+            ks.has_dynamic_resolution = flag
         snap.keys.append(ks)
     return snap
 

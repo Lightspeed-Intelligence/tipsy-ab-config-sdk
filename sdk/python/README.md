@@ -281,6 +281,18 @@ to the request-scoped `AbtestContext` so all `get_config` /
 - Protobuf runtime: `protobuf>=5.29,<7` — shipped stubs are 5.x major.
 - Server: see release notes for compatible server tags.
 
+> **Server compatibility (v0.7.0+): upgrade the server first.** Starting with
+> `python-sdk/v0.7.0`, `get_config` takes a fast path that skips the abtest
+> `GetExperimentResult` wait for keys the server reports as pure full-release
+> (the new `has_dynamic_resolution` field on `KeyState`). This requires a
+> server built against **`api/gen/go` v0.3.0 or newer**, which emits that
+> field. **Upgrade the server before this SDK.** If this SDK runs against an
+> older server that does not emit the field, it safely falls back to ALWAYS
+> waiting on abtest — results stay correct and gray release / experiments keep
+> working; you just do not get the fast-path benefit. The fast path triggers
+> only when the field is explicitly `False`, never when it is absent, so a new
+> SDK on an old server never wrongly skips abtest.
+
 ## Versioning and stability
 
 The SDK follows SemVer:

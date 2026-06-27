@@ -8,6 +8,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-06-27
+
+### Added
+
+- `KeyState.has_dynamic_resolution` (`Optional[bool]`) — the SDK now
+  deserializes the new `optional bool has_dynamic_resolution` field on each
+  `KeyState` from both the `PullAll` and `Subscribe` snapshot paths. The value
+  preserves wire presence: `True`/`False` when the server explicitly set it,
+  `None` when the field was absent (an older server that predates it).
+- `ConfigCache.has_dynamic_resolution(namespace, key) -> tuple[bool, bool]` —
+  cache accessor returning `(value, present)`; `(False, False)` on any miss
+  (no snapshot, no such key, or the field absent on the wire).
+
+### Changed
+
+- `Client.get_config` fast path: when the server has explicitly reported that a
+  key carries no gray release / experiment (`has_dynamic_resolution` is present
+  **and** `False`), `get_config` now **skips** the `GetExperimentResult` abtest
+  wait and returns the full-release value directly. This removes a guaranteed-
+  wasted RPC for pure-full-release keys. All fallback/default semantics and
+  metrics are unchanged. When the field is absent (old server) or `True`, the
+  existing always-wait abtest path is preserved exactly, so gray release /
+  experiments never silently break.
+
+### Server compatibility (REQUIRED — upgrade server first)
+
+- This version expects the server to already emit the
+  `has_dynamic_resolution` field on `KeyState`, i.e. a server built against
+  **`api/gen/go` v0.3.0 or newer**. **Upgrade the server first, then this
+  SDK.** If this SDK is pointed at an older server that does not emit the
+  field, it safely falls back to the previous behaviour — it ALWAYS waits on
+  the abtest result (correct results; gray release / experiments keep working),
+  it just does not get the fast-path benefit. The fast path is only taken when
+  the field is explicitly `False`, never when it is absent, so a new SDK on an
+  old server never wrongly skips abtest.
+
 ## [0.6.0] - 2026-06-25
 
 ### Changed (BREAKING)
