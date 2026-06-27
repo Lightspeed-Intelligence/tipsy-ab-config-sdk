@@ -20,6 +20,40 @@ bump first, then an SDK tag bump.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-06-27
+
+### Added
+
+- The SDK now deserializes the new `optional bool has_dynamic_resolution`
+  field on each full-config `KeyState` (from both the `PullAll` and
+  `Subscribe` snapshot paths). The value is presence-aware and preserves the
+  proto `optional` tri-state: explicitly `true`/`false` when the server set
+  it, absent when the field is missing (an older server that predates it).
+
+### Changed
+
+- `GetConfig` fast-path. When the server explicitly reports a key as pure
+  full-rollout (`has_dynamic_resolution` is present **and** `false`),
+  `GetConfig` now **skips** the abtest wait (`resultFor`, and its potential
+  `GetExperimentResult` RPC) and returns the full-release value directly.
+  This removes a guaranteed-wasted RPC for pure-full-release keys; the
+  fallback / default semantics are unchanged. Gated on an EXPLICIT `false`:
+  a key whose field is `true` or absent (old server) keeps the existing
+  always-wait abtest path, so a new SDK pointed at an old server never
+  mis-skips and silently breaks gray release / experiments.
+
+### Compatibility
+
+- **Server-first upgrade ordering (REQUIRED).** This version expects the
+  server to already emit `has_dynamic_resolution`, i.e. a server built
+  against **`api/gen/go` v0.3.0 or newer**. **Upgrade the server FIRST, then
+  this SDK.** If the field is absent (old server), the SDK safely falls back
+  to always waiting on the abtest result — functionally correct (gray release
+  / experiments keep working), just without the fast-path benefit. There is
+  no version-negotiation logic; the absent field is the only compatibility
+  signal, and the fast path is taken only on an explicit `false`, never on an
+  absent field.
+
 ## [0.5.0] - 2026-06-25
 
 ### Removed (BREAKING)
@@ -171,7 +205,8 @@ Initial public release of the Tipsy AB-config Go SDK.
 - `ExposureEvent`, `ExposureSink`, `ExposureSinkFunc`, default `logSink`
   + async `exposureEmitter` with per-process 5-min dedup.
 
-[Unreleased]: https://github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk/compare/sdk/go/tipsyabconfig/v0.5.0...HEAD
+[Unreleased]: https://github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk/compare/sdk/go/tipsyabconfig/v0.6.0...HEAD
+[0.6.0]: https://github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk/releases/tag/sdk%2Fgo%2Ftipsyabconfig%2Fv0.6.0
 [0.5.0]: https://github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk/releases/tag/sdk%2Fgo%2Ftipsyabconfig%2Fv0.5.0
 [0.3.0]: https://github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk/releases/tag/sdk%2Fgo%2Ftipsyabconfig%2Fv0.3.0
 [0.2.0]: https://github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk/releases/tag/sdk%2Fgo%2Ftipsyabconfig%2Fv0.2.0
