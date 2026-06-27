@@ -3,6 +3,7 @@ package io.github.lightspeedintelligence.abconfig;
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -240,6 +241,85 @@ final class ConfigCacheTest {
         assertTrue(cache.valueOf(NS, "flag", 999L).isEmpty(), "missing version -> empty");
         assertTrue(cache.valueOf(NS, "missing", 3L).isEmpty(), "missing key -> empty");
         assertTrue(cache.valueOf("missing-ns", "flag", 3L).isEmpty(), "missing ns -> empty");
+    }
+
+    // ---- has_dynamic_resolution tri-state (ST5) ---------------------------
+    //
+    // proto3 `optional bool has_dynamic_resolution`: the cache must surface the
+    // presence-aware tri-state so getConfig only fast-paths on an EXPLICIT false.
+    //   - field set true   -> Boolean.TRUE
+    //   - field set false  -> Boolean.FALSE
+    //   - field unset      -> null (absent / old server)
+    //   - missing key / ns -> null
+    // The null-vs-FALSE distinction is load-bearing (mis-skip guard), so these
+    // assertions use assertNull / assertSame on the boxed Boolean rather than a
+    // truthiness check.
+
+    @Test
+    void hasDynamicResolution_explicitTrue_isBooleanTrue() {
+        ConfigCache cache = new ConfigCache(new Metrics());
+        cache.applyProto(pbSnapshot(NS, 1, 0)
+                .addKeys(pbKey("color").putVersions(7L, "blue").setHasDynamicResolution(true))
+                .build());
+
+        assertSame(Boolean.TRUE, cache.hasDynamicResolution(NS, "color"),
+                "field set true must surface as Boolean.TRUE");
+    }
+
+    @Test
+    void hasDynamicResolution_explicitFalse_isBooleanFalse() {
+        ConfigCache cache = new ConfigCache(new Metrics());
+        cache.applyProto(pbSnapshot(NS, 1, 0)
+                .addKeys(pbKey("color").putVersions(7L, "blue").setHasDynamicResolution(false))
+                .build());
+
+        assertSame(Boolean.FALSE, cache.hasDynamicResolution(NS, "color"),
+                "field set false must surface as Boolean.FALSE (enables fast-path)");
+    }
+
+    @Test
+    void hasDynamicResolution_fieldAbsent_isNull() {
+        ConfigCache cache = new ConfigCache(new Metrics());
+        // pbKey never calls setHasDynamicResolution -> proto3 optional absent.
+        cache.applyProto(pbSnapshot(NS, 1, 0)
+                .addKeys(pbKey("color").putVersions(7L, "blue"))
+                .build());
+
+        assertNull(cache.hasDynamicResolution(NS, "color"),
+                "absent field (old server) must surface as null, NEVER as FALSE");
+    }
+
+    @Test
+    void hasDynamicResolution_missingKeyOrNs_isNull() {
+        ConfigCache cache = new ConfigCache(new Metrics());
+        // Empty cache: unknown ns -> null.
+        assertNull(cache.hasDynamicResolution("nope", "color"),
+                "unknown namespace must surface as null");
+
+        cache.applyProto(pbSnapshot(NS, 1, 0)
+                .addKeys(pbKey("color").putVersions(7L, "blue").setHasDynamicResolution(true))
+                .build());
+        // Known ns, unknown key -> null.
+        assertNull(cache.hasDynamicResolution(NS, "missing-key"),
+                "known ns but unknown key must surface as null");
+    }
+
+    @Test
+    void hasDynamicResolution_isReplacedOnNewerSnapshot() {
+        ConfigCache cache = new ConfigCache(new Metrics());
+        // First snapshot reports the key as dynamic (true).
+        cache.applyProto(pbSnapshot(NS, 1, 1)
+                .addKeys(pbKey("color").putVersions(7L, "blue").setHasDynamicResolution(true))
+                .build());
+        assertSame(Boolean.TRUE, cache.hasDynamicResolution(NS, "color"));
+
+        // A newer snapshot flips it to pure full-rollout (false): the cache must
+        // adopt the new flag, not retain the stale TRUE.
+        cache.applyProto(pbSnapshot(NS, 2, 1)
+                .addKeys(pbKey("color").putVersions(7L, "blue").setHasDynamicResolution(false))
+                .build());
+        assertSame(Boolean.FALSE, cache.hasDynamicResolution(NS, "color"),
+                "a newer snapshot must replace the flag (true -> false)");
     }
 
     // ---- knownSeqs --------------------------------------------------------

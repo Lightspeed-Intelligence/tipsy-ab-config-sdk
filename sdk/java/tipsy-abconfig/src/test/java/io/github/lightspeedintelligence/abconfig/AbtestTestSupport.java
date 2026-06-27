@@ -59,6 +59,14 @@ final class AbtestTestSupport implements AutoCloseable {
         final Map<String, Long> fullRelease = new java.util.LinkedHashMap<>();
         /** key -> (versionId -> value). */
         final Map<String, Map<Long, String>> versions = new java.util.LinkedHashMap<>();
+        /**
+         * key -> presence-aware {@code has_dynamic_resolution}. A key absent from
+         * this map leaves the proto field UNSET (old-server / absent semantics,
+         * which the cache mirrors as {@code null}). {@link Boolean#TRUE}/
+         * {@link Boolean#FALSE} cause {@code setHasDynamicResolution(...)} to be
+         * called with that explicit value.
+         */
+        final Map<String, Boolean> hasDynamicResolution = new java.util.LinkedHashMap<>();
 
         NsCache(long businessSeq, long experimentSeq) {
             this.businessSeq = businessSeq;
@@ -68,6 +76,21 @@ final class AbtestTestSupport implements AutoCloseable {
         NsCache key(String key, long fullReleaseVersion, Map<Long, String> versionMap) {
             fullRelease.put(key, fullReleaseVersion);
             versions.put(key, new java.util.LinkedHashMap<>(versionMap));
+            return this;
+        }
+
+        /**
+         * Sets the presence-aware {@code has_dynamic_resolution} flag for a key
+         * already added via {@link #key}. Pass {@code null} to leave the proto
+         * field unset (absent / old-server). The key must already exist so the
+         * generated snapshot carries it.
+         */
+        NsCache hasDynamicResolution(String key, Boolean flag) {
+            if (flag == null) {
+                hasDynamicResolution.remove(key);
+            } else {
+                hasDynamicResolution.put(key, flag);
+            }
             return this;
         }
 
@@ -210,6 +233,13 @@ final class AbtestTestSupport implements AutoCloseable {
             long frv = nc.fullRelease.getOrDefault(key, 0L);
             if (frv != 0L) {
                 ks.setFullReleaseVersion(frv);
+            }
+            // Presence-aware: only call the setter when the test explicitly set a
+            // flag for this key; otherwise the proto field stays absent (the cache
+            // mirrors that as null -> always-wait path).
+            Boolean hdr = nc.hasDynamicResolution.get(key);
+            if (hdr != null) {
+                ks.setHasDynamicResolution(hdr);
             }
             for (Map.Entry<Long, String> v : e.getValue().entrySet()) {
                 ks.putVersions(v.getKey(), v.getValue());
