@@ -698,10 +698,17 @@ type KeyState struct {
 	FullReleaseVersion *int64 `protobuf:"varint,2,opt,name=full_release_version,json=fullReleaseVersion,proto3,oneof" json:"full_release_version,omitempty"`
 	// version_id → value(text). Includes the full-release version (if any)
 	// plus every version that abtest reports as "possibly applicable"
-	// (active whitelist + running/paused experiment refs).
-	Versions      map[int64]string `protobuf:"bytes,3,rep,name=versions,proto3" json:"versions,omitempty" protobuf_key:"varint,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	// (active whitelist + running experiment refs).
+	Versions map[int64]string `protobuf:"bytes,3,rep,name=versions,proto3" json:"versions,omitempty" protobuf_key:"varint,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	// Whether this key has any gray-release / experiment attached (i.e. it is
+	// NOT a pure full-rollout config and needs abtest resolution). Computed by
+	// the server from possibleVersions (running experiments ∪ active whitelist).
+	// Excludes paused and custom_params experiments by construction (matches the
+	// GPV domain). The server ALWAYS sets this explicitly (including false); SDKs
+	// only skip the abtest wait when it is explicitly false.
+	HasDynamicResolution *bool `protobuf:"varint,4,opt,name=has_dynamic_resolution,json=hasDynamicResolution,proto3,oneof" json:"has_dynamic_resolution,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
 }
 
 func (x *KeyState) Reset() {
@@ -753,6 +760,13 @@ func (x *KeyState) GetVersions() map[int64]string {
 		return x.Versions
 	}
 	return nil
+}
+
+func (x *KeyState) GetHasDynamicResolution() bool {
+	if x != nil && x.HasDynamicResolution != nil {
+		return *x.HasDynamicResolution
+	}
+	return false
 }
 
 type ConfigUpdateEvent struct {
@@ -1434,15 +1448,17 @@ const file_tipsy_config_v1_config_proto_rawDesc = "" +
 	"\tnamespace\x18\x01 \x01(\tR\tnamespace\x122\n" +
 	"\x15business_snapshot_seq\x18\x02 \x01(\x03R\x13businessSnapshotSeq\x126\n" +
 	"\x17experiment_snapshot_seq\x18\x03 \x01(\x03R\x15experimentSnapshotSeq\x12-\n" +
-	"\x04keys\x18\x04 \x03(\v2\x19.tipsy.config.v1.KeyStateR\x04keys\"\xee\x01\n" +
+	"\x04keys\x18\x04 \x03(\v2\x19.tipsy.config.v1.KeyStateR\x04keys\"\xc4\x02\n" +
 	"\bKeyState\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x125\n" +
 	"\x14full_release_version\x18\x02 \x01(\x03H\x00R\x12fullReleaseVersion\x88\x01\x01\x12C\n" +
-	"\bversions\x18\x03 \x03(\v2'.tipsy.config.v1.KeyState.VersionsEntryR\bversions\x1a;\n" +
+	"\bversions\x18\x03 \x03(\v2'.tipsy.config.v1.KeyState.VersionsEntryR\bversions\x129\n" +
+	"\x16has_dynamic_resolution\x18\x04 \x01(\bH\x01R\x14hasDynamicResolution\x88\x01\x01\x1a;\n" +
 	"\rVersionsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\x03R\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01B\x17\n" +
-	"\x15_full_release_version\"`\n" +
+	"\x15_full_release_versionB\x19\n" +
+	"\x17_has_dynamic_resolution\"`\n" +
 	"\x11ConfigUpdateEvent\x12@\n" +
 	"\bsnapshot\x18\x01 \x01(\v2\".tipsy.config.v1.NamespaceSnapshotH\x00R\bsnapshotB\t\n" +
 	"\apayload\"Q\n" +
