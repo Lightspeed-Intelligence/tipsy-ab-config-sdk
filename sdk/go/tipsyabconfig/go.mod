@@ -3,7 +3,7 @@ module github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk/sdk/go/tipsyabconf
 go 1.25.0
 
 require (
-	github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk/api/gen/go v0.1.0
+	github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk/api/gen/go v0.3.0
 	github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk/sdk/go/tipsyauth v0.1.0
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/uuid v1.6.0
