@@ -408,6 +408,39 @@ class Client:
         ctx = _ensure_ctx(ctx)
         resolved_ns = self.resolve_namespace(namespace)
 
+        # has_dynamic_resolution fast path (design §3): when the server has
+        # explicitly told us this key carries NO gray release / experiment
+        # (the flag is present AND False), the abtest result cannot possibly
+        # hit it — so skip the GetExperimentResult wait entirely and go straight
+        # to the full-release/default return below. We gate on `present` so an
+        # old server (field absent ⇒ present is False) keeps the existing
+        # always-wait path and never wrongly skips abtest. A present-and-True
+        # flag also keeps the existing path.
+        hdr_value, hdr_present = self._cache.has_dynamic_resolution(
+            resolved_ns, key
+        )
+        if hdr_present and hdr_value is False:
+            logger.debug(
+                "get_config fast path (no dynamic resolution; skipping abtest)",
+                extra={"ns": resolved_ns, "key": key, "uid": ctx.user_id},
+            )
+            v = self._cache.full_release_version(resolved_ns, key)
+            if v is None:
+                return default
+            value = self._cache.value_of(resolved_ns, key, v)
+            if value is None:
+                return default
+            logger.debug(
+                "get_config hit (full, fast path)",
+                extra={
+                    "ns": resolved_ns,
+                    "key": key,
+                    "version": v,
+                    "uid": ctx.user_id,
+                },
+            )
+            return value
+
         # Per-ns memoised abtest result (at-most-once RPC per request link).
         abresult: _ComputeResult = await ctx.wait_for_abtest(resolved_ns)
 

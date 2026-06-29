@@ -497,31 +497,45 @@ public final class TipsyAbConfigClient implements AutoCloseable {
         }
         String resolvedNs = resolveNamespace(ns);
 
-        // Per-ns memoised abtest result (at-most-once RPC per request link). The
-        // result is never exceptional (F5); a per-ns RPC failure already degraded
-        // to the empty result inside resultFor.
-        AbtestComputeResult abresult = abctx.resultFor(resolvedNs);
+        // Fast-path (has_dynamic_resolution): if the server explicitly reported
+        // this key as pure full-rollout (no gray-release / experiment), the abtest
+        // result cannot possibly hit it, so skip resultFor (and its potential
+        // GetExperimentResult RPC) entirely and fall straight through to the
+        // full-release / default block. Gated on an EXPLICIT false: absent (null,
+        // old server) or true keeps the existing always-wait path, so a new SDK
+        // pointed at an old server never mis-skips and breaks gray-release. The
+        // fallback / default semantics below are identical to the slow path's
+        // full-release branch, so no behaviour is lost for a fast-path key.
+        Boolean hdr = cache.hasDynamicResolution(resolvedNs, key);
+        if (!Boolean.FALSE.equals(hdr)) {
+            // Per-ns memoised abtest result (at-most-once RPC per request link). The
+            // result is never exceptional (F5); a per-ns RPC failure already degraded
+            // to the empty result inside resultFor.
+            AbtestComputeResult abresult = abctx.resultFor(resolvedNs);
 
-        // abtest hit path: key present in config_flat_kv with a non-zero version.
-        if (abresult != null) {
-            Long abVersion = abresult.keyVersions.get(key);
-            if (abVersion != null && abVersion != 0L) {
-                Optional<String> v = cache.valueOf(resolvedNs, key, abVersion);
-                if (v.isPresent()) {
-                    LOG.debug("tipsyabconfig: get_config hit (abtest) "
-                            + "(ns={}, key={}, version={}, uid={}, trace_id={})",
-                            resolvedNs, key, abVersion, abctx.userId(), abctx.traceId());
-                    return v.get();
+            // abtest hit path: key present in config_flat_kv with a non-zero version.
+            if (abresult != null) {
+                Long abVersion = abresult.keyVersions.get(key);
+                if (abVersion != null && abVersion != 0L) {
+                    Optional<String> v = cache.valueOf(resolvedNs, key, abVersion);
+                    if (v.isPresent()) {
+                        LOG.debug("tipsyabconfig: get_config hit (abtest) "
+                                + "(ns={}, key={}, version={}, uid={}, trace_id={})",
+                                resolvedNs, key, abVersion, abctx.userId(), abctx.traceId());
+                        return v.get();
+                    }
+                    // ab→full fallback: local cache missing the ab version.
+                    metrics.abtestFallback.inc(resolvedNs);
+                    LOG.warn("tipsyabconfig: ab version missing in local cache; falling back to full "
+                            + "(ns={}, key={}, ab_version={}, trace_id={})",
+                            resolvedNs, key, abVersion, abctx.traceId());
                 }
-                // ab→full fallback: local cache missing the ab version.
-                metrics.abtestFallback.inc(resolvedNs);
-                LOG.warn("tipsyabconfig: ab version missing in local cache; falling back to full "
-                        + "(ns={}, key={}, ab_version={}, trace_id={})",
-                        resolvedNs, key, abVersion, abctx.traceId());
             }
         }
 
-        // Full-release fallback (key not in config_flat_kv, or ab→full).
+        // Full-release fallback (key not in config_flat_kv, ab→full, or
+        // has_dynamic_resolution fast-path). Shared by both the slow and fast
+        // paths: a fast-path (explicit-false) key reaches here directly.
         OptionalLong fullVersion = cache.fullReleaseVersion(resolvedNs, key);
         if (fullVersion.isEmpty()) {
             return defaultValue;

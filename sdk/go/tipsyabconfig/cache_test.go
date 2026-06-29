@@ -4,8 +4,27 @@ import (
 	"sync"
 	"testing"
 
+	"google.golang.org/protobuf/proto"
+
 	configv1 "github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk/api/gen/go/tipsy/config/v1"
 )
+
+// setHDR sets has_dynamic_resolution on the named key inside a proto snapshot
+// produced by makeSnapshot. It threads the new optional bool WITHOUT changing
+// makeSnapshot's signature (which has many existing callers): pass proto.Bool
+// for an explicit true/false, or leave the field nil to simulate an old server
+// that never set it. It fatals if the key is absent so a typo can't silently
+// produce a "field absent" snapshot and give a false-green fast-path test.
+func setHDR(t *testing.T, s *configv1.NamespaceSnapshot, key string, v *bool) {
+	t.Helper()
+	for _, k := range s.Keys {
+		if k.Key == key {
+			k.HasDynamicResolution = v
+			return
+		}
+	}
+	t.Fatalf("setHDR: key %q not found in snapshot %q", key, s.Namespace)
+}
 
 // makeSnapshot builds a proto NamespaceSnapshot for the tests.
 //   - keys: map of key -> (fullVer, versions). fullVer==0 means "unset"
@@ -247,6 +266,111 @@ func TestCache_NilSnapshotIgnored(t *testing.T) {
 	if r {
 		t.Fatal("empty namespace must be ignored")
 	}
+}
+
+// TestCache_HasDynamicResolution_PresenceSemantics asserts the accessor's
+// (val, present) contract across the four input states: no ns snapshot, missing
+// key, field absent (nil), explicit false, explicit true. present==false must
+// mean "unknown / old server" for ns-miss / key-miss / nil-field; only an
+// explicitly-set field yields present==true. This is the gate GetConfig relies
+// on to never skip abtest on an absent field.
+func TestCache_HasDynamicResolution_PresenceSemantics(t *testing.T) {
+	c := newConfigCache(newMetrics())
+
+	// No ns snapshot at all -> (false, false).
+	if val, present := c.hasDynamicResolution("ns1", "k"); val || present {
+		t.Fatalf("no-ns: got (%v,%v), want (false,false)", val, present)
+	}
+
+	pb := makeSnapshot("ns1", 1, 1, map[string]struct {
+		full     int64
+		versions map[int64]string
+	}{
+		"absent": {full: 1, versions: map[int64]string{1: "v"}}, // field left nil
+		"explF":  {full: 1, versions: map[int64]string{1: "v"}},
+		"explT":  {full: 1, versions: map[int64]string{1: "v", 2: "ab"}},
+	})
+	// absent: leave nil (default). explF -> false, explT -> true.
+	setHDR(t, pb, "explF", proto.Bool(false))
+	setHDR(t, pb, "explT", proto.Bool(true))
+	if r, _, _ := c.applyProto(pb); !r {
+		t.Fatal("apply must replace")
+	}
+
+	// Missing key in an existing ns -> (false, false).
+	if val, present := c.hasDynamicResolution("ns1", "nope"); val || present {
+		t.Fatalf("missing-key: got (%v,%v), want (false,false)", val, present)
+	}
+	// Field absent (nil) -> (false, false): "unknown / old server", NOT false.
+	if val, present := c.hasDynamicResolution("ns1", "absent"); val || present {
+		t.Fatalf("nil-field: got (%v,%v), want (false,false)", val, present)
+	}
+	// Explicit false -> (false, true).
+	if val, present := c.hasDynamicResolution("ns1", "explF"); val || !present {
+		t.Fatalf("explicit-false: got (%v,%v), want (false,true)", val, present)
+	}
+	// Explicit true -> (true, true).
+	if val, present := c.hasDynamicResolution("ns1", "explT"); !val || !present {
+		t.Fatalf("explicit-true: got (%v,%v), want (true,true)", val, present)
+	}
+}
+
+// TestCache_ApplyProto_HDRRoundTripAcrossReplace asserts applyProto preserves
+// nil-vs-&false-vs-&true presence across a snapshot replace, and that flipping
+// the field on a later snapshot (with an advancing seq) is reflected. The key
+// invariant: an ABSENT field must stay absent (present==false) after apply, so
+// the new local *bool must not be aliased to a shared pointer or defaulted to
+// false.
+func TestCache_ApplyProto_HDRRoundTripAcrossReplace(t *testing.T) {
+	c := newConfigCache(newMetrics())
+
+	mk := func(biz int64, absentV, falseV, trueV *bool) *configv1.NamespaceSnapshot {
+		pb := makeSnapshot("ns1", biz, 1, map[string]struct {
+			full     int64
+			versions map[int64]string
+		}{
+			"a": {full: 1, versions: map[int64]string{1: "v"}},
+			"f": {full: 1, versions: map[int64]string{1: "v"}},
+			"t": {full: 1, versions: map[int64]string{1: "v"}},
+		})
+		setHDR(t, pb, "a", absentV)
+		setHDR(t, pb, "f", falseV)
+		setHDR(t, pb, "t", trueV)
+		return pb
+	}
+
+	// First apply: a=absent(nil), f=false, t=true.
+	if r, _, _ := c.applyProto(mk(1, nil, proto.Bool(false), proto.Bool(true))); !r {
+		t.Fatal("first apply must replace")
+	}
+	assertHDR := func(key string, wantVal, wantPresent bool) {
+		t.Helper()
+		val, present := c.hasDynamicResolution("ns1", key)
+		if val != wantVal || present != wantPresent {
+			t.Fatalf("%s: got (%v,%v), want (%v,%v)", key, val, present, wantVal, wantPresent)
+		}
+	}
+	assertHDR("a", false, false) // absent stays absent
+	assertHDR("f", false, true)
+	assertHDR("t", true, true)
+
+	// Replace with advancing biz seq: flip f->true, t->false, a-> now explicit
+	// false. Each must round-trip independently (no pointer aliasing leak).
+	if r, _, _ := c.applyProto(mk(2, proto.Bool(false), proto.Bool(true), proto.Bool(false))); !r {
+		t.Fatal("second apply must replace")
+	}
+	assertHDR("a", false, true)
+	assertHDR("f", true, true)
+	assertHDR("t", false, true)
+
+	// Replace again, dropping the field back to absent on all three (simulating
+	// a downgrade / old server frame). Absent must once more read present==false.
+	if r, _, _ := c.applyProto(mk(3, nil, nil, nil)); !r {
+		t.Fatal("third apply must replace")
+	}
+	assertHDR("a", false, false)
+	assertHDR("f", false, false)
+	assertHDR("t", false, false)
 }
 
 func TestCache_MetricsBytesAndSeqCounters(t *testing.T) {

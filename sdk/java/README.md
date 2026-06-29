@@ -128,6 +128,17 @@ RPC。Java 无网络中间件;若自建 thread-per-request 入口想在入口层
 URL 白名单 gate 后再调用 `prefetchConfigVersionFlatKvForNamespace`**,否则会对每个
 穿过入口的请求产生大量用不上的空实验请求。
 
+**`getConfig` 快路径（`has_dynamic_resolution`,0.3.0 起）**：当服务端**显式**标记某
+key 为纯全量（`has_dynamic_resolution == false`,即该 key 未挂任何灰度/实验）时,
+`getConfig` 跳过 abtest 等待(`resultFor` 及其可能的 `GetExperimentResult` RPC),
+直接返回全量值——兜底/默认语义不变,只省掉这次必然退回全量的浪费等待。仅在**显式
+false** 时跳等;字段缺省(旧服务端)或 `true` 一律走现有等待路径,不退化。
+
+> **版本耦合(必须服务端先升级,SDK 后升级)**:本版本(0.3.0)依赖服务端已发布带
+> `has_dynamic_resolution` 字段的版本(`api/gen/go` v0.3.0+)。**先升级服务端,再升级
+> 业务侧 SDK**。若误连旧服务端(字段缺省),SDK 安全回退到「总是等 abtest」的现有
+> 行为——功能正确,仅无快路径收益。不做版本协商,字段缺省即唯一兼容信号。
+
 **命名空间解析**：显式 ns > 项目默认 ns（`Config.defaultNamespace` 覆盖环境变量
 `PROJECT_DEFAULT_NAMESPACE`）> `NamespaceRequiredException`；解析出的 ns 未订阅 →
 `NamespaceNotSubscribedException`。

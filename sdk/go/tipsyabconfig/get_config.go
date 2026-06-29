@@ -71,6 +71,16 @@ func (c *Client) getConfigResolved(ctx context.Context, abctx *AbtestContext, ns
 		return defaultValue, err
 	}
 
+	// Fast-path (design §3): the server sets has_dynamic_resolution=false on a
+	// key only when it has NO gray/experiment attached, so abtest can never hit
+	// it — skip the GetExperimentResult RPC entirely and resolve directly to the
+	// full-release/default value. We gate strictly on present && val == false:
+	// an absent field (old server) or true keeps the existing abtest path, so a
+	// new SDK against an old server never silently skips a live experiment.
+	if hdr, present := c.cache.hasDynamicResolution(resolvedNs, key); present && !hdr {
+		return c.resolveFullOrDefault(resolvedNs, key, defaultValue, abctx)
+	}
+
 	// Per-ns memoised abtest result (at-most-once RPC per request link).
 	abresult, err := abctx.resultFor(ctx, resolvedNs)
 	if err != nil {
@@ -95,6 +105,16 @@ func (c *Client) getConfigResolved(ctx context.Context, abctx *AbtestContext, ns
 	}
 
 	// Full-release fallback (M6): key not in config_flat_kv, or ab→full.
+	return c.resolveFullOrDefault(resolvedNs, key, defaultValue, abctx)
+}
+
+// resolveFullOrDefault returns the full-release value for (resolvedNs, key), or
+// defaultValue when no full-release version exists or its value is missing from
+// the cache. This is the M6 full-release/default branch shared by the abtest
+// path (key not in config_flat_kv / ab→full) and the has_dynamic_resolution
+// fast-path. It performs no abtest RPC. Semantics are identical to the original
+// inline branch; resolvedNs MUST already be resolved.
+func (c *Client) resolveFullOrDefault(resolvedNs, key, defaultValue string, abctx *AbtestContext) (string, error) {
 	fullVersion, ok := c.cache.fullReleaseVersion(resolvedNs, key)
 	if !ok {
 		return defaultValue, nil

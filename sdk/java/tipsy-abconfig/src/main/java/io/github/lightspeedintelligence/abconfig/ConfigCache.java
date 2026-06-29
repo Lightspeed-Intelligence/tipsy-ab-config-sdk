@@ -69,6 +69,34 @@ final class ConfigCache {
     }
 
     /**
+     * Returns the presence-aware {@code has_dynamic_resolution} flag for
+     * {@code (ns, key)}:
+     * <ul>
+     *   <li>{@code null} &rArr; no snapshot, no such key, or the field was absent
+     *       on the wire (old server) — the caller MUST treat this as "unknown"
+     *       and keep the always-wait abtest path.</li>
+     *   <li>{@link Boolean#FALSE} &rArr; the server explicitly reported this key
+     *       as pure full-rollout (no gray-release / experiment); the
+     *       {@code getConfig} fast-path may skip the abtest wait.</li>
+     *   <li>{@link Boolean#TRUE} &rArr; the key needs abtest resolution.</li>
+     * </ul>
+     * Mirrors the proto3 {@code optional} tri-state: {@code null} = absent,
+     * which is deliberately distinguished from an explicit {@code FALSE} so a new
+     * SDK talking to an old server never mis-skips the abtest wait.
+     */
+    Boolean hasDynamicResolution(String ns, String key) {
+        NamespaceSnapshot s = byNs.get(ns);
+        if (s == null) {
+            return null;
+        }
+        KeyState ks = s.keys.get(key);
+        if (ks == null) {
+            return null;
+        }
+        return ks.hasDynamicResolution;
+    }
+
+    /**
      * Returns the cached value for {@code (ns, key, versionId)}, or empty on a
      * cache miss. The empty string is a valid value, so callers MUST gate on
      * {@link Optional#isPresent()} rather than on the string contents.
@@ -140,7 +168,11 @@ final class ConfigCache {
             }
             byteSizeAccum += k.getKey().getBytes(UTF_8).length;
             long frv = k.hasFullReleaseVersion() ? k.getFullReleaseVersion() : 0L;
-            keys.put(k.getKey(), new KeyState(frv, Map.copyOf(versions)));
+            // Presence-aware: null when the field is absent (old server), else the
+            // explicit boolean. Only an explicit FALSE enables the getConfig
+            // fast-path; null/TRUE keep the always-wait abtest path.
+            Boolean hdr = k.hasHasDynamicResolution() ? k.getHasDynamicResolution() : null;
+            keys.put(k.getKey(), new KeyState(frv, Map.copyOf(versions), hdr));
         }
         NamespaceSnapshot candidate = new NamespaceSnapshot(ns, newBiz, newExp, Map.copyOf(keys));
         long byteSize = byteSizeAccum;

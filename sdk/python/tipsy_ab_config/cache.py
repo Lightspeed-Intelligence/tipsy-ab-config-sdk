@@ -30,10 +30,20 @@ class KeyState:
     ``full_release_version`` is ``None`` when the key has no active full
     release; ``versions`` maps version_id → value (full release version + any
     versions abtest has flagged as potentially applicable).
+
+    ``has_dynamic_resolution`` mirrors the proto ``optional bool`` field: it is
+    ``True``/``False`` when the server explicitly set it (the only signal we
+    trust), and ``None`` when the field was absent on the wire (an old server
+    that predates the field). The ``None``-vs-``False`` distinction is load
+    bearing: ``get_config`` only takes the abtest-skip fast path when the field
+    is explicitly ``False``; an absent field (``None``) keeps the existing
+    always-wait behaviour, so a new SDK pointed at an old server never wrongly
+    skips abtest and silently disables gray release / experiments.
     """
 
     full_release_version: Optional[int]
     versions: Mapping[int, str]
+    has_dynamic_resolution: Optional[bool] = None
 
 
 @dataclass(frozen=True)
@@ -87,6 +97,30 @@ class ConfigCache:
         if ks is None or ks.full_release_version is None:
             return None
         return ks.full_release_version
+
+    def has_dynamic_resolution(
+        self, namespace: str, key: str
+    ) -> Tuple[bool, bool]:
+        """Return ``(value, present)`` for ``(ns, key)``'s dynamic-resolution flag.
+
+        ``present`` is ``True`` only when the server explicitly set the proto
+        ``optional bool has_dynamic_resolution`` field for this key; ``value``
+        is then the boolean it carried. On any miss — no snapshot, no such key,
+        or the field was absent on the wire (old server) — this returns
+        ``(False, False)``.
+
+        ``get_config`` uses this to gate the abtest-skip fast path: it skips the
+        abtest wait ONLY when ``present and value is False`` (the key is known to
+        be pure-full-release). ``present is False`` (old server) keeps the
+        existing always-wait path, so the SDK never wrongly skips abtest.
+        """
+        snap = self.snapshot(namespace)
+        if snap is None:
+            return (False, False)
+        ks = snap.keys.get(key)
+        if ks is None or ks.has_dynamic_resolution is None:
+            return (False, False)
+        return (ks.has_dynamic_resolution, True)
 
     def value_of(
         self, namespace: str, key: str, version_id: int
@@ -168,13 +202,23 @@ class ConfigCache:
                     full_v: Optional[int] = int(k.full_release_version)
                 else:
                     full_v = None
+                # `optional bool has_dynamic_resolution` — preserve presence:
+                # None ⇒ field absent (old server) ⇒ get_config keeps waiting on
+                # abtest (safe default). True/False ⇒ server explicitly set it;
+                # only an explicit False unlocks the abtest-skip fast path.
+                if k.HasField("has_dynamic_resolution"):
+                    hdr: Optional[bool] = bool(k.has_dynamic_resolution)
+                else:
+                    hdr = None
                 versions: Dict[int, str] = {}
                 for vid, val in k.versions.items():
                     versions[int(vid)] = val
                     byte_size += len(val)
                 byte_size += len(k.key)
                 keys[k.key] = KeyState(
-                    full_release_version=full_v, versions=versions
+                    full_release_version=full_v,
+                    versions=versions,
+                    has_dynamic_resolution=hdr,
                 )
             self._by_ns[ns] = NamespaceSnapshot(
                 namespace=ns,

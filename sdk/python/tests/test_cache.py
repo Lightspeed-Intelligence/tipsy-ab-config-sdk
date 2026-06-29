@@ -143,3 +143,90 @@ def test_zero_to_one_triggers_business_moved() -> None:
     assert r.replaced is True
     assert r.business_moved is True
     assert r.experiment_moved is False
+
+
+# ---- has_dynamic_resolution accessor (ST4) ----
+
+
+def test_hdr_missing_namespace_returns_false_false() -> None:
+    c = ConfigCache()
+    # No snapshot at all -> (False, False).
+    assert c.has_dynamic_resolution("missing", "k") == (False, False)
+
+
+def test_hdr_missing_key_returns_false_false() -> None:
+    c = ConfigCache()
+    c.apply(
+        make_snapshot(
+            "ns1", 1, 1,
+            {"k": (1, {1: "v"})},
+            has_dynamic_resolution={"k": False},
+        )
+    )
+    # ns exists but the requested key does not -> (False, False).
+    assert c.has_dynamic_resolution("ns1", "absent-key") == (False, False)
+
+
+def test_hdr_absent_field_returns_false_false() -> None:
+    c = ConfigCache()
+    # Field left UNSET on the wire (old server): present must be False so the
+    # caller keeps the always-wait path. value defaults to False but the
+    # (value, present) contract is what matters.
+    c.apply(make_snapshot("ns1", 1, 1, {"k": (1, {1: "v"})}))
+    assert c.has_dynamic_resolution("ns1", "k") == (False, False)
+
+
+def test_hdr_explicit_false_returns_false_true() -> None:
+    c = ConfigCache()
+    c.apply(
+        make_snapshot(
+            "ns1", 1, 1,
+            {"k": (1, {1: "v"})},
+            has_dynamic_resolution={"k": False},
+        )
+    )
+    # Explicit False -> (False, True): present True unlocks the fast path.
+    assert c.has_dynamic_resolution("ns1", "k") == (False, True)
+
+
+def test_hdr_explicit_true_returns_true_true() -> None:
+    c = ConfigCache()
+    c.apply(
+        make_snapshot(
+            "ns1", 1, 1,
+            {"k": (1, {1: "v"})},
+            has_dynamic_resolution={"k": True},
+        )
+    )
+    assert c.has_dynamic_resolution("ns1", "k") == (True, True)
+
+
+def test_apply_preserves_none_vs_false_vs_true() -> None:
+    """`apply` must round-trip the three proto presence states distinctly."""
+    c = ConfigCache()
+    c.apply(
+        make_snapshot(
+            "ns1", 1, 1,
+            {
+                "absentK": (1, {1: "a"}),
+                "falseK": (2, {2: "b"}),
+                "trueK": (3, {3: "c"}),
+            },
+            has_dynamic_resolution={
+                # absentK intentionally omitted -> field UNSET (None).
+                "falseK": False,
+                "trueK": True,
+            },
+        )
+    )
+    snap = c.snapshot("ns1")
+    assert snap is not None
+    # None ⇒ field absent (old server). MUST be None, not False.
+    assert snap.keys["absentK"].has_dynamic_resolution is None
+    assert snap.keys["falseK"].has_dynamic_resolution is False
+    assert snap.keys["trueK"].has_dynamic_resolution is True
+
+    # And the accessor's (value, present) view mirrors that:
+    assert c.has_dynamic_resolution("ns1", "absentK") == (False, False)
+    assert c.has_dynamic_resolution("ns1", "falseK") == (False, True)
+    assert c.has_dynamic_resolution("ns1", "trueK") == (True, True)

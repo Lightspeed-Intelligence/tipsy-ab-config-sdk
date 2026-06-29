@@ -145,8 +145,15 @@ message KeyState {
   optional int64 full_release_version = 2;
   // version_id → value(text). Includes the full-release version (if any)
   // plus every version that abtest reports as "possibly applicable"
-  // (active whitelist + running/paused experiment refs).
+  // (active whitelist + running experiment refs).
   map<int64, string> versions = 3;
+  // Whether this key has any gray-release / experiment attached (i.e. it is
+  // NOT a pure full-rollout config and needs abtest resolution). Computed by
+  // the server from possibleVersions (running experiments ∪ active whitelist).
+  // Excludes paused and custom_params experiments by construction (matches the
+  // GPV domain). The server ALWAYS sets this explicitly (including false); SDKs
+  // only skip the abtest wait when it is explicitly false.
+  optional bool has_dynamic_resolution = 4;
 }
 
 message ConfigUpdateEvent {

@@ -8,6 +8,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-06-27
+
+### Added
+
+- **`has_dynamic_resolution` field on `KeyState`.** The full-config snapshot
+  (both the `Subscribe` push and the `PullAll` pull paths) now carries a
+  presence-aware `optional bool has_dynamic_resolution` per key: whether the key
+  has any gray-release / experiment attached (i.e. it needs abtest resolution).
+  Deserialised into the local cache with its proto `optional` tri-state preserved
+  (`null` = field absent / old server, `TRUE`/`FALSE` = explicitly set).
+
+### Changed
+
+- **`getConfig` fast-path.** When the server explicitly reports a key as pure
+  full-rollout (`has_dynamic_resolution == false`), `getConfig` now SKIPS the
+  abtest wait (`resultFor`, and its potential `GetExperimentResult` RPC) and
+  resolves straight from the full-release value. The fallback / default semantics
+  are unchanged — only the wasted RPC is removed. Gated on an EXPLICIT `false`:
+  an absent field (old server) or `true` keeps the existing always-wait path, so
+  a new SDK pointed at an old server never mis-skips and silently breaks
+  gray-release / experiments.
+
+### Compatibility
+
+- **Server-first upgrade ordering (required).** This version expects the server
+  to already emit `has_dynamic_resolution` (`api/gen/go` v0.3.0+). Upgrade the
+  server FIRST, then the business-side SDK. If the field is absent (old server),
+  the SDK safely falls back to always waiting on abtest — functionally correct,
+  just without the fast-path benefit. No version-negotiation logic; the absent
+  field is the only compatibility signal.
+
 ## [0.2.0] - 2026-06-25
 
 ### Changed
