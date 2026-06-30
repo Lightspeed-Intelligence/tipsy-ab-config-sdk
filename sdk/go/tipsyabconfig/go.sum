@@ -1,5 +1,7 @@
-github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk/api/gen/go v0.3.0 h1:D65UXzpeRiJrwqra3n8uvD07efn19Hh17MsGBYZCBg8=
-github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk/api/gen/go v0.3.0/go.mod h1:2Y544WTsGL8tORF2848VSOUkAMAIW+pbN3RXwfy+Sso=
+github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk/api/gen/go v0.4.0 h1:ij7ciKrPveiCtj7YFuqBuFJLjCSDdv7XCca0jb6iZnc=
+github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk/api/gen/go v0.4.0/go.mod h1:2Y544WTsGL8tORF2848VSOUkAMAIW+pbN3RXwfy+Sso=
+github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk/sdk/go/tipsyauth v0.1.0 h1:QpsoP2cn8LtT8LsC2in6qIRX57HWaYCcGDqK5lpCxP4=
+github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk/sdk/go/tipsyauth v0.1.0/go.mod h1:Px8oc0iNoZ7sMa/WUWFkY2M5xUKxFt6+sYInO9uJpOM=
 github.com/cespare/xxhash/v2 v2.3.0 h1:UL815xU9SqsFlibzuggzjXhog7bL6oX9BbNZnL2UFvs=
 github.com/cespare/xxhash/v2 v2.3.0/go.mod h1:VGX0DQ3Q6kWi7AoAeZDth3/j3BFtOZR5XLFGgcrjCOs=
 github.com/go-logr/logr v1.4.3 h1:CjnDlHq8ikf6E492q6eKboGOC0T8CDaOvkHCIg8idEI=
@@ -19,11 +21,13 @@ go.opentelemetry.io/auto/sdk v1.2.1/go.mod h1:KRTj+aOaElaLi+wW1kO/DZRXwkF4C5xPbE
 go.opentelemetry.io/otel v1.43.0 h1:mYIM03dnh5zfN7HautFE4ieIig9amkNANT+xcVxAj9I=
 go.opentelemetry.io/otel v1.43.0/go.mod h1:JuG+u74mvjvcm8vj8pI5XiHy1zDeoCS2LB1spIq7Ay0=
 go.opentelemetry.io/otel/metric v1.43.0 h1:d7638QeInOnuwOONPp4JAOGfbCEpYb+K6DVWvdxGzgM=
+go.opentelemetry.io/otel/metric v1.43.0/go.mod h1:RDnPtIxvqlgO8GRW18W6Z/4P462ldprJtfxHxyKd2PY=
 go.opentelemetry.io/otel/sdk v1.39.0 h1:nMLYcjVsvdui1B/4FRkwjzoRVsMK8uL/cj0OyhKzt18=
 go.opentelemetry.io/otel/sdk v1.39.0/go.mod h1:vDojkC4/jsTJsE+kh+LXYQlbL8CgrEcwmt1ENZszdJE=
 go.opentelemetry.io/otel/sdk/metric v1.39.0 h1:cXMVVFVgsIf2YL6QkRF4Urbr/aMInf+2WKg+sEJTtB8=
 go.opentelemetry.io/otel/sdk/metric v1.39.0/go.mod h1:xq9HEVH7qeX69/JnwEfp6fVq5wosJsY1mt4lLfYdVew=
 go.opentelemetry.io/otel/trace v1.43.0 h1:BkNrHpup+4k4w+ZZ86CZoHHEkohws8AY+WTX09nk+3A=
+go.opentelemetry.io/otel/trace v1.43.0/go.mod h1:/QJhyVBUUswCphDVxq+8mld+AvhXZLhe+8WVFxiFff0=
 golang.org/x/net v0.53.0 h1:d+qAbo5L0orcWAr0a9JweQpjXF19LMXJE8Ey7hwOdUA=
 golang.org/x/net v0.53.0/go.mod h1:JvMuJH7rrdiCfbeHoo3fCQU24Lf5JJwT9W3sJFulfgs=
 golang.org/x/sys v0.43.0 h1:Rlag2XtaFTxp19wS8MXlJwTvoh8ArU6ezoyFsMyCTNI=

@@ -20,6 +20,36 @@ bump first, then an SDK tag bump.
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-06-30
+
+### Added
+
+- Typed config accessors. Five per-type getter families resolve the
+  canonical string value and parse it at the edge, for both the static
+  (`GetConfigStatic*`) and dynamic (`GetConfig*`) paths:
+  `GetConfig{Bool,Int64,Float64,String,JSON}` and their `Static` variants.
+  - **Bool is lenient and never errors**: `TrimSpace` then
+    `EqualFold "true" || == "1"` ⇒ `true`, everything else ⇒ `false`.
+  - **Int64 via `strconv.ParseInt`** with no float round-trip, so values
+    `> 2^53` are returned losslessly.
+  - **JSON** unmarshals into the caller's `out` pointer.
+  - Static variants return `(T, ok)`; dynamic variants return `(T, error)`
+    and treat a resolved-but-empty value as a miss (returning the default).
+  - The value stays a canonical string end-to-end; the config's declared
+    type (`value_type`) is a console-side write contract and is **not**
+    carried on the wire, in the snapshot, or in the SDK cache. The legacy
+    string `GetConfigStatic` / `GetConfig` / `GetConfigDefault` are retained.
+
+### Changed
+
+- Pins `api/gen/go` at `v0.4.0` (drops `ConfigVersionInfo.change_note`).
+
+### Removed
+
+- `ConfigVersionInfo.change_note` is gone from the config proto
+  (`reserved 3` / `"change_note"`). Per-version change notes are no longer
+  carried; consoles display `versionNo-value` instead.
+
 ## [0.6.0] - 2026-06-27
 
 ### Added
