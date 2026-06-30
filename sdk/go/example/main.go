@@ -56,9 +56,11 @@ func main() {
 
 	mux := http.NewServeMux()
 
-	// /static — no user context; demonstrates GetConfigStatic.
+	// /static — no user context; demonstrates the typed static accessor.
+	// rerank.threshold is a double, so GetConfigStaticFloat64 returns a real
+	// float64 (no more juggling the "0.5" string default by hand).
 	mux.HandleFunc("/static", func(w http.ResponseWriter, r *http.Request) {
-		val, ok := sdk.GetConfigStatic("tipsy-chat", "rerank.threshold", "0.5")
+		val, ok := sdk.GetConfigStaticFloat64("tipsy-chat", "rerank.threshold", 0.5)
 		writeJSON(w, map[string]any{"key": "rerank.threshold", "value": val, "from_cache": ok})
 	})
 
@@ -93,7 +95,7 @@ func main() {
 	withCtx := sdk.Middleware(userProvider, tipsyabconfig.PrefetchPaths("/user"))
 	mux.Handle("/user", withCtx(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		abctx := tipsyabconfig.AbtestContextFromContext(r.Context())
-		val, err := sdk.GetConfig(r.Context(), abctx, "tipsy-chat", "rerank.threshold", "0.5")
+		val, err := sdk.GetConfigFloat64(r.Context(), abctx, "tipsy-chat", "rerank.threshold", 0.5)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -120,7 +122,7 @@ func main() {
 		abctx := sdk.NewAbtestContextWithTraceID(r.Context(), uid, map[string]any{
 			"country": r.Header.Get("X-Country"),
 		}, traceID)
-		val, err := sdk.GetConfig(r.Context(), abctx, "tipsy-chat", "rerank.threshold", "0.5")
+		val, err := sdk.GetConfigFloat64(r.Context(), abctx, "tipsy-chat", "rerank.threshold", 0.5)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return

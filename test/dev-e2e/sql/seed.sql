@@ -78,25 +78,25 @@ ON CONFLICT (id) DO UPDATE SET
 -- A.2 config_version (UNIQUE(key_id,version_no); value is the resolved string).
 -- version_no chosen = last two digits of the version_id for readability.
 -- ----------------------------------------------------------------------------
-INSERT INTO config_version (id, namespace, key_id, version_no, value, change_note, operator) VALUES
+INSERT INTO config_version (id, namespace, key_id, version_no, value, operator) VALUES
   -- welcome_text
-  (900200011, 'demo-test', 900100001, 11, 'welcome-A',    'e2e', 'e2e'),
-  (900200012, 'demo-test', 900100001, 12, 'welcome-B',    'e2e', 'e2e'),
-  (900200013, 'demo-test', 900100001, 13, 'welcome-GRAY', 'e2e', 'e2e'),
-  (900200019, 'demo-test', 900100001, 19, 'welcome-FULL', 'e2e', 'e2e'),
+  (900200011, 'demo-test', 900100001, 11, 'welcome-A',    'e2e'),
+  (900200012, 'demo-test', 900100001, 12, 'welcome-B',    'e2e'),
+  (900200013, 'demo-test', 900100001, 13, 'welcome-GRAY', 'e2e'),
+  (900200019, 'demo-test', 900100001, 19, 'welcome-FULL', 'e2e'),
   -- banner_color
-  (900200021, 'demo-test', 900100002, 21, 'red',   'e2e', 'e2e'),
-  (900200022, 'demo-test', 900100002, 22, 'blue',  'e2e', 'e2e'),
-  (900200029, 'demo-test', 900100002, 29, 'green', 'e2e', 'e2e'),
+  (900200021, 'demo-test', 900100002, 21, 'red',   'e2e'),
+  (900200022, 'demo-test', 900100002, 22, 'blue',  'e2e'),
+  (900200029, 'demo-test', 900100002, 29, 'green', 'e2e'),
   -- gap_key
-  (900200031, 'demo-test', 900100003, 31, 'gap-EXP',  'e2e', 'e2e'),
-  (900200039, 'demo-test', 900100003, 39, 'gap-FULL', 'e2e', 'e2e'),
+  (900200031, 'demo-test', 900100003, 31, 'gap-EXP',  'e2e'),
+  (900200039, 'demo-test', 900100003, 39, 'gap-FULL', 'e2e'),
   -- admit_key
-  (900200041, 'demo-test', 900100004, 41, 'admit-EXP',  'e2e', 'e2e'),
-  (900200049, 'demo-test', 900100004, 49, 'admit-FULL', 'e2e', 'e2e')
+  (900200041, 'demo-test', 900100004, 41, 'admit-EXP',  'e2e'),
+  (900200049, 'demo-test', 900100004, 49, 'admit-FULL', 'e2e')
 ON CONFLICT (id) DO UPDATE SET
   namespace = EXCLUDED.namespace, key_id = EXCLUDED.key_id, version_no = EXCLUDED.version_no,
-  value = EXCLUDED.value, change_note = EXCLUDED.change_note, operator = EXCLUDED.operator;
+  value = EXCLUDED.value, operator = EXCLUDED.operator;
 
 -- ----------------------------------------------------------------------------
 -- A.3 release_full (active full release per key; PARTIAL UNIQUE on
@@ -260,18 +260,18 @@ ON CONFLICT (id) DO UPDATE SET
 -- ----------------------------------------------------------------------------
 -- B.2 config_version.
 -- ----------------------------------------------------------------------------
-INSERT INTO config_version (id, namespace, key_id, version_no, value, change_note, operator) VALUES
+INSERT INTO config_version (id, namespace, key_id, version_no, value, operator) VALUES
   -- color
-  (900400011, 'for_dev_agent_test', 900300001, 11, 'c1',     'e2e', 'e2e'),
-  (900400012, 'for_dev_agent_test', 900300001, 12, 'c2',     'e2e', 'e2e'),
-  (900400013, 'for_dev_agent_test', 900300001, 13, 'c3',     'e2e', 'e2e'),
-  (900400019, 'for_dev_agent_test', 900300001, 19, 'c-FULL', 'e2e', 'e2e'),
+  (900400011, 'for_dev_agent_test', 900300001, 11, 'c1',     'e2e'),
+  (900400012, 'for_dev_agent_test', 900300001, 12, 'c2',     'e2e'),
+  (900400013, 'for_dev_agent_test', 900300001, 13, 'c3',     'e2e'),
+  (900400019, 'for_dev_agent_test', 900300001, 19, 'c-FULL', 'e2e'),
   -- greeting
-  (900400021, 'for_dev_agent_test', 900300002, 21, 'hi-GRAY', 'e2e', 'e2e'),
-  (900400029, 'for_dev_agent_test', 900300002, 29, 'hi-FULL', 'e2e', 'e2e')
+  (900400021, 'for_dev_agent_test', 900300002, 21, 'hi-GRAY', 'e2e'),
+  (900400029, 'for_dev_agent_test', 900300002, 29, 'hi-FULL', 'e2e')
 ON CONFLICT (id) DO UPDATE SET
   namespace = EXCLUDED.namespace, key_id = EXCLUDED.key_id, version_no = EXCLUDED.version_no,
-  value = EXCLUDED.value, change_note = EXCLUDED.change_note, operator = EXCLUDED.operator;
+  value = EXCLUDED.value, operator = EXCLUDED.operator;
 
 -- ----------------------------------------------------------------------------
 -- B.3 release_full.

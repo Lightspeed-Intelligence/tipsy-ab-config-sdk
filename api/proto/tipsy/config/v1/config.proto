@@ -192,7 +192,8 @@ message ListConfigVersionsResponse {
   message ConfigVersionInfo {
     int64  id              = 1;
     int64  version_no      = 2;
-    string change_note     = 3;
+    reserved 3;
+    reserved "change_note";
     string operator        = 4;
     int64  created_at_unix = 5;
   }

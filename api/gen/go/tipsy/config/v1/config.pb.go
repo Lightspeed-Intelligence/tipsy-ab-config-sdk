@@ -1317,7 +1317,6 @@ type ListConfigVersionsResponse_ConfigVersionInfo struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Id            int64                  `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
 	VersionNo     int64                  `protobuf:"varint,2,opt,name=version_no,json=versionNo,proto3" json:"version_no,omitempty"`
-	ChangeNote    string                 `protobuf:"bytes,3,opt,name=change_note,json=changeNote,proto3" json:"change_note,omitempty"`
 	Operator      string                 `protobuf:"bytes,4,opt,name=operator,proto3" json:"operator,omitempty"`
 	CreatedAtUnix int64                  `protobuf:"varint,5,opt,name=created_at_unix,json=createdAtUnix,proto3" json:"created_at_unix,omitempty"`
 	unknownFields protoimpl.UnknownFields
@@ -1366,13 +1365,6 @@ func (x *ListConfigVersionsResponse_ConfigVersionInfo) GetVersionNo() int64 {
 		return x.VersionNo
 	}
 	return 0
-}
-
-func (x *ListConfigVersionsResponse_ConfigVersionInfo) GetChangeNote() string {
-	if x != nil {
-		return x.ChangeNote
-	}
-	return ""
 }
 
 func (x *ListConfigVersionsResponse_ConfigVersionInfo) GetOperator() string {
@@ -1485,19 +1477,17 @@ const file_tipsy_config_v1_config_proto_rawDesc = "" +
 	"\x19ListConfigVersionsRequest\x12\x15\n" +
 	"\x06key_id\x18\x01 \x01(\x03R\x05keyId\x12\x12\n" +
 	"\x04page\x18\x02 \x01(\x05R\x04page\x12\x1b\n" +
-	"\tpage_size\x18\x03 \x01(\x05R\bpageSize\"\xc2\x02\n" +
+	"\tpage_size\x18\x03 \x01(\x05R\bpageSize\"\xb4\x02\n" +
 	"\x1aListConfigVersionsResponse\x12Y\n" +
 	"\bversions\x18\x01 \x03(\v2=.tipsy.config.v1.ListConfigVersionsResponse.ConfigVersionInfoR\bversions\x12\x1f\n" +
 	"\vtotal_count\x18\x02 \x01(\x05R\n" +
-	"totalCount\x1a\xa7\x01\n" +
+	"totalCount\x1a\x99\x01\n" +
 	"\x11ConfigVersionInfo\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x1d\n" +
 	"\n" +
-	"version_no\x18\x02 \x01(\x03R\tversionNo\x12\x1f\n" +
-	"\vchange_note\x18\x03 \x01(\tR\n" +
-	"changeNote\x12\x1a\n" +
+	"version_no\x18\x02 \x01(\x03R\tversionNo\x12\x1a\n" +
 	"\boperator\x18\x04 \x01(\tR\boperator\x12&\n" +
-	"\x0fcreated_at_unix\x18\x05 \x01(\x03R\rcreatedAtUnix\"\xc2\x01\n" +
+	"\x0fcreated_at_unix\x18\x05 \x01(\x03R\rcreatedAtUnixJ\x04\b\x03\x10\x04R\vchange_note\"\xc2\x01\n" +
 	"$NotifyBusinessNamespaceChangeRequest\x12-\n" +
 	"\x12business_namespace\x18\x01 \x01(\tR\x11businessNamespace\x12H\n" +
 	"\x1eabtest_experiment_snapshot_seq\x18\x02 \x01(\x03H\x00R\x1babtestExperimentSnapshotSeq\x88\x01\x01B!\n" +
