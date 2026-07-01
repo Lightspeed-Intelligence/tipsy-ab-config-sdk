@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
 import os
 import uuid
@@ -221,6 +222,23 @@ class _GrpcAbtestTransport:
         self, req: "abtest_pb2.GetExperimentResultRequest"
     ) -> "abtest_pb2.GetExperimentResultResponse":
         return await self._stub.GetExperimentResult(req)
+
+
+def _parse_bool_lenient(raw: str) -> bool:
+    """Lenient bool rule shared by the static and dynamic typed accessors.
+
+    Mirrors Go's ``parseBoolLenient``: after stripping surrounding whitespace,
+    ``"true"`` (case-insensitive) or ``"1"`` is ``True``; everything else —
+    including ``"false"``, ``"0"``, the empty string and arbitrary garbage — is
+    ``False``. It NEVER raises.
+
+    Write-strict / read-lenient asymmetry (by design): the console writes bool
+    via a true/false selector so stored bool values are always canonical
+    ``"true"``/``"false"``, but the SDK parses leniently so a hand-written SQL
+    ``"TRUE"``/``"1"`` is still honored. Bool parsing therefore never fails.
+    """
+    s = raw.strip()
+    return s.casefold() == "true" or s == "1"
 
 
 class Client:
@@ -497,6 +515,231 @@ class Client:
         :class:`NamespaceRequired` when no default namespace is configured.
         """
         return await self.get_config(ctx, None, key, default)
+
+    # ---- typed config accessors ----
+    #
+    # Every config value is a canonical STRING end-to-end (DB / proto / snapshot
+    # / SDK cache / wire are all string; value_type lives only on config_key as a
+    # console-side write contract and is NOT pushed to the SDK). These helpers
+    # wrap the string-returning :meth:`get_config_static` / :meth:`get_config`
+    # and parse the value at the very edge, so callers get a typed value directly
+    # (mirrors the Go SDK's ``GetConfigStaticBool`` / ``GetConfigBool`` surface
+    # and Apollo's ``getIntProperty`` / ``getBooleanProperty``). They ONLY add
+    # parsing; the cache / wire / existing string accessors are untouched.
+    #
+    # Parse rules (shared by the static and dynamic variants):
+    #   - bool  : lenient, NEVER raises (see :func:`_parse_bool_lenient`).
+    #   - long  : ``int(stripped)``. Python's ``int`` is arbitrary-precision, so
+    #     this is naturally lossless — there is no 2^53 problem that a JSON /
+    #     float64 round-trip would introduce, and no int64 clamp. A ``ValueError``
+    #     (non-numeric / float syntax) ⇒ the default.
+    #   - double: ``float(stripped)``. A ``ValueError`` ⇒ the default.
+    #   - string: the raw value verbatim.
+    #   - json  : ``json.loads(raw)``. A ``json.JSONDecodeError`` ⇒ the default.
+    #
+    # Miss handling: the static variants call ``get_config_static(ns, key, None)``
+    # and treat a ``None`` result as a miss (the cache's own signal). The dynamic
+    # variants call ``await get_config(ctx, ns, key, "")`` and treat ``""`` or
+    # ``None`` as a miss — a non-string typed value never publishes an empty
+    # string, so "" can only mean "no hit". On a miss the typed default is
+    # returned and no parse is attempted.
+    #
+    # Error propagation: only the VALUE parse errors (``ValueError`` /
+    # ``json.JSONDecodeError``) are caught and mapped to the default. The
+    # underlying accessors' own exceptions (:class:`SDKClosed`,
+    # :class:`NamespaceRequired`, :class:`NamespaceNotSubscribed`,
+    # :class:`AbtestContextMissing`, ctx cancel/deadline) are NEVER swallowed —
+    # they propagate to the caller unchanged.
+
+    # -- static (sync; wrap get_config_static; user-agnostic, no abtest RPC) --
+
+    def get_config_static_bool(
+        self, namespace: str, key: str, default: bool = False
+    ) -> bool:
+        """Full-release value for ``(ns, key)`` parsed as a ``bool``.
+
+        Synchronous; no abtest call. Returns ``default`` on a cache miss. On a
+        hit the value is parsed leniently (:func:`_parse_bool_lenient`) so bool
+        parsing never fails.
+        """
+        raw = self.get_config_static(namespace, key, None)
+        if raw is None:
+            return default
+        return _parse_bool_lenient(raw)
+
+    def get_config_static_long(
+        self, namespace: str, key: str, default: int = 0
+    ) -> int:
+        """Full-release value for ``(ns, key)`` parsed as an ``int`` (the "long").
+
+        Synchronous; no abtest call. Returns ``default`` on a cache miss OR when
+        the value fails to parse. Python's ``int`` is arbitrary-precision, so the
+        parse is lossless for values beyond 2^53 (no int64 clamp, no float
+        round-trip).
+        """
+        raw = self.get_config_static(namespace, key, None)
+        if raw is None:
+            return default
+        try:
+            return int(raw.strip())
+        except ValueError:
+            return default
+
+    def get_config_static_double(
+        self, namespace: str, key: str, default: float = 0.0
+    ) -> float:
+        """Full-release value for ``(ns, key)`` parsed as a ``float``.
+
+        Synchronous; no abtest call. Returns ``default`` on a cache miss OR when
+        the value fails to parse.
+        """
+        raw = self.get_config_static(namespace, key, None)
+        if raw is None:
+            return default
+        try:
+            return float(raw.strip())
+        except ValueError:
+            return default
+
+    def get_config_static_string(
+        self, namespace: str, key: str, default: str = ""
+    ) -> str:
+        """Full-release value for ``(ns, key)`` as a ``str``.
+
+        Synchronous; no abtest call. The symmetry-named typed counterpart of
+        :meth:`get_config_static`. Returns ``default`` on a cache miss; a
+        genuinely empty string value is preserved (the static path uses the
+        cache's own miss signal, not a ``raw == ""`` heuristic).
+        """
+        raw = self.get_config_static(namespace, key, None)
+        if raw is None:
+            return default
+        return raw
+
+    def get_config_static_json(
+        self, namespace: str, key: str, default: Any = None
+    ) -> Any:
+        """Full-release value for ``(ns, key)`` parsed via :func:`json.loads`.
+
+        Synchronous; no abtest call. Returns the parsed JSON object (``dict`` /
+        ``list`` / scalar). Returns ``default`` on a cache miss OR when the value
+        fails to parse as JSON.
+        """
+        raw = self.get_config_static(namespace, key, None)
+        if raw is None:
+            return default
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            return default
+
+    # -- dynamic (async; wrap get_config; user-scoped, honor abtest resolution) --
+
+    async def get_config_bool(
+        self,
+        ctx: Optional[AbtestContext],
+        namespace: Optional[str],
+        key: str,
+        default: bool = False,
+    ) -> bool:
+        """Resolve dynamic ``(ns, key)`` for the user and parse it as a ``bool``.
+
+        Honors abtest resolution exactly like :meth:`get_config`. Returns
+        ``default`` on a miss (resolved value ``""`` or ``None``); on a hit the
+        value is parsed leniently (:func:`_parse_bool_lenient`) so bool parsing
+        never fails. The underlying ns / ctx exceptions propagate unchanged.
+        """
+        raw = await self.get_config(ctx, namespace, key, "")
+        if not raw:
+            return default
+        return _parse_bool_lenient(raw)
+
+    async def get_config_long(
+        self,
+        ctx: Optional[AbtestContext],
+        namespace: Optional[str],
+        key: str,
+        default: int = 0,
+    ) -> int:
+        """Resolve dynamic ``(ns, key)`` for the user and parse it as an ``int``.
+
+        Honors abtest resolution exactly like :meth:`get_config`. Returns
+        ``default`` on a miss OR when the value fails to parse. Python's ``int``
+        is arbitrary-precision so the parse is lossless beyond 2^53. The
+        underlying ns / ctx exceptions propagate unchanged.
+        """
+        raw = await self.get_config(ctx, namespace, key, "")
+        if not raw:
+            return default
+        try:
+            return int(raw.strip())
+        except ValueError:
+            return default
+
+    async def get_config_double(
+        self,
+        ctx: Optional[AbtestContext],
+        namespace: Optional[str],
+        key: str,
+        default: float = 0.0,
+    ) -> float:
+        """Resolve dynamic ``(ns, key)`` for the user and parse it as a ``float``.
+
+        Honors abtest resolution exactly like :meth:`get_config`. Returns
+        ``default`` on a miss OR when the value fails to parse. The underlying
+        ns / ctx exceptions propagate unchanged.
+        """
+        raw = await self.get_config(ctx, namespace, key, "")
+        if not raw:
+            return default
+        try:
+            return float(raw.strip())
+        except ValueError:
+            return default
+
+    async def get_config_string(
+        self,
+        ctx: Optional[AbtestContext],
+        namespace: Optional[str],
+        key: str,
+        default: str = "",
+    ) -> str:
+        """Resolve dynamic ``(ns, key)`` for the user and return it as a ``str``.
+
+        The symmetry-named typed counterpart of :meth:`get_config`. Honors abtest
+        resolution. Returns ``default`` on a miss; a resolved-but-empty value
+        (``""``) is treated as a miss because the dynamic path has no separate
+        miss signal (non-string typed values never publish ``""``). Use the
+        static :meth:`get_config_static_string` when you must distinguish a
+        genuinely empty string value from a miss. The underlying ns / ctx
+        exceptions propagate unchanged.
+        """
+        raw = await self.get_config(ctx, namespace, key, "")
+        if not raw:
+            return default
+        return raw
+
+    async def get_config_json(
+        self,
+        ctx: Optional[AbtestContext],
+        namespace: Optional[str],
+        key: str,
+        default: Any = None,
+    ) -> Any:
+        """Resolve dynamic ``(ns, key)`` for the user and parse via :func:`json.loads`.
+
+        Honors abtest resolution exactly like :meth:`get_config`. Returns the
+        parsed JSON object (``dict`` / ``list`` / scalar). Returns ``default`` on
+        a miss OR when the value fails to parse as JSON. The underlying ns / ctx
+        exceptions propagate unchanged.
+        """
+        raw = await self.get_config(ctx, namespace, key, "")
+        if not raw:
+            return default
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            return default
 
     # ---- AbtestContext factory ----
 

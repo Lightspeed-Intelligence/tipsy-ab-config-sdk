@@ -8,6 +8,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-06-30
+
+### Added
+
+- Typed config accessors, mirroring the Go SDK's v0.7.0 surface. Static
+  (sync, cache-only) and dynamic (async, abtest-resolved) variants for each
+  scalar type plus JSON:
+  - Static: `get_config_static_bool/long/double/string/json(namespace, key,
+    default=...)`.
+  - Dynamic: `async get_config_bool/long/double/string/json(ctx, namespace,
+    key, default=...)`.
+  - **Bool is lenient and never raises**: the stripped value casefold-equal to
+    `"true"` or equal to `"1"` ⇒ `True`, everything else ⇒ `False`. The console
+    writes canonical `true`/`false`, so the write-strict / read-lenient
+    asymmetry is deliberate.
+  - **Long uses `int(str)`**, which is arbitrary-precision in Python, so values
+    beyond 2^53 are lossless.
+  - Miss and value-parse failure both fall back to the supplied default; the
+    underlying `get_config` exceptions (`SDKClosed` / `NamespaceRequired` /
+    `NamespaceNotSubscribed` / abtest-context) still propagate — only
+    `ValueError` / `json.JSONDecodeError` from parsing are swallowed.
+  - The config value stays a canonical string end-to-end; the declared
+    `value_type` is a console-side write contract and is not carried to the SDK.
+
 ## [0.8.0] - 2026-07-01
 
 ### Changed (BREAKING)

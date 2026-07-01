@@ -1,5 +1,7 @@
 package io.github.lightspeedintelligence.abconfig;
 
+import com.google.gson.Gson;
+import com.google.gson.JsonSyntaxException;
 import io.grpc.ManagedChannel;
 import io.github.lightspeedintelligence.abconfig.proto.abtest.v1.AbtestServiceGrpc;
 import io.github.lightspeedintelligence.abconfig.proto.abtest.v1.GetExperimentResultRequest;
@@ -11,6 +13,7 @@ import io.github.lightspeedintelligence.abconfig.proto.config.v1.PullAllRequest;
 import io.github.lightspeedintelligence.abconfig.proto.config.v1.PullAllResponse;
 import io.github.lightspeedintelligence.abconfig.proto.config.v1.SubscribeRequest;
 import java.net.http.HttpClient;
+import java.lang.reflect.Type;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -54,6 +57,14 @@ import org.slf4j.LoggerFactory;
 public final class TipsyAbConfigClient implements AutoCloseable {
 
     private static final Logger LOG = LoggerFactory.getLogger(TipsyAbConfigClient.class);
+
+    /**
+     * Shared, thread-safe {@link Gson} used by the JSON typed accessors
+     * ({@link #getConfigStaticJson}/{@link #getConfigJson}). A single instance is
+     * reused rather than constructed per call: {@code Gson} is immutable and
+     * documented safe for concurrent use.
+     */
+    private static final Gson GSON = new Gson();
 
     /**
      * Environment variable read once at {@code create} to discover the project
@@ -558,6 +569,333 @@ public final class TipsyAbConfigClient implements AutoCloseable {
      */
     public String getConfigDefault(AbtestContext abctx, String key, String defaultValue) {
         return getConfig(abctx, "", key, defaultValue);
+    }
+
+    // ------------------------------------------------------------------
+    // Typed accessors.
+    //
+    // The platform stores every config value as a canonical string end-to-end
+    // (DB / proto / snapshot / SDK cache / wire are all string; value_type lives
+    // only on config_key as a console-side write contract and is NOT pushed to
+    // the SDK). These helpers wrap the string-returning getConfigStatic /
+    // getConfig and parse the value at the very edge, so callers get a typed
+    // value directly (mirrors Apollo's getIntProperty / getBooleanProperty and
+    // the Go SDK's GetConfig*Bool/Int64/Float64/JSON surface).
+    //
+    // API shape (Java idiom): both the static and dynamic forms take a typed
+    // default and return the primitive/typed value. A miss OR a parse failure
+    // yields the default; these accessors never throw for a bad value. (This is
+    // intentionally different from the Go static (T, ok) shape — Java callers
+    // get one consistent default-based surface. The underlying getConfig may
+    // still throw its own exceptions — SdkClosedException,
+    // AbtestContextMissingException, NamespaceRequiredException,
+    // NamespaceNotSubscribedException — and those propagate unchanged.)
+    //
+    // Read/write asymmetry (by design): the console writes bool via a true/false
+    // selector so stored bool values are always canonical "true"/"false", but
+    // the SDK parses bool leniently to tolerate any source (e.g. a hand-written
+    // SQL "TRUE"/"1"). Bool parsing therefore never fails.
+    //
+    // int64 precision: long values stay strings the whole way and are parsed
+    // once here with Long.parseLong(trimmed) straight to a long — no JSON/double
+    // round-trip — so values beyond 2^53 are lossless.
+    // ------------------------------------------------------------------
+
+    /**
+     * Lenient bool rule shared by the static and dynamic bool accessors. After
+     * trimming surrounding whitespace, {@code "true"} (case-insensitive) or
+     * {@code "1"} is {@code true}; everything else — including {@code "false"},
+     * {@code "0"}, the empty string and arbitrary garbage — is {@code false}. It
+     * never throws.
+     */
+    private static boolean parseBoolLenient(String raw) {
+        String s = raw.strip();
+        return s.equalsIgnoreCase("true") || s.equals("1");
+    }
+
+    // ---- Static typed accessors (wrap getConfigStatic; no abtest RPC) -------
+    //
+    // getConfigStatic returns Optional<String>: a hit is Optional.of(value) (the
+    // empty string is a valid value), a miss is Optional.empty(). These use that
+    // presence to distinguish a hit from a miss — NOT a raw=="" heuristic.
+
+    /**
+     * Returns the full-release value for {@code (ns, key)} parsed as a bool. A
+     * cache miss returns {@code def}; a hit returns the leniently-parsed value
+     * (see {@link #parseBoolLenient}), which never fails.
+     *
+     * @param ns  the namespace (no resolution applied, like {@link #getConfigStatic})
+     * @param key the config key
+     * @param def the value returned on a cache miss
+     * @return the parsed bool, or {@code def} on a miss
+     */
+    public boolean getConfigStaticBool(String ns, String key, boolean def) {
+        Optional<String> raw = getConfigStatic(ns, key);
+        if (raw.isEmpty()) {
+            return def;
+        }
+        return parseBoolLenient(raw.get());
+    }
+
+    /**
+     * Returns the full-release value for {@code (ns, key)} parsed as a long via
+     * {@link Long#parseLong(String)} on the trimmed value (base 10, lossless — no
+     * double round-trip, so values beyond 2^53 survive). A cache miss OR a parse
+     * failure returns {@code def}.
+     *
+     * @param ns  the namespace (no resolution applied)
+     * @param key the config key
+     * @param def the value returned on a miss or parse failure
+     * @return the parsed long, or {@code def}
+     */
+    public long getConfigStaticLong(String ns, String key, long def) {
+        Optional<String> raw = getConfigStatic(ns, key);
+        if (raw.isEmpty()) {
+            return def;
+        }
+        try {
+            return Long.parseLong(raw.get().strip());
+        } catch (NumberFormatException e) {
+            return def;
+        }
+    }
+
+    /**
+     * Returns the full-release value for {@code (ns, key)} parsed as a double via
+     * {@link Double#parseDouble(String)} on the trimmed value. A cache miss OR a
+     * parse failure returns {@code def}.
+     *
+     * @param ns  the namespace (no resolution applied)
+     * @param key the config key
+     * @param def the value returned on a miss or parse failure
+     * @return the parsed double, or {@code def}
+     */
+    public double getConfigStaticDouble(String ns, String key, double def) {
+        Optional<String> raw = getConfigStatic(ns, key);
+        if (raw.isEmpty()) {
+            return def;
+        }
+        try {
+            return Double.parseDouble(raw.get().strip());
+        } catch (NumberFormatException e) {
+            return def;
+        }
+    }
+
+    /**
+     * The symmetry-named counterpart of {@link #getConfigStatic} that takes a
+     * default: returns the raw full-release value for {@code (ns, key)}, or
+     * {@code def} on a cache miss. The empty string is a valid hit (returned as
+     * {@code ""}, not {@code def}).
+     *
+     * @param ns  the namespace (no resolution applied)
+     * @param key the config key
+     * @param def the value returned on a miss
+     * @return the raw value, or {@code def} on a miss
+     */
+    public String getConfigStaticString(String ns, String key, String def) {
+        return getConfigStatic(ns, key).orElse(def);
+    }
+
+    /**
+     * Deserializes the full-release value for {@code (ns, key)} into {@code type}
+     * with Gson. A cache miss OR a deserialize failure returns {@code def}; a hit
+     * that parses cleanly returns the deserialized object.
+     *
+     * @param ns   the namespace (no resolution applied)
+     * @param key  the config key
+     * @param type the target class to deserialize into
+     * @param def  the value returned on a miss or deserialize failure
+     * @param <T>  the deserialized type
+     * @return the deserialized object, or {@code def}
+     */
+    public <T> T getConfigStaticJson(String ns, String key, Class<T> type, T def) {
+        Optional<String> raw = getConfigStatic(ns, key);
+        if (raw.isEmpty()) {
+            return def;
+        }
+        try {
+            T v = GSON.fromJson(raw.get(), type);
+            return v == null ? def : v;
+        } catch (JsonSyntaxException e) {
+            return def;
+        }
+    }
+
+    /**
+     * Generic/collection form of {@link #getConfigStaticJson(String, String,
+     * Class, Object)}: deserializes the full-release value into an arbitrary
+     * {@link Type} (typically obtained from a Gson {@code TypeToken}, e.g.
+     * {@code new TypeToken<List<Foo>>(){}.getType()}). A cache miss OR a
+     * deserialize failure returns {@code def}.
+     *
+     * @param ns   the namespace (no resolution applied)
+     * @param key  the config key
+     * @param type the target {@link Type} to deserialize into
+     * @param def  the value returned on a miss or deserialize failure
+     * @param <T>  the deserialized type
+     * @return the deserialized object, or {@code def}
+     */
+    public <T> T getConfigStaticJson(String ns, String key, Type type, T def) {
+        Optional<String> raw = getConfigStatic(ns, key);
+        if (raw.isEmpty()) {
+            return def;
+        }
+        try {
+            T v = GSON.fromJson(raw.get(), type);
+            return v == null ? def : v;
+        } catch (JsonSyntaxException e) {
+            return def;
+        }
+    }
+
+    // ---- Dynamic typed accessors (wrap getConfig; honor abtest resolution) --
+    //
+    // These wrap getConfig(abctx, ns, key, "") — the underlying resolver returns
+    // the "" default only when neither an abtest hit nor a full-release version
+    // exists. A resolved-but-empty value ("") is therefore treated as a miss and
+    // yields def, because non-string types never publish an empty value (this
+    // mirrors the Go dynamic accessors' raw=="" ⇒ miss rule). Underlying
+    // exceptions from getConfig (closed / null abctx / ns errors) propagate.
+
+    /**
+     * Resolves the dynamic config {@code (ns, key)} for the user and parses the
+     * value as a bool. A miss (no hit / no full release, or a resolved-but-empty
+     * value) returns {@code def}; otherwise the value is parsed leniently (see
+     * {@link #parseBoolLenient}), which never fails.
+     *
+     * @param abctx the per-request abtest context
+     * @param ns    the namespace (resolved like {@link #getConfig})
+     * @param key   the config key
+     * @param def   the value returned on a miss
+     * @return the parsed bool, or {@code def}
+     */
+    public boolean getConfigBool(AbtestContext abctx, String ns, String key, boolean def) {
+        String raw = getConfig(abctx, ns, key, "");
+        if (raw.isEmpty()) {
+            return def;
+        }
+        return parseBoolLenient(raw);
+    }
+
+    /**
+     * Resolves the dynamic config {@code (ns, key)} for the user and parses the
+     * value as a long via {@link Long#parseLong(String)} on the trimmed value
+     * (base 10, lossless). A miss (including a resolved-but-empty value) OR a
+     * parse failure returns {@code def}.
+     *
+     * @param abctx the per-request abtest context
+     * @param ns    the namespace (resolved like {@link #getConfig})
+     * @param key   the config key
+     * @param def   the value returned on a miss or parse failure
+     * @return the parsed long, or {@code def}
+     */
+    public long getConfigLong(AbtestContext abctx, String ns, String key, long def) {
+        String raw = getConfig(abctx, ns, key, "");
+        if (raw.isEmpty()) {
+            return def;
+        }
+        try {
+            return Long.parseLong(raw.strip());
+        } catch (NumberFormatException e) {
+            return def;
+        }
+    }
+
+    /**
+     * Resolves the dynamic config {@code (ns, key)} for the user and parses the
+     * value as a double via {@link Double#parseDouble(String)} on the trimmed
+     * value. A miss (including a resolved-but-empty value) OR a parse failure
+     * returns {@code def}.
+     *
+     * @param abctx the per-request abtest context
+     * @param ns    the namespace (resolved like {@link #getConfig})
+     * @param key   the config key
+     * @param def   the value returned on a miss or parse failure
+     * @return the parsed double, or {@code def}
+     */
+    public double getConfigDouble(AbtestContext abctx, String ns, String key, double def) {
+        String raw = getConfig(abctx, ns, key, "");
+        if (raw.isEmpty()) {
+            return def;
+        }
+        try {
+            return Double.parseDouble(raw.strip());
+        } catch (NumberFormatException e) {
+            return def;
+        }
+    }
+
+    /**
+     * The symmetry-named counterpart of {@link #getConfig} that treats an empty
+     * resolution as a miss: resolves {@code (ns, key)} for the user and returns
+     * the raw value, or {@code def} when the resolved value is {@code ""} (no hit
+     * / no full release, or a genuinely-empty value). Callers that must
+     * distinguish a genuinely-empty string value from a miss should use
+     * {@link #getConfigStaticString} instead.
+     *
+     * @param abctx the per-request abtest context
+     * @param ns    the namespace (resolved like {@link #getConfig})
+     * @param key   the config key
+     * @param def   the value returned on an empty resolution
+     * @return the raw value, or {@code def}
+     */
+    public String getConfigString(AbtestContext abctx, String ns, String key, String def) {
+        String raw = getConfig(abctx, ns, key, "");
+        return raw.isEmpty() ? def : raw;
+    }
+
+    /**
+     * Resolves the dynamic config {@code (ns, key)} for the user and deserializes
+     * the value into {@code type} with Gson. A miss (including a
+     * resolved-but-empty value) OR a deserialize failure returns {@code def}.
+     *
+     * @param abctx the per-request abtest context
+     * @param ns    the namespace (resolved like {@link #getConfig})
+     * @param key   the config key
+     * @param type  the target class to deserialize into
+     * @param def   the value returned on a miss or deserialize failure
+     * @param <T>   the deserialized type
+     * @return the deserialized object, or {@code def}
+     */
+    public <T> T getConfigJson(AbtestContext abctx, String ns, String key, Class<T> type, T def) {
+        String raw = getConfig(abctx, ns, key, "");
+        if (raw.isEmpty()) {
+            return def;
+        }
+        try {
+            T v = GSON.fromJson(raw, type);
+            return v == null ? def : v;
+        } catch (JsonSyntaxException e) {
+            return def;
+        }
+    }
+
+    /**
+     * Generic/collection form of {@link #getConfigJson(AbtestContext, String,
+     * String, Class, Object)}: deserializes the resolved value into an arbitrary
+     * {@link Type} (typically from a Gson {@code TypeToken}). A miss (including a
+     * resolved-but-empty value) OR a deserialize failure returns {@code def}.
+     *
+     * @param abctx the per-request abtest context
+     * @param ns    the namespace (resolved like {@link #getConfig})
+     * @param key   the config key
+     * @param type  the target {@link Type} to deserialize into
+     * @param def   the value returned on a miss or deserialize failure
+     * @param <T>   the deserialized type
+     * @return the deserialized object, or {@code def}
+     */
+    public <T> T getConfigJson(AbtestContext abctx, String ns, String key, Type type, T def) {
+        String raw = getConfig(abctx, ns, key, "");
+        if (raw.isEmpty()) {
+            return def;
+        }
+        try {
+            T v = GSON.fromJson(raw, type);
+            return v == null ? def : v;
+        } catch (JsonSyntaxException e) {
+            return def;
+        }
     }
 
     /**

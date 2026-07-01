@@ -8,6 +8,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-06-30
+
+### Added
+
+- Typed config accessors, mirroring the Go SDK's v0.7.0 surface. Static
+  (cache-only) and dynamic (abtest-resolved) variants for each scalar type
+  plus JSON:
+  - Static: `getConfigStaticBool/Long/Double/String(ns, key, def)` and
+    `getConfigStaticJson(ns, key, Class<T>|Type, def)`.
+  - Dynamic: `getConfigBool/Long/Double/String(abctx, ns, key, def)` and
+    `getConfigJson(abctx, ns, key, Class<T>|Type, def)`.
+  - **Bool is lenient and never throws**: the trimmed value equal
+    (case-insensitively) to `"true"` or equal to `"1"` ⇒ `true`, everything
+    else ⇒ `false`. The console writes canonical `true`/`false`, so the
+    write-strict / read-lenient asymmetry is deliberate.
+  - **Long is parsed with `Long.parseLong`** (no double round-trip), so values
+    beyond 2^53 are lossless.
+  - Miss and value-parse failure both fall back to the supplied default; the
+    underlying `getConfig` exceptions (client-closed / namespace /
+    abtest-context) still propagate — only value-parse failures are swallowed.
+    JSON uses the Gson already on the classpath via `protobuf-java-util`; no
+    new dependency.
+  - The config value stays a canonical string end-to-end; the declared
+    `value_type` is a console-side write contract and is not carried to the SDK.
+
 ## [0.4.0] - 2026-07-01
 
 ### Changed (BREAKING)
