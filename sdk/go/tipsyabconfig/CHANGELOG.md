@@ -20,6 +20,8 @@ bump first, then an SDK tag bump.
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-07-01
+
 ### Changed (BREAKING)
 
 - **`GetExperimentResultResponse.gray_hits` is now grouped per gray release.**
@@ -32,6 +34,8 @@ bump first, then an SDK tag bump.
   `gray_hits[i].GetVersionId()`. No backward compatibility — the old flat
   fields are gone. The int64 values remain versionId (config_version PRIMARY
   KEY id, globally unique), never the semantic version_no.
+- Requires `api/gen/go` v0.5.0 (grouped `GrayReleaseHit` +
+  `ConfigService.GetConfigVersionNos`).
 
 ## [0.7.0] - 2026-06-30
 
