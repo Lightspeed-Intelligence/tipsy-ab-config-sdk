@@ -53,6 +53,14 @@ service ConfigService {
   rpc ListConfigVersions(ListConfigVersionsRequest)
       returns (ListConfigVersionsResponse);
 
+  // GetConfigVersionNos maps config_version PRIMARY KEY ids (versionId,
+  // globally unique) → the per-key semantic version_no. Internal abtest↔config
+  // RPC for telemetry enrichment ONLY (打点上报). NOT a business read path —
+  // version_no never appears on any SDK/business wire response. Missing/unknown
+  // version_ids are simply absent from the response map (caller emits -1).
+  rpc GetConfigVersionNos(GetConfigVersionNosRequest)
+      returns (GetConfigVersionNosResponse);
+
   // NotifyBusinessNamespaceChange is invoked by abtest after every write
   // that may change "possible versions" for that ns (start / pause / resume
   // / complete / archive / new whitelist / whitelist offline). It is
@@ -141,11 +149,15 @@ message NamespaceSnapshot {
 message KeyState {
   string key = 1;
   // Active full-release version id, if any. Optional because a key may
-  // have config_version rows but no active release.
+  // have config_version rows but no active release. This int64 is the
+  // versionId (config_version PRIMARY KEY id, globally unique) — NOT the
+  // per-key semantic version_no.
   optional int64 full_release_version = 2;
   // version_id → value(text). Includes the full-release version (if any)
   // plus every version that abtest reports as "possibly applicable"
-  // (active whitelist + running experiment refs).
+  // (active whitelist + running experiment refs). The int64 map key is the
+  // versionId (config_version PRIMARY KEY id, globally unique) — NOT the
+  // per-key semantic version_no.
   map<int64, string> versions = 3;
   // Whether this key has any gray-release / experiment attached (i.e. it is
   // NOT a pure full-rollout config and needs abtest resolution). Computed by
@@ -199,6 +211,12 @@ message ListConfigVersionsResponse {
   }
   repeated ConfigVersionInfo versions = 1;
   int32 total_count = 2;
+}
+
+message GetConfigVersionNosRequest  { repeated int64 version_ids = 1; }
+message GetConfigVersionNosResponse {
+  // version_id → version_no. Absent id ⇒ unresolved (caller emits -1).
+  map<int64, int64> version_nos = 1;
 }
 
 message NotifyBusinessNamespaceChangeRequest {

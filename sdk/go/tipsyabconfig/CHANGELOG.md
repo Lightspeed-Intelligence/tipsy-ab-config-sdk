@@ -20,6 +20,19 @@ bump first, then an SDK tag bump.
 
 ## [Unreleased]
 
+### Changed (BREAKING)
+
+- **`GetExperimentResultResponse.gray_hits` is now grouped per gray release.**
+  `GrayReleaseHit` changed from the flat `{release_id, key, version_id}` (one
+  entry per `(release, key)`) to `{release_id, map<string,int64> key_versions}`
+  (one entry per hit `release_id`; `key_versions` maps each `config_key.key`
+  name → versionId). This aligns `gray_hits` with
+  `ExperimentGroupResult.params_versions`. Read a single key's target via
+  `gray_hits[i].GetKeyVersions()[keyName]` instead of the removed
+  `gray_hits[i].GetVersionId()`. No backward compatibility — the old flat
+  fields are gone. The int64 values remain versionId (config_version PRIMARY
+  KEY id, globally unique), never the semantic version_no.
+
 ## [0.7.0] - 2026-06-30
 
 ### Added

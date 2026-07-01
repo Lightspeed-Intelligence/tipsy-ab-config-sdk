@@ -629,19 +629,17 @@ async def test_http_get_experiment_result_exposures_round_trip(recorder):
 
 
 async def test_http_get_experiment_result_gray_hits_round_trip(recorder):
-    """New `gray_hits` field (D2) round-trips through the HTTP transport.
+    """Grouped `gray_hits` field (D1/D2) round-trips through the HTTP transport.
 
     Mirrors the Go-side
     transport_http_test.go::TestHTTP_GetExperimentResult_GrayHitsRoundTrip:
-    mock server塞一条 GrayReleaseHit; verify the SDK observes it via
-    response.gray_hits after the publicread protojson decode.
+    mock server塞一条 grouped GrayReleaseHit (release_id=7, key_versions={"k": 99});
+    verify the SDK observes its key_versions map via response.gray_hits after
+    the publicread protojson decode.
     """
     recorder.set_pull_snapshot(make_snapshot("ns1", 1, 1, {"k": (1, {1: "full"})}))
     resp = make_exp_result({"k": 99})
-    hit = resp.gray_hits.add()
-    hit.release_id = 7
-    hit.key = "k"
-    hit.version_id = 99
+    resp.gray_hits.add(release_id=7, key_versions={"k": 99})
     recorder.set_abtest_response(resp)
     cli = await init(http_config(recorder, pull_interval=10.0))
     try:
@@ -650,8 +648,8 @@ async def test_http_get_experiment_result_gray_hits_round_trip(recorder):
             f"expected 1 gray_hit; got {list(out.gray_hits)!r}"
         )
         assert out.gray_hits[0].release_id == 7
-        assert out.gray_hits[0].key == "k"
-        assert out.gray_hits[0].version_id == 99
+        assert dict(out.gray_hits[0].key_versions) == {"k": 99}
+        assert out.gray_hits[0].key_versions["k"] == 99
     finally:
         await cli.aclose()
 

@@ -109,7 +109,7 @@ TIPSY_TOKEN=... CONFIG_ADDR=grpcs://config.example.com:443 \
 | `getConfigStatic(ns, key) → Optional<String>` | 纯全量缓存读，**不**做 ns 解析、不抛 ns 异常；空串是合法命中值，未命中返回 `Optional.empty()`。 |
 | `getConfig(abctx, ns, key, default)` | 按用户解析动态配置；优先级 abtest 命中 > 全量 > 默认；单 ns abtest 失败静默降级到全量。 |
 | `getConfigDefault(abctx, key, default)` | `getConfig` 的 ns-可省形式（ns 取项目默认）。 |
-| `getExperimentResult(ExperimentResultRequest)` | 直通 `AbtestService.GetExperimentResult`，返回原始 proto 响应（读 `config_flat_kv` / `custom_flat_kv` / `groups` / `gray_hits`）。 |
+| `getExperimentResult(ExperimentResultRequest)` | 直通 `AbtestService.GetExperimentResult`，返回原始 proto 响应（读 `config_flat_kv` / `custom_flat_kv` / `groups` / `gray_hits`）。**破坏性变更**：`gray_hits` 已从平铺的 `{release_id, key, version_id}`（每个 `(release, key)` 一条）改为按 release 分组的 `{release_id, key_versions}`（每个命中 release 一条，`key_versions` 为 `config_key.key 名 → versionId` 的 map），对齐 `groups[].params_versions`；读某 key 用 `getKeyVersionsMap().get(keyName)`。所有 int64 版本值为 versionId（主键 id 全局唯一），非语义 version_no。 |
 
 `AbtestContext` 工厂：`newAbtestContext(uid, attrs)` / `(…, traceId)` /
 `emptyAbtestContext()`（无用户身份的路径，永不发 RPC）。读访问器 `userId()` /

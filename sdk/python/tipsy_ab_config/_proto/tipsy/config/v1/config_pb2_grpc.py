@@ -76,6 +76,11 @@ class ConfigServiceStub(object):
                 request_serializer=tipsy_dot_config_dot_v1_dot_config__pb2.ListConfigVersionsRequest.SerializeToString,
                 response_deserializer=tipsy_dot_config_dot_v1_dot_config__pb2.ListConfigVersionsResponse.FromString,
                 _registered_method=True)
+        self.GetConfigVersionNos = channel.unary_unary(
+                '/tipsy.config.v1.ConfigService/GetConfigVersionNos',
+                request_serializer=tipsy_dot_config_dot_v1_dot_config__pb2.GetConfigVersionNosRequest.SerializeToString,
+                response_deserializer=tipsy_dot_config_dot_v1_dot_config__pb2.GetConfigVersionNosResponse.FromString,
+                _registered_method=True)
         self.NotifyBusinessNamespaceChange = channel.unary_unary(
                 '/tipsy.config.v1.ConfigService/NotifyBusinessNamespaceChange',
                 request_serializer=tipsy_dot_config_dot_v1_dot_config__pb2.NotifyBusinessNamespaceChangeRequest.SerializeToString,
@@ -159,6 +164,17 @@ class ConfigServiceServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def GetConfigVersionNos(self, request, context):
+        """GetConfigVersionNos maps config_version PRIMARY KEY ids (versionId,
+        globally unique) → the per-key semantic version_no. Internal abtest↔config
+        RPC for telemetry enrichment ONLY (打点上报). NOT a business read path —
+        version_no never appears on any SDK/business wire response. Missing/unknown
+        version_ids are simply absent from the response map (caller emits -1).
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
     def NotifyBusinessNamespaceChange(self, request, context):
         """NotifyBusinessNamespaceChange is invoked by abtest after every write
         that may change "possible versions" for that ns (start / pause / resume
@@ -214,6 +230,11 @@ def add_ConfigServiceServicer_to_server(servicer, server):
                     servicer.ListConfigVersions,
                     request_deserializer=tipsy_dot_config_dot_v1_dot_config__pb2.ListConfigVersionsRequest.FromString,
                     response_serializer=tipsy_dot_config_dot_v1_dot_config__pb2.ListConfigVersionsResponse.SerializeToString,
+            ),
+            'GetConfigVersionNos': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetConfigVersionNos,
+                    request_deserializer=tipsy_dot_config_dot_v1_dot_config__pb2.GetConfigVersionNosRequest.FromString,
+                    response_serializer=tipsy_dot_config_dot_v1_dot_config__pb2.GetConfigVersionNosResponse.SerializeToString,
             ),
             'NotifyBusinessNamespaceChange': grpc.unary_unary_rpc_method_handler(
                     servicer.NotifyBusinessNamespaceChange,
@@ -383,6 +404,33 @@ class ConfigService(object):
             '/tipsy.config.v1.ConfigService/ListConfigVersions',
             tipsy_dot_config_dot_v1_dot_config__pb2.ListConfigVersionsRequest.SerializeToString,
             tipsy_dot_config_dot_v1_dot_config__pb2.ListConfigVersionsResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def GetConfigVersionNos(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/tipsy.config.v1.ConfigService/GetConfigVersionNos',
+            tipsy_dot_config_dot_v1_dot_config__pb2.GetConfigVersionNosRequest.SerializeToString,
+            tipsy_dot_config_dot_v1_dot_config__pb2.GetConfigVersionNosResponse.FromString,
             options,
             channel_credentials,
             insecure,

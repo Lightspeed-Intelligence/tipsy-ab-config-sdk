@@ -605,6 +605,19 @@ class Client:
         cache — it returns the raw proto response so business code can read
         ``config_flat_kv`` / ``groups`` / ``gray_hits`` directly.
 
+        ``gray_hits`` is grouped per hit gray release: each ``GrayReleaseHit``
+        carries a ``release_id`` plus a ``key_versions`` map (config_key.key
+        name → versionId), i.e. one entry per hit ``release_id`` rather than the
+        old flat one-entry-per-(release, key) shape. Read a single key's target
+        via ``gray_hits[i].key_versions[key_name]``.
+
+        IMPORTANT: every int64 "version" value on this wire —
+        ``gray_hits[].key_versions`` values, ``config_flat_kv`` values,
+        ``groups[].params_versions`` values — is the config_version PRIMARY KEY
+        id (versionId, globally unique), NOT the per-key semantic version_no
+        (the n-th version of that config_key). version_no never appears on the
+        SDK/business wire; it lives only in upstream telemetry.
+
         Namespace resolution mirrors :meth:`get_config` (explicit > default >
         :class:`NamespaceRequired`; unsubscribed > :class:`NamespaceNotSubscribed`).
         Raises when the abtest service was not configured at init.

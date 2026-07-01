@@ -1146,6 +1146,8 @@ curl -sS -H "$AUTH" -H 'Content-Type: application/json' \
 - Public-read HTTP 已设置 `UseProtoNames: true` + `EmitUnpopulated: true`：字段名为 snake_case，零值字段也会输出——空 map 序列化为 `{}`、空 repeated 为 `[]`、未填 timestamp 与数值/字符串零值同样出现。因此 `config_flat_kv`、`custom_flat_kv`、`groups`、`exposures`、`computed_at` 这些字段恒在，接入方可按字段恒存在解析（但仍需判断 map / 数组是否为空）。
 - `config_flat_kv` 的 value、`exposures[].version`、`exposures[].release_id` 等 int64 字段在 JSON 中按 protojson 规则表现为字符串，接入方不要转成 JavaScript `Number`。
 - `exposures[].version` 只对 config_version 实验/灰度发布有配置版本含义；custom_params 实验没有 config version 语义，该字段可能为 `0` 或无业务意义。
+- `gray_hits[]` 在 `display_type=RESULT_DISPLAY_TYPE_EACH_EXPERIMENT_GROUP` 且 `experiment_type ∈ {CONFIG_VERSION, ALL}` 时填充：**每个命中的灰度 release 一条**，形状为 `{release_id, key_versions}`，其中 `key_versions` 是 `config_key.key 名 → versionId` 的 map（即一个 release 下它命中的多个 key 各对应一个版本）。这是按 release 分组的形状，取代了旧的「每个 `(release, key)` 一条平铺记录」。读某个 key 的命中版本用 `gray_hits[i].key_versions["<key 名>"]`。`release_id` 升序排列；`EmitUnpopulated` 下空 release 的 `key_versions` 序列化为 `{}`，int64 value 仍为字符串。
+- **versionId vs versionNo（重要）**：wire 上传递的所有「版本」标识——`gray_hits[].key_versions` 的值、`config_flat_kv` 的值、`groups[].params_versions` 的值——都是 **versionId**（`config_version` 主键 id，全局唯一），**不是** **versionNo**（语义上这个 `config_key` 的第几个版本号）。versionNo 永远不出现在任何 gRPC/HTTP/SDK 业务结果 wire 上，仅存在于上报打点（telemetry）数据中。
 
 ### 5.2 获取动态配置
 
@@ -1351,7 +1353,7 @@ AI agent 或脚本执行接入时，按以下不变式检查：
 
 - 前端和自动化脚本不要把 ID 转成 JavaScript `Number`。
 - admission / custom params 中大于 `2^53` 的整数必须加引号。
-- config_version 实验结果里的 `config_flat_kv` 使用 key name 到 version_id 的映射；version_id 在 JSON 中也可能表现为字符串。
+- config_version 实验结果里的 `config_flat_kv` 使用 key name 到 version_id 的映射；version_id 在 JSON 中也可能表现为字符串。这里的 `version_id` 是 **versionId**（`config_version` 主键 id，全局唯一），不是 **versionNo**（语义版本号）；versionNo 不上 wire，仅在打点数据中出现。
 - custom_params 通过 protobuf `Struct` 传输，大整数只能安全地用字符串表达。
 
 错误示例：

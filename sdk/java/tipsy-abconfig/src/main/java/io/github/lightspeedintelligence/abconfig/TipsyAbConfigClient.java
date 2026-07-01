@@ -567,6 +567,20 @@ public final class TipsyAbConfigClient implements AutoCloseable {
      * response so business code can read {@code config_flat_kv} /
      * {@code custom_flat_kv} / {@code groups} / {@code gray_hits} directly.
      *
+     * <p>{@code gray_hits} is grouped per hit gray release: each
+     * {@code GrayReleaseHit} carries a {@code release_id} plus a
+     * {@code key_versions} map (config_key.key name &rarr; versionId), i.e. one
+     * entry per hit {@code release_id} rather than the old flat
+     * one-entry-per-(release, key) shape. Read a single key's target via
+     * {@code grayHits.get(i).getKeyVersionsMap().get(keyName)}.
+     *
+     * <p>IMPORTANT: every int64 "version" value on this wire —
+     * {@code gray_hits[].key_versions} values, {@code config_flat_kv} values,
+     * {@code groups[].params_versions} values — is the config_version PRIMARY
+     * KEY id (versionId, globally unique), NOT the per-key semantic version_no
+     * (the n-th version of that config_key). version_no never appears on the
+     * SDK/business wire; it lives only in upstream telemetry.
+     *
      * <p>Namespace resolution mirrors {@link #getConfig}. The call is bounded by
      * {@code abtestTimeout}. An empty {@code traceId} is replaced with a fresh
      * UUID. When the abtest service was not configured at create time, this

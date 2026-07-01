@@ -79,6 +79,18 @@ type ExperimentResultRequest struct {
 // it returns the raw proto response so business code can read
 // config_flat_kv / custom_flat_kv / groups / gray_hits directly.
 //
+// gray_hits is grouped per hit gray release: each GrayReleaseHit carries a
+// release_id plus a key_versions map (config_key.key name → versionId), i.e.
+// one entry per hit release_id rather than the old flat one-entry-per-(release,
+// key) shape. Read a single key's target via
+// gray_hits[i].GetKeyVersions()[keyName].
+//
+// IMPORTANT: every int64 "version" value on this wire — gray_hits[].key_versions
+// values, config_flat_kv values, groups[].params_versions values — is the
+// config_version PRIMARY KEY id (versionId, globally unique), NOT the per-key
+// semantic version_no (the n-th version of that config_key). version_no never
+// appears on the SDK/business wire; it lives only in upstream telemetry.
+//
 // Namespace resolution mirrors GetConfig (explicit > default >
 // ErrNamespaceRequired; unsubscribed > ErrNamespaceNotSubscribed). The call is
 // bounded by Config.AbtestTimeout derived from ctx. When the abtest service was

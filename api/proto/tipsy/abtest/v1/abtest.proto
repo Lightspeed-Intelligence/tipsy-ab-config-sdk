@@ -74,6 +74,8 @@ message GetExperimentResultResponse {
   // flat_kv mode: split to avoid int64 precision loss (M1).
   //   config_flat_kv: config_version experiment/gray hits → key_name → version_id.
   //   custom_flat_kv: custom_params experiment hits → key → arbitrary JSON value.
+  // The int64 value is the versionId (config_version PRIMARY KEY id, globally
+  // unique) — NOT the per-key semantic version_no.
   map<string, int64>     config_flat_kv = 1;
   google.protobuf.Struct custom_flat_kv = 2;
   // each_experiment_group mode: one element per hit experiment group.
@@ -85,12 +87,14 @@ message GetExperimentResultResponse {
   repeated Exposure exposures = 4;
   google.protobuf.Timestamp computed_at = 5;
   // gray_hits: the explicit list of gray release hits resolved for
-  // (uid, namespace). Populated ONLY when display_type ==
-  // RESULT_DISPLAY_TYPE_EACH_EXPERIMENT_GROUP AND experiment_type ∈
-  // {EXPERIMENT_TYPE_CONFIG_VERSION, EXPERIMENT_TYPE_ALL}. In every other
-  // request shape the field is a zero-length slice (NOT a missing field) —
-  // same style as `groups` / `config_flat_kv`. Output is sorted by
-  // release_id ascending and stable across repeated identical requests.
+  // (uid, namespace). One entry per hit release_id (each carrying a
+  // key_versions map of config_key.key → versionId). Populated ONLY when
+  // display_type == RESULT_DISPLAY_TYPE_EACH_EXPERIMENT_GROUP AND
+  // experiment_type ∈ {EXPERIMENT_TYPE_CONFIG_VERSION, EXPERIMENT_TYPE_ALL}.
+  // In every other request shape the field is a zero-length slice (NOT a
+  // missing field) — same style as `groups` / `config_flat_kv`. Output is
+  // sorted by release_id ascending and stable across repeated identical
+  // requests.
   repeated GrayReleaseHit gray_hits = 6;
 }
 
@@ -101,6 +105,8 @@ message ExperimentGroupResult {
   ExperimentType experiment_type = 4;
   // config_version: params as key_name → version_id (params_versions).
   // custom_params: params as arbitrary JSON (params_custom).
+  // The int64 value in params_versions is the versionId (config_version
+  // PRIMARY KEY id, globally unique) — NOT the per-key semantic version_no.
   map<string, int64>     params_versions = 5;
   google.protobuf.Struct params_custom   = 6;
 }
@@ -120,15 +126,17 @@ message Exposure {
   optional int64  release_id        = 7;    // gray release_whitelist.id (int64)
 }
 
-// GrayReleaseHit is one (release_id, key, version_id) tuple resolved by the
-// gray-release engine for a single (uid, namespace). The (release_id, key)
-// pair is unique per response (computeGray is first-writer-wins per
-// release_id ascending); version_id is the gray release's target version
-// for that key.
+// GrayReleaseHit groups all config keys resolved by ONE gray release for a
+// single (uid, namespace). One entry per hit release_id; key_versions maps
+// each hit config_key.key (the business key name) to its target version.
+//
+// IMPORTANT: the int64 value in key_versions is the config_version PRIMARY
+// KEY id (versionId, globally unique) — NOT the per-key semantic version_no
+// (语义上这个 configKey 的第几个版本). Every "version" identifier on this wire
+// is a versionId; version_no never appears on the wire (it is telemetry-only).
 message GrayReleaseHit {
-  int64  release_id = 1;
-  string key        = 2;
-  int64  version_id = 3;
+  int64 release_id = 1;
+  map<string, int64> key_versions = 2;
 }
 
 message GetPossibleVersionsAndExperimentSnapshotSeqRequest {

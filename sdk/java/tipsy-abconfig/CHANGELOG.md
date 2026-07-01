@@ -8,6 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed (BREAKING)
+
+- **`GetExperimentResultResponse.gray_hits` is now grouped per gray release.**
+  `GrayReleaseHit` changed from the flat `{release_id, key, version_id}` (one
+  entry per `(release, key)`) to `{release_id, map<string,int64> key_versions}`
+  (one entry per hit `release_id`; `key_versions` maps each `config_key.key`
+  name → versionId). This aligns `gray_hits` with
+  `ExperimentGroupResult.params_versions`. Read a single key's target via
+  `grayHits.get(i).getKeyVersionsMap().get(keyName)` instead of the removed
+  `getVersionId()`. No backward compatibility — the old flat fields are gone.
+  The int64 values remain versionId (config_version PRIMARY KEY id, globally
+  unique), never the semantic version_no.
+
 ## [0.3.0] - 2026-06-27
 
 ### Added

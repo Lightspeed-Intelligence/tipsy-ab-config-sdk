@@ -340,10 +340,10 @@ func TestHTTP_PeriodicPull_RefreshesCache(t *testing.T) {
 //     protojson changes to optional+int64 handling won't silently break the
 //     backward-compat read path.
 //
-//   - TestHTTP_GetExperimentResult_GrayHitsRoundTrip — covers the new
-//     `gray_hits` repeated field (D2). The mock server emits a single
-//     GrayReleaseHit (release_id=7, key="k", version_id=99) and we verify
-//     the SDK observes it through GetGrayHits().
+//   - TestHTTP_GetExperimentResult_GrayHitsRoundTrip — covers the grouped
+//     `gray_hits` repeated field (D1/D2). The mock server emits a single
+//     grouped GrayReleaseHit (release_id=7, key_versions={"k":99}) and we
+//     verify the SDK observes it through GetGrayHits() / GetKeyVersions().
 //
 // Both use the same handler + recorder; the only difference is the canned
 // response shape.
@@ -392,18 +392,18 @@ func TestHTTP_GetExperimentResult_ExposuresRoundTrip(t *testing.T) {
 	}
 }
 
-// TestHTTP_GetExperimentResult_GrayHitsRoundTrip exercises the new
-// repeated GrayReleaseHit gray_hits = 6 field (D2): mock server塞一条
-// gray hit; verify the SDK decodes it end-to-end through the publicread
-// protojson handler. Pairs with the equivalent Python coverage in
-// test_http_transport.py::test_http_get_experiment_result_gray_hits_round_trip.
+// TestHTTP_GetExperimentResult_GrayHitsRoundTrip exercises the grouped
+// repeated GrayReleaseHit gray_hits = 6 field (D1/D2): mock server塞一条
+// grouped gray hit; verify the SDK decodes its key_versions map end-to-end
+// through the publicread protojson handler. Pairs with the equivalent Python
+// coverage in test_http_transport.py::test_http_get_experiment_result_gray_hits_round_trip.
 func TestHTTP_GetExperimentResult_GrayHitsRoundTrip(t *testing.T) {
 	h := newHTTPHarness(t)
 	h.cfgServer.SetPullSnapshot(makeSnapshot("ns1", 1, 1, nil))
 	h.abServer.SetResponse("ns1", &abtestv1.GetExperimentResultResponse{
 		ConfigFlatKv: map[string]int64{"k": 99},
 		GrayHits: []*abtestv1.GrayReleaseHit{
-			{ReleaseId: 7, Key: "k", VersionId: 99},
+			{ReleaseId: 7, KeyVersions: map[string]int64{"k": 99}},
 		},
 	})
 
@@ -428,11 +428,12 @@ func TestHTTP_GetExperimentResult_GrayHitsRoundTrip(t *testing.T) {
 	if hits[0].GetReleaseId() != 7 {
 		t.Fatalf("gray_hits[0].release_id = %d, want 7", hits[0].GetReleaseId())
 	}
-	if hits[0].GetKey() != "k" {
-		t.Fatalf("gray_hits[0].key = %q, want %q", hits[0].GetKey(), "k")
+	kv := hits[0].GetKeyVersions()
+	if len(kv) != 1 {
+		t.Fatalf("gray_hits[0].key_versions = %+v, want exactly 1 entry", kv)
 	}
-	if hits[0].GetVersionId() != 99 {
-		t.Fatalf("gray_hits[0].version_id = %d, want 99", hits[0].GetVersionId())
+	if kv["k"] != 99 {
+		t.Fatalf("gray_hits[0].key_versions[k] = %d, want 99", kv["k"])
 	}
 }
 
