@@ -8,6 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-07-03
+
+### Added
+
+- Debug-level per-call timing log for `GetExperimentResult`. Both call
+  sites (the public `get_experiment_result` and the `AbtestContext` lazy
+  per-namespace fetch) emit one Debug record per RPC with `ns`, `trace_id`
+  and float-millisecond `duration_ms` (an `err` field on failure). Fields
+  are written both into the log message and `extra=` so they are visible
+  under the default formatter and available as structured record
+  attributes. Info level stays silent; the existing fallback warnings are
+  unchanged. Mirrors the Go SDK v0.9.0 change.
+
 ## [0.9.0] - 2026-06-30
 
 ### Added

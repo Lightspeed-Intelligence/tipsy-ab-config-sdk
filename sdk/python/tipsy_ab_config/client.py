@@ -29,6 +29,7 @@ import contextlib
 import json
 import logging
 import os
+import time
 import uuid
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -886,10 +887,31 @@ class Client:
             display_type=display_type,
             trace_id=tid,
         )
-        return await asyncio.wait_for(
-            self._abtest_tr.get_experiment_result(req),
-            timeout=self._cfg.abtest_timeout,
+        start = time.perf_counter()
+        try:
+            resp = await asyncio.wait_for(
+                self._abtest_tr.get_experiment_result(req),
+                timeout=self._cfg.abtest_timeout,
+            )
+        except Exception as e:  # noqa: BLE001 — CancelledError is BaseException, propagates un-logged
+            dur_ms = (time.perf_counter() - start) * 1000
+            logger.debug(
+                "tipsy_ab_config: GetExperimentResult rpc (ns=%s, trace_id=%s, duration_ms=%.3f)",
+                ns,
+                tid,
+                dur_ms,
+                extra={"ns": ns, "trace_id": tid, "duration_ms": dur_ms, "err": repr(e)},
+            )
+            raise
+        dur_ms = (time.perf_counter() - start) * 1000
+        logger.debug(
+            "tipsy_ab_config: GetExperimentResult rpc (ns=%s, trace_id=%s, duration_ms=%.3f)",
+            ns,
+            tid,
+            dur_ms,
+            extra={"ns": ns, "trace_id": tid, "duration_ms": dur_ms},
         )
+        return resp
 
     async def _fetch_config_version_flat_kv_for_ns(
         self,
@@ -923,29 +945,54 @@ class Client:
             display_type=abtest_pb2.ResultDisplayType.RESULT_DISPLAY_TYPE_FLAT_KV,
             trace_id=trace_id,
         )
+        start = time.perf_counter()
         try:
             resp = await asyncio.wait_for(
                 self._abtest_tr.get_experiment_result(req),
                 timeout=self._cfg.abtest_timeout,
             )
-        except asyncio.TimeoutError:
+        except asyncio.TimeoutError as e:
+            dur_ms = (time.perf_counter() - start) * 1000
             self._metrics.inc_abtest_fallback(ns)
             logger.warning(
                 "tipsy_ab_config: AbtestService.GetExperimentResult timeout; "
                 "falling back to full release",
                 extra={"ns": ns, "timeout_s": self._cfg.abtest_timeout, "trace_id": trace_id},
             )
+            logger.debug(
+                "tipsy_ab_config: GetExperimentResult rpc (ns=%s, trace_id=%s, duration_ms=%.3f)",
+                ns,
+                trace_id,
+                dur_ms,
+                extra={"ns": ns, "trace_id": trace_id, "duration_ms": dur_ms, "err": repr(e)},
+            )
             return _EMPTY_RESULT
         except asyncio.CancelledError:
             raise
-        except Exception:  # noqa: BLE001
+        except Exception as e:  # noqa: BLE001
+            dur_ms = (time.perf_counter() - start) * 1000
             self._metrics.inc_abtest_fallback(ns)
             logger.exception(
                 "tipsy_ab_config: AbtestService.GetExperimentResult failed; "
                 "falling back to full release",
                 extra={"ns": ns, "trace_id": trace_id},
             )
+            logger.debug(
+                "tipsy_ab_config: GetExperimentResult rpc (ns=%s, trace_id=%s, duration_ms=%.3f)",
+                ns,
+                trace_id,
+                dur_ms,
+                extra={"ns": ns, "trace_id": trace_id, "duration_ms": dur_ms, "err": repr(e)},
+            )
             return _EMPTY_RESULT
+        dur_ms = (time.perf_counter() - start) * 1000
+        logger.debug(
+            "tipsy_ab_config: GetExperimentResult rpc (ns=%s, trace_id=%s, duration_ms=%.3f)",
+            ns,
+            trace_id,
+            dur_ms,
+            extra={"ns": ns, "trace_id": trace_id, "duration_ms": dur_ms},
+        )
         return _ComputeResult(
             key_versions={str(k): int(v) for k, v in resp.config_flat_kv.items()},
         )
