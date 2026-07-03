@@ -8,6 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-07-03
+
+### Added
+
+- Debug-level per-call timing log for `getExperimentResult`. Both call
+  sites (the public `getExperimentResult` and the `AbtestContext` lazy
+  per-namespace fetch) emit one Debug record per RPC with `ns`, `trace_id`
+  and float-millisecond `duration_ms` (the throwable is attached on
+  failure). Fields are embedded directly in the slf4j message so they are
+  greppable without a structured layout. Debug level only; the existing
+  fallback warning is unchanged. Mirrors the Go SDK v0.9.0 change.
+
 ## [0.5.0] - 2026-06-30
 
 ### Added

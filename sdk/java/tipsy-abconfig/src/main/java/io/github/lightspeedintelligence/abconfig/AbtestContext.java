@@ -279,10 +279,13 @@ public final class AbtestContext {
                 .setDisplayType(io.github.lightspeedintelligence.abconfig.proto.abtest.v1.ResultDisplayType.RESULT_DISPLAY_TYPE_FLAT_KV)
                 .setTraceId(traceId)
                 .build();
+        long __start = System.nanoTime();
         try {
             GetExperimentResultResponse resp =
                     transport.getExperimentResult(req, owner.abtestTimeout());
+            double durMs = (System.nanoTime() - __start) / 1_000_000.0;
             Map<String, Long> kv = new HashMap<>(resp.getConfigFlatKvMap());
+            owner.logger().debug("tipsyabconfig: GetExperimentResult rpc (ns={}, trace_id={}, duration_ms={})", ns, traceId, durMs);
             return new AbtestComputeResult(kv);
         } catch (Exception e) {
             owner.metricsInternal().abtestFallback.inc(ns);
@@ -290,6 +293,8 @@ public final class AbtestContext {
                     "tipsyabconfig: AbtestService.GetExperimentResult failed; falling back to full release"
                             + " (ns={}, trace_id={})",
                     ns, traceId, e);
+            double durMs = (System.nanoTime() - __start) / 1_000_000.0;
+            owner.logger().debug("tipsyabconfig: GetExperimentResult rpc failed (ns={}, trace_id={}, duration_ms={})", ns, traceId, durMs, e);
             return AbtestComputeResult.EMPTY_RESULT;
         }
     }

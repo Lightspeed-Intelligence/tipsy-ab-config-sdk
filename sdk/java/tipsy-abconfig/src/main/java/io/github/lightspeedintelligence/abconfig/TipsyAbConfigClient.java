@@ -952,9 +952,15 @@ public final class TipsyAbConfigClient implements AutoCloseable {
                 .setDisplayType(req.displayType().toProto())
                 .setTraceId(traceId)
                 .build();
+        long __start = System.nanoTime();
         try {
-            return abtestTr.getExperimentResult(pbReq, abtestTimeout);
+            GetExperimentResultResponse resp = abtestTr.getExperimentResult(pbReq, abtestTimeout);
+            double durMs = (System.nanoTime() - __start) / 1_000_000.0;
+            LOG.debug("tipsyabconfig: GetExperimentResult rpc (ns={}, trace_id={}, duration_ms={})", ns, traceId, durMs);
+            return resp;
         } catch (Exception e) {
+            double durMs = (System.nanoTime() - __start) / 1_000_000.0;
+            LOG.debug("tipsyabconfig: GetExperimentResult rpc failed (ns={}, trace_id={}, duration_ms={})", ns, traceId, durMs, e);
             throw new TipsyConfigException(
                     "tipsyabconfig: AbtestService.GetExperimentResult failed (ns=" + ns + ")", e);
         }
