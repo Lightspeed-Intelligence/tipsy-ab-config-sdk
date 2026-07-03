@@ -3,6 +3,7 @@ package tipsyabconfig
 import (
 	"context"
 	"errors"
+	"time"
 
 	abtestv1 "github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk/api/gen/go/tipsy/abtest/v1"
 	"github.com/google/uuid"
@@ -127,5 +128,13 @@ func (c *Client) GetExperimentResult(ctx context.Context, req ExperimentResultRe
 		DisplayType:    abtestv1.ResultDisplayType(req.DisplayType),
 		TraceId:        traceID,
 	}
-	return c.abtestTr.GetExperimentResult(callCtx, pbReq)
+	start := time.Now()
+	resp, err := c.abtestTr.GetExperimentResult(callCtx, pbReq)
+	attrs := []any{"ns", ns, "trace_id", traceID,
+		"duration_ms", float64(time.Since(start).Microseconds()) / 1000}
+	if err != nil {
+		attrs = append(attrs, "err", err)
+	}
+	c.logger.Debug("tipsyabconfig: GetExperimentResult rpc", attrs...)
+	return resp, err
 }

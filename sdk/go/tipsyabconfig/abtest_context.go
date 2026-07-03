@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"time"
 
 	abtestv1 "github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk/api/gen/go/tipsy/abtest/v1"
 	"github.com/google/uuid"
@@ -359,7 +360,14 @@ func (c *Client) fetchConfigVersionFlatKvForNamespace(parentCtx context.Context,
 		DisplayType:    abtestv1.ResultDisplayType_RESULT_DISPLAY_TYPE_FLAT_KV,
 		TraceId:        traceID,
 	}
+	start := time.Now()
 	resp, err := c.abtestTr.GetExperimentResult(callCtx, req)
+	attrs := []any{"ns", ns, "trace_id", traceID,
+		"duration_ms", float64(time.Since(start).Microseconds()) / 1000}
+	if err != nil {
+		attrs = append(attrs, "err", err)
+	}
+	c.logger.Debug("tipsyabconfig: GetExperimentResult rpc", attrs...)
 	if err != nil {
 		c.metrics.abtestFallback.inc(ns)
 		c.logger.Warn("tipsyabconfig: AbtestService.GetExperimentResult failed; falling back to full release",
