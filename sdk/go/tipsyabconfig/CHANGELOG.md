@@ -20,6 +20,40 @@ bump first, then an SDK tag bump.
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-07-16
+
+### Added
+
+- Ignore Subscribe `Heartbeat` events (forward-compat). The server may emit
+  liveness-only `Heartbeat` frames on an otherwise-idle Subscribe stream so
+  intermediary proxies (e.g. Cloudflare's ~100s edge timeout, which otherwise
+  tears the idle stream down with HTTP 524) keep it alive. `handleEvent` now
+  switches on the `ConfigUpdateEvent` payload oneof and treats `Heartbeat` as an
+  explicit no-op — no cache mutation, no sequence advance, not counted as a
+  subscribe event. Requires `api/gen/go` v0.6.0 (adds the `Heartbeat` member to
+  the `ConfigUpdateEvent` payload oneof).
+
+### Changed
+
+- Reset the Subscribe reconnect backoff after a healthy connection drop. A
+  stream that stayed up at least 60s before dropping now reconnects at the
+  initial 1s delay instead of inheriting the escalated exponential backoff; a
+  short-lived connection (genuinely unreachable server) still backs off
+  exponentially, capped at 30s. Pure helper `resetBackoffIfStable`
+  (threshold ≤ 0 never counts as stable). The reset happens before the log/sleep
+  so the logged backoff matches the actual wait. Complements the server-side
+  heartbeat above.
+
+## [0.9.0] - 2026-07-03
+
+### Added
+
+- Debug-level per-call timing log for `GetExperimentResult`. Both call sites
+  (the public `GetExperimentResult` and the `AbtestContext` lazy per-namespace
+  fetch) emit one Debug record per RPC with `ns`, `trace_id` and
+  float-millisecond `duration_ms` (the error is attached on failure). Info level
+  stays silent; the existing fallback warnings are unchanged.
+
 ## [0.8.0] - 2026-07-01
 
 ### Changed (BREAKING)
