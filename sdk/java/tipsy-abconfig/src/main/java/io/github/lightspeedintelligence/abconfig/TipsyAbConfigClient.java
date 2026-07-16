@@ -113,6 +113,15 @@ public final class TipsyAbConfigClient implements AutoCloseable {
     private final List<Thread> backgroundThreads = new ArrayList<>();
 
     /**
+     * Subscribe-reconnect backoff is reset to its initial value once a
+     * connection stayed alive for at least this many milliseconds before it
+     * dropped (mirrors the Go SDK). A non-positive value never treats a
+     * connection as stable. Package-private + mutable so tests can inject a
+     * tiny threshold for deterministic wiring checks; defaults to 60s.
+     */
+    long stableResetThresholdMs = 60_000L;
+
+    /**
      * Daemon executor handed to ST4 for the lazy abtest fan-out (lazy
      * {@code getConfig} fetch + explicit {@code AbtestContext} prefetch).
      * A virtual-thread-per-task executor keeps the fan-out cheap; it is shut down
@@ -1184,6 +1193,7 @@ public final class TipsyAbConfigClient implements AutoCloseable {
         final long maxBackoffMs = 30_000L;
         while (!closed.get()) {
             boolean cleanEnd;
+            long startNanos = System.nanoTime();
             try {
                 subscribeOnce();
                 cleanEnd = true; // server closed the stream cleanly (iterator drained).
@@ -1195,6 +1205,11 @@ public final class TipsyAbConfigClient implements AutoCloseable {
                 for (String ns : subscribedNamespaces) {
                     metrics.subscribeDisc.inc(ns);
                 }
+                // Reset backoff BEFORE logging/sleeping so the logged wait matches
+                // the actual sleep: a connection that stayed alive long enough is
+                // treated as healthy and reconnects from the initial backoff.
+                long uptimeMs = (System.nanoTime() - startNanos) / 1_000_000L;
+                backoffMs = resetBackoffIfStable(backoffMs, uptimeMs, stableResetThresholdMs);
                 LOG.error("tipsyabconfig: Subscribe stream error; reconnecting (backoff={}ms)",
                         backoffMs, e);
                 // recordSubscribeErr (inside fireBackgroundError) flips
@@ -1220,6 +1235,17 @@ public final class TipsyAbConfigClient implements AutoCloseable {
     }
 
     /**
+     * Returns the reset backoff (1s) when the just-dropped connection stayed
+     * alive for at least {@code thresholdMs}; otherwise returns {@code backoffMs}
+     * unchanged. A non-positive {@code thresholdMs} never treats a connection as
+     * stable (defensive, mirrors the Go SDK). Pure/static for deterministic unit
+     * tests.
+     */
+    static long resetBackoffIfStable(long backoffMs, long uptimeMs, long thresholdMs) {
+        return (thresholdMs > 0 && uptimeMs >= thresholdMs) ? 1000L : backoffMs;
+    }
+
+    /**
      * Opens one Subscribe stream and pumps events into the cache. Returns
      * normally on a clean end-of-stream (the iterator drained without error).
      */
@@ -1241,21 +1267,32 @@ public final class TipsyAbConfigClient implements AutoCloseable {
     }
 
     /**
-     * Applies a {@link ConfigUpdateEvent} to the cache. The {@code snapshot}
+     * Applies a {@link ConfigUpdateEvent} to the cache. The {@code SNAPSHOT}
      * branch increments the subscribe-event counter and applies the snapshot;
-     * unknown oneof branches are silently skipped (forward-compat).
+     * {@code HEARTBEAT} events are a liveness no-op; unknown oneof branches are
+     * silently skipped (forward-compat).
      */
     private void handleEvent(ConfigUpdateEvent ev) {
-        if (ev == null || !ev.hasSnapshot()) {
-            return;
+        if (ev == null) {
+            return; // guard before getPayloadCase() to avoid NPE.
         }
-        NamespaceSnapshot s = ev.getSnapshot();
-        metrics.subscribeEvent.inc(s.getNamespace());
-        ConfigCache.ApplyResult r = cache.applyProto(s);
-        if (r.replaced) {
-            LOG.debug("tipsyabconfig: subscribe applied snapshot "
-                    + "(ns={}, business_seq={}, experiment_seq={})",
-                    s.getNamespace(), s.getBusinessSnapshotSeq(), s.getExperimentSnapshotSeq());
+        switch (ev.getPayloadCase()) {
+            case SNAPSHOT -> {
+                NamespaceSnapshot s = ev.getSnapshot();
+                metrics.subscribeEvent.inc(s.getNamespace());
+                ConfigCache.ApplyResult r = cache.applyProto(s);
+                if (r.replaced) {
+                    LOG.debug("tipsyabconfig: subscribe applied snapshot "
+                            + "(ns={}, business_seq={}, experiment_seq={})",
+                            s.getNamespace(), s.getBusinessSnapshotSeq(), s.getExperimentSnapshotSeq());
+                }
+            }
+            case HEARTBEAT -> {
+                // Liveness ping — no cache/metric mutation (forward-compat no-op).
+            }
+            default -> {
+                // Unknown / unset oneof branch — silently skipped (forward-compat).
+            }
         }
     }
 

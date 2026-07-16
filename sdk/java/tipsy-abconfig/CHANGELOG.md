@@ -8,6 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-07-16
+
+### Changed
+
+- Ignore Subscribe `Heartbeat` events via a `getPayloadCase()` switch
+  (forward-compat no-op): the `SNAPSHOT` branch is unchanged, `HEARTBEAT` is a
+  liveness no-op, and any other/unset branch is silently skipped. Behaviour is
+  equivalent to the previous `hasSnapshot()` guard.
+- Reset the Subscribe reconnect backoff to its initial value after a healthy
+  (alive for >= 60s) connection drop, instead of always escalating
+  exponentially. Short-lived connections still back off exponentially (capped at
+  30s). Mirrors the Go SDK.
+
 ## [0.6.0] - 2026-07-03
 
 ### Added
