@@ -778,6 +778,7 @@ type ConfigUpdateEvent struct {
 	// Types that are valid to be assigned to Payload:
 	//
 	//	*ConfigUpdateEvent_Snapshot
+	//	*ConfigUpdateEvent_Heartbeat
 	Payload       isConfigUpdateEvent_Payload `protobuf_oneof:"payload"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -829,15 +830,78 @@ func (x *ConfigUpdateEvent) GetSnapshot() *NamespaceSnapshot {
 	return nil
 }
 
+func (x *ConfigUpdateEvent) GetHeartbeat() *Heartbeat {
+	if x != nil {
+		if x, ok := x.Payload.(*ConfigUpdateEvent_Heartbeat); ok {
+			return x.Heartbeat
+		}
+	}
+	return nil
+}
+
 type isConfigUpdateEvent_Payload interface {
 	isConfigUpdateEvent_Payload()
 }
 
 type ConfigUpdateEvent_Snapshot struct {
-	Snapshot *NamespaceSnapshot `protobuf:"bytes,1,opt,name=snapshot,proto3,oneof"` // Reserved for future streaming extensions.
+	Snapshot *NamespaceSnapshot `protobuf:"bytes,1,opt,name=snapshot,proto3,oneof"`
+}
+
+type ConfigUpdateEvent_Heartbeat struct {
+	Heartbeat *Heartbeat `protobuf:"bytes,2,opt,name=heartbeat,proto3,oneof"` // 空闲保活 DATA 帧；无配置载荷
 }
 
 func (*ConfigUpdateEvent_Snapshot) isConfigUpdateEvent_Payload() {}
+
+func (*ConfigUpdateEvent_Heartbeat) isConfigUpdateEvent_Payload() {}
+
+// Heartbeat is a liveness frame the server emits on an otherwise-idle Subscribe
+// stream so intermediary proxies (e.g. Cloudflare) do not tear the stream down
+// as a stalled response. It carries no config; clients must ignore it (no cache
+// change, no seq advance).
+type Heartbeat struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	UnixNanos     int64                  `protobuf:"varint,1,opt,name=unix_nanos,json=unixNanos,proto3" json:"unix_nanos,omitempty"` // server send time; NOT read by current SDK, reserved for future OnHeartbeat/liveness observability
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Heartbeat) Reset() {
+	*x = Heartbeat{}
+	mi := &file_tipsy_config_v1_config_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Heartbeat) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Heartbeat) ProtoMessage() {}
+
+func (x *Heartbeat) ProtoReflect() protoreflect.Message {
+	mi := &file_tipsy_config_v1_config_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Heartbeat.ProtoReflect.Descriptor instead.
+func (*Heartbeat) Descriptor() ([]byte, []int) {
+	return file_tipsy_config_v1_config_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *Heartbeat) GetUnixNanos() int64 {
+	if x != nil {
+		return x.UnixNanos
+	}
+	return 0
+}
 
 type ListNamespacesByKindRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -848,7 +912,7 @@ type ListNamespacesByKindRequest struct {
 
 func (x *ListNamespacesByKindRequest) Reset() {
 	*x = ListNamespacesByKindRequest{}
-	mi := &file_tipsy_config_v1_config_proto_msgTypes[12]
+	mi := &file_tipsy_config_v1_config_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -860,7 +924,7 @@ func (x *ListNamespacesByKindRequest) String() string {
 func (*ListNamespacesByKindRequest) ProtoMessage() {}
 
 func (x *ListNamespacesByKindRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_tipsy_config_v1_config_proto_msgTypes[12]
+	mi := &file_tipsy_config_v1_config_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -873,7 +937,7 @@ func (x *ListNamespacesByKindRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListNamespacesByKindRequest.ProtoReflect.Descriptor instead.
 func (*ListNamespacesByKindRequest) Descriptor() ([]byte, []int) {
-	return file_tipsy_config_v1_config_proto_rawDescGZIP(), []int{12}
+	return file_tipsy_config_v1_config_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *ListNamespacesByKindRequest) GetKind() NamespaceKind {
@@ -892,7 +956,7 @@ type ListNamespacesByKindResponse struct {
 
 func (x *ListNamespacesByKindResponse) Reset() {
 	*x = ListNamespacesByKindResponse{}
-	mi := &file_tipsy_config_v1_config_proto_msgTypes[13]
+	mi := &file_tipsy_config_v1_config_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -904,7 +968,7 @@ func (x *ListNamespacesByKindResponse) String() string {
 func (*ListNamespacesByKindResponse) ProtoMessage() {}
 
 func (x *ListNamespacesByKindResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_tipsy_config_v1_config_proto_msgTypes[13]
+	mi := &file_tipsy_config_v1_config_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -917,7 +981,7 @@ func (x *ListNamespacesByKindResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListNamespacesByKindResponse.ProtoReflect.Descriptor instead.
 func (*ListNamespacesByKindResponse) Descriptor() ([]byte, []int) {
-	return file_tipsy_config_v1_config_proto_rawDescGZIP(), []int{13}
+	return file_tipsy_config_v1_config_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *ListNamespacesByKindResponse) GetNamespaces() []string {
@@ -938,7 +1002,7 @@ type ListConfigKeysRequest struct {
 
 func (x *ListConfigKeysRequest) Reset() {
 	*x = ListConfigKeysRequest{}
-	mi := &file_tipsy_config_v1_config_proto_msgTypes[14]
+	mi := &file_tipsy_config_v1_config_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -950,7 +1014,7 @@ func (x *ListConfigKeysRequest) String() string {
 func (*ListConfigKeysRequest) ProtoMessage() {}
 
 func (x *ListConfigKeysRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_tipsy_config_v1_config_proto_msgTypes[14]
+	mi := &file_tipsy_config_v1_config_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -963,7 +1027,7 @@ func (x *ListConfigKeysRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListConfigKeysRequest.ProtoReflect.Descriptor instead.
 func (*ListConfigKeysRequest) Descriptor() ([]byte, []int) {
-	return file_tipsy_config_v1_config_proto_rawDescGZIP(), []int{14}
+	return file_tipsy_config_v1_config_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *ListConfigKeysRequest) GetNamespace() string {
@@ -997,7 +1061,7 @@ type ListConfigKeysResponse struct {
 
 func (x *ListConfigKeysResponse) Reset() {
 	*x = ListConfigKeysResponse{}
-	mi := &file_tipsy_config_v1_config_proto_msgTypes[15]
+	mi := &file_tipsy_config_v1_config_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1009,7 +1073,7 @@ func (x *ListConfigKeysResponse) String() string {
 func (*ListConfigKeysResponse) ProtoMessage() {}
 
 func (x *ListConfigKeysResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_tipsy_config_v1_config_proto_msgTypes[15]
+	mi := &file_tipsy_config_v1_config_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1022,7 +1086,7 @@ func (x *ListConfigKeysResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListConfigKeysResponse.ProtoReflect.Descriptor instead.
 func (*ListConfigKeysResponse) Descriptor() ([]byte, []int) {
-	return file_tipsy_config_v1_config_proto_rawDescGZIP(), []int{15}
+	return file_tipsy_config_v1_config_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *ListConfigKeysResponse) GetKeys() []*ListConfigKeysResponse_ConfigKeyInfo {
@@ -1050,7 +1114,7 @@ type ListConfigVersionsRequest struct {
 
 func (x *ListConfigVersionsRequest) Reset() {
 	*x = ListConfigVersionsRequest{}
-	mi := &file_tipsy_config_v1_config_proto_msgTypes[16]
+	mi := &file_tipsy_config_v1_config_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1062,7 +1126,7 @@ func (x *ListConfigVersionsRequest) String() string {
 func (*ListConfigVersionsRequest) ProtoMessage() {}
 
 func (x *ListConfigVersionsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_tipsy_config_v1_config_proto_msgTypes[16]
+	mi := &file_tipsy_config_v1_config_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1075,7 +1139,7 @@ func (x *ListConfigVersionsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListConfigVersionsRequest.ProtoReflect.Descriptor instead.
 func (*ListConfigVersionsRequest) Descriptor() ([]byte, []int) {
-	return file_tipsy_config_v1_config_proto_rawDescGZIP(), []int{16}
+	return file_tipsy_config_v1_config_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *ListConfigVersionsRequest) GetKeyId() int64 {
@@ -1109,7 +1173,7 @@ type ListConfigVersionsResponse struct {
 
 func (x *ListConfigVersionsResponse) Reset() {
 	*x = ListConfigVersionsResponse{}
-	mi := &file_tipsy_config_v1_config_proto_msgTypes[17]
+	mi := &file_tipsy_config_v1_config_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1121,7 +1185,7 @@ func (x *ListConfigVersionsResponse) String() string {
 func (*ListConfigVersionsResponse) ProtoMessage() {}
 
 func (x *ListConfigVersionsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_tipsy_config_v1_config_proto_msgTypes[17]
+	mi := &file_tipsy_config_v1_config_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1134,7 +1198,7 @@ func (x *ListConfigVersionsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListConfigVersionsResponse.ProtoReflect.Descriptor instead.
 func (*ListConfigVersionsResponse) Descriptor() ([]byte, []int) {
-	return file_tipsy_config_v1_config_proto_rawDescGZIP(), []int{17}
+	return file_tipsy_config_v1_config_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *ListConfigVersionsResponse) GetVersions() []*ListConfigVersionsResponse_ConfigVersionInfo {
@@ -1160,7 +1224,7 @@ type GetConfigVersionNosRequest struct {
 
 func (x *GetConfigVersionNosRequest) Reset() {
 	*x = GetConfigVersionNosRequest{}
-	mi := &file_tipsy_config_v1_config_proto_msgTypes[18]
+	mi := &file_tipsy_config_v1_config_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1172,7 +1236,7 @@ func (x *GetConfigVersionNosRequest) String() string {
 func (*GetConfigVersionNosRequest) ProtoMessage() {}
 
 func (x *GetConfigVersionNosRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_tipsy_config_v1_config_proto_msgTypes[18]
+	mi := &file_tipsy_config_v1_config_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1185,7 +1249,7 @@ func (x *GetConfigVersionNosRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetConfigVersionNosRequest.ProtoReflect.Descriptor instead.
 func (*GetConfigVersionNosRequest) Descriptor() ([]byte, []int) {
-	return file_tipsy_config_v1_config_proto_rawDescGZIP(), []int{18}
+	return file_tipsy_config_v1_config_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *GetConfigVersionNosRequest) GetVersionIds() []int64 {
@@ -1205,7 +1269,7 @@ type GetConfigVersionNosResponse struct {
 
 func (x *GetConfigVersionNosResponse) Reset() {
 	*x = GetConfigVersionNosResponse{}
-	mi := &file_tipsy_config_v1_config_proto_msgTypes[19]
+	mi := &file_tipsy_config_v1_config_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1217,7 +1281,7 @@ func (x *GetConfigVersionNosResponse) String() string {
 func (*GetConfigVersionNosResponse) ProtoMessage() {}
 
 func (x *GetConfigVersionNosResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_tipsy_config_v1_config_proto_msgTypes[19]
+	mi := &file_tipsy_config_v1_config_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1230,7 +1294,7 @@ func (x *GetConfigVersionNosResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetConfigVersionNosResponse.ProtoReflect.Descriptor instead.
 func (*GetConfigVersionNosResponse) Descriptor() ([]byte, []int) {
-	return file_tipsy_config_v1_config_proto_rawDescGZIP(), []int{19}
+	return file_tipsy_config_v1_config_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *GetConfigVersionNosResponse) GetVersionNos() map[int64]int64 {
@@ -1252,7 +1316,7 @@ type NotifyBusinessNamespaceChangeRequest struct {
 
 func (x *NotifyBusinessNamespaceChangeRequest) Reset() {
 	*x = NotifyBusinessNamespaceChangeRequest{}
-	mi := &file_tipsy_config_v1_config_proto_msgTypes[20]
+	mi := &file_tipsy_config_v1_config_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1264,7 +1328,7 @@ func (x *NotifyBusinessNamespaceChangeRequest) String() string {
 func (*NotifyBusinessNamespaceChangeRequest) ProtoMessage() {}
 
 func (x *NotifyBusinessNamespaceChangeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_tipsy_config_v1_config_proto_msgTypes[20]
+	mi := &file_tipsy_config_v1_config_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1277,7 +1341,7 @@ func (x *NotifyBusinessNamespaceChangeRequest) ProtoReflect() protoreflect.Messa
 
 // Deprecated: Use NotifyBusinessNamespaceChangeRequest.ProtoReflect.Descriptor instead.
 func (*NotifyBusinessNamespaceChangeRequest) Descriptor() ([]byte, []int) {
-	return file_tipsy_config_v1_config_proto_rawDescGZIP(), []int{20}
+	return file_tipsy_config_v1_config_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *NotifyBusinessNamespaceChangeRequest) GetBusinessNamespace() string {
@@ -1302,7 +1366,7 @@ type NotifyBusinessNamespaceChangeResponse struct {
 
 func (x *NotifyBusinessNamespaceChangeResponse) Reset() {
 	*x = NotifyBusinessNamespaceChangeResponse{}
-	mi := &file_tipsy_config_v1_config_proto_msgTypes[21]
+	mi := &file_tipsy_config_v1_config_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1314,7 +1378,7 @@ func (x *NotifyBusinessNamespaceChangeResponse) String() string {
 func (*NotifyBusinessNamespaceChangeResponse) ProtoMessage() {}
 
 func (x *NotifyBusinessNamespaceChangeResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_tipsy_config_v1_config_proto_msgTypes[21]
+	mi := &file_tipsy_config_v1_config_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1327,7 +1391,7 @@ func (x *NotifyBusinessNamespaceChangeResponse) ProtoReflect() protoreflect.Mess
 
 // Deprecated: Use NotifyBusinessNamespaceChangeResponse.ProtoReflect.Descriptor instead.
 func (*NotifyBusinessNamespaceChangeResponse) Descriptor() ([]byte, []int) {
-	return file_tipsy_config_v1_config_proto_rawDescGZIP(), []int{21}
+	return file_tipsy_config_v1_config_proto_rawDescGZIP(), []int{22}
 }
 
 type ListConfigKeysResponse_ConfigKeyInfo struct {
@@ -1343,7 +1407,7 @@ type ListConfigKeysResponse_ConfigKeyInfo struct {
 
 func (x *ListConfigKeysResponse_ConfigKeyInfo) Reset() {
 	*x = ListConfigKeysResponse_ConfigKeyInfo{}
-	mi := &file_tipsy_config_v1_config_proto_msgTypes[27]
+	mi := &file_tipsy_config_v1_config_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1355,7 +1419,7 @@ func (x *ListConfigKeysResponse_ConfigKeyInfo) String() string {
 func (*ListConfigKeysResponse_ConfigKeyInfo) ProtoMessage() {}
 
 func (x *ListConfigKeysResponse_ConfigKeyInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_tipsy_config_v1_config_proto_msgTypes[27]
+	mi := &file_tipsy_config_v1_config_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1368,7 +1432,7 @@ func (x *ListConfigKeysResponse_ConfigKeyInfo) ProtoReflect() protoreflect.Messa
 
 // Deprecated: Use ListConfigKeysResponse_ConfigKeyInfo.ProtoReflect.Descriptor instead.
 func (*ListConfigKeysResponse_ConfigKeyInfo) Descriptor() ([]byte, []int) {
-	return file_tipsy_config_v1_config_proto_rawDescGZIP(), []int{15, 0}
+	return file_tipsy_config_v1_config_proto_rawDescGZIP(), []int{16, 0}
 }
 
 func (x *ListConfigKeysResponse_ConfigKeyInfo) GetId() int64 {
@@ -1418,7 +1482,7 @@ type ListConfigVersionsResponse_ConfigVersionInfo struct {
 
 func (x *ListConfigVersionsResponse_ConfigVersionInfo) Reset() {
 	*x = ListConfigVersionsResponse_ConfigVersionInfo{}
-	mi := &file_tipsy_config_v1_config_proto_msgTypes[28]
+	mi := &file_tipsy_config_v1_config_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1430,7 +1494,7 @@ func (x *ListConfigVersionsResponse_ConfigVersionInfo) String() string {
 func (*ListConfigVersionsResponse_ConfigVersionInfo) ProtoMessage() {}
 
 func (x *ListConfigVersionsResponse_ConfigVersionInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_tipsy_config_v1_config_proto_msgTypes[28]
+	mi := &file_tipsy_config_v1_config_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1443,7 +1507,7 @@ func (x *ListConfigVersionsResponse_ConfigVersionInfo) ProtoReflect() protorefle
 
 // Deprecated: Use ListConfigVersionsResponse_ConfigVersionInfo.ProtoReflect.Descriptor instead.
 func (*ListConfigVersionsResponse_ConfigVersionInfo) Descriptor() ([]byte, []int) {
-	return file_tipsy_config_v1_config_proto_rawDescGZIP(), []int{17, 0}
+	return file_tipsy_config_v1_config_proto_rawDescGZIP(), []int{18, 0}
 }
 
 func (x *ListConfigVersionsResponse_ConfigVersionInfo) GetId() int64 {
@@ -1543,10 +1607,14 @@ const file_tipsy_config_v1_config_proto_rawDesc = "" +
 	"\x03key\x18\x01 \x01(\x03R\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01B\x17\n" +
 	"\x15_full_release_versionB\x19\n" +
-	"\x17_has_dynamic_resolution\"`\n" +
+	"\x17_has_dynamic_resolution\"\x9c\x01\n" +
 	"\x11ConfigUpdateEvent\x12@\n" +
-	"\bsnapshot\x18\x01 \x01(\v2\".tipsy.config.v1.NamespaceSnapshotH\x00R\bsnapshotB\t\n" +
-	"\apayload\"Q\n" +
+	"\bsnapshot\x18\x01 \x01(\v2\".tipsy.config.v1.NamespaceSnapshotH\x00R\bsnapshot\x12:\n" +
+	"\theartbeat\x18\x02 \x01(\v2\x1a.tipsy.config.v1.HeartbeatH\x00R\theartbeatB\t\n" +
+	"\apayload\"*\n" +
+	"\tHeartbeat\x12\x1d\n" +
+	"\n" +
+	"unix_nanos\x18\x01 \x01(\x03R\tunixNanos\"Q\n" +
 	"\x1bListNamespacesByKindRequest\x122\n" +
 	"\x04kind\x18\x01 \x01(\x0e2\x1e.tipsy.config.v1.NamespaceKindR\x04kind\">\n" +
 	"\x1cListNamespacesByKindResponse\x12\x1e\n" +
@@ -1623,7 +1691,7 @@ func file_tipsy_config_v1_config_proto_rawDescGZIP() []byte {
 }
 
 var file_tipsy_config_v1_config_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_tipsy_config_v1_config_proto_msgTypes = make([]protoimpl.MessageInfo, 30)
+var file_tipsy_config_v1_config_proto_msgTypes = make([]protoimpl.MessageInfo, 31)
 var file_tipsy_config_v1_config_proto_goTypes = []any{
 	(NamespaceKind)(0),                            // 0: tipsy.config.v1.NamespaceKind
 	(*Value)(nil),                                 // 1: tipsy.config.v1.Value
@@ -1638,63 +1706,65 @@ var file_tipsy_config_v1_config_proto_goTypes = []any{
 	(*NamespaceSnapshot)(nil),                     // 10: tipsy.config.v1.NamespaceSnapshot
 	(*KeyState)(nil),                              // 11: tipsy.config.v1.KeyState
 	(*ConfigUpdateEvent)(nil),                     // 12: tipsy.config.v1.ConfigUpdateEvent
-	(*ListNamespacesByKindRequest)(nil),           // 13: tipsy.config.v1.ListNamespacesByKindRequest
-	(*ListNamespacesByKindResponse)(nil),          // 14: tipsy.config.v1.ListNamespacesByKindResponse
-	(*ListConfigKeysRequest)(nil),                 // 15: tipsy.config.v1.ListConfigKeysRequest
-	(*ListConfigKeysResponse)(nil),                // 16: tipsy.config.v1.ListConfigKeysResponse
-	(*ListConfigVersionsRequest)(nil),             // 17: tipsy.config.v1.ListConfigVersionsRequest
-	(*ListConfigVersionsResponse)(nil),            // 18: tipsy.config.v1.ListConfigVersionsResponse
-	(*GetConfigVersionNosRequest)(nil),            // 19: tipsy.config.v1.GetConfigVersionNosRequest
-	(*GetConfigVersionNosResponse)(nil),           // 20: tipsy.config.v1.GetConfigVersionNosResponse
-	(*NotifyBusinessNamespaceChangeRequest)(nil),  // 21: tipsy.config.v1.NotifyBusinessNamespaceChangeRequest
-	(*NotifyBusinessNamespaceChangeResponse)(nil), // 22: tipsy.config.v1.NotifyBusinessNamespaceChangeResponse
-	nil, // 23: tipsy.config.v1.GetDynamicConfigRequest.UserAttrsEntry
-	nil, // 24: tipsy.config.v1.GetDynamicConfigResponse.ValuesEntry
-	nil, // 25: tipsy.config.v1.GetStaticConfigResponse.ValuesEntry
-	nil, // 26: tipsy.config.v1.SubscribeRequest.KnownSeqsEntry
-	nil, // 27: tipsy.config.v1.KeyState.VersionsEntry
-	(*ListConfigKeysResponse_ConfigKeyInfo)(nil),         // 28: tipsy.config.v1.ListConfigKeysResponse.ConfigKeyInfo
-	(*ListConfigVersionsResponse_ConfigVersionInfo)(nil), // 29: tipsy.config.v1.ListConfigVersionsResponse.ConfigVersionInfo
-	nil, // 30: tipsy.config.v1.GetConfigVersionNosResponse.VersionNosEntry
+	(*Heartbeat)(nil),                             // 13: tipsy.config.v1.Heartbeat
+	(*ListNamespacesByKindRequest)(nil),           // 14: tipsy.config.v1.ListNamespacesByKindRequest
+	(*ListNamespacesByKindResponse)(nil),          // 15: tipsy.config.v1.ListNamespacesByKindResponse
+	(*ListConfigKeysRequest)(nil),                 // 16: tipsy.config.v1.ListConfigKeysRequest
+	(*ListConfigKeysResponse)(nil),                // 17: tipsy.config.v1.ListConfigKeysResponse
+	(*ListConfigVersionsRequest)(nil),             // 18: tipsy.config.v1.ListConfigVersionsRequest
+	(*ListConfigVersionsResponse)(nil),            // 19: tipsy.config.v1.ListConfigVersionsResponse
+	(*GetConfigVersionNosRequest)(nil),            // 20: tipsy.config.v1.GetConfigVersionNosRequest
+	(*GetConfigVersionNosResponse)(nil),           // 21: tipsy.config.v1.GetConfigVersionNosResponse
+	(*NotifyBusinessNamespaceChangeRequest)(nil),  // 22: tipsy.config.v1.NotifyBusinessNamespaceChangeRequest
+	(*NotifyBusinessNamespaceChangeResponse)(nil), // 23: tipsy.config.v1.NotifyBusinessNamespaceChangeResponse
+	nil, // 24: tipsy.config.v1.GetDynamicConfigRequest.UserAttrsEntry
+	nil, // 25: tipsy.config.v1.GetDynamicConfigResponse.ValuesEntry
+	nil, // 26: tipsy.config.v1.GetStaticConfigResponse.ValuesEntry
+	nil, // 27: tipsy.config.v1.SubscribeRequest.KnownSeqsEntry
+	nil, // 28: tipsy.config.v1.KeyState.VersionsEntry
+	(*ListConfigKeysResponse_ConfigKeyInfo)(nil),         // 29: tipsy.config.v1.ListConfigKeysResponse.ConfigKeyInfo
+	(*ListConfigVersionsResponse_ConfigVersionInfo)(nil), // 30: tipsy.config.v1.ListConfigVersionsResponse.ConfigVersionInfo
+	nil, // 31: tipsy.config.v1.GetConfigVersionNosResponse.VersionNosEntry
 }
 var file_tipsy_config_v1_config_proto_depIdxs = []int32{
-	23, // 0: tipsy.config.v1.GetDynamicConfigRequest.user_attrs:type_name -> tipsy.config.v1.GetDynamicConfigRequest.UserAttrsEntry
-	24, // 1: tipsy.config.v1.GetDynamicConfigResponse.values:type_name -> tipsy.config.v1.GetDynamicConfigResponse.ValuesEntry
-	25, // 2: tipsy.config.v1.GetStaticConfigResponse.values:type_name -> tipsy.config.v1.GetStaticConfigResponse.ValuesEntry
+	24, // 0: tipsy.config.v1.GetDynamicConfigRequest.user_attrs:type_name -> tipsy.config.v1.GetDynamicConfigRequest.UserAttrsEntry
+	25, // 1: tipsy.config.v1.GetDynamicConfigResponse.values:type_name -> tipsy.config.v1.GetDynamicConfigResponse.ValuesEntry
+	26, // 2: tipsy.config.v1.GetStaticConfigResponse.values:type_name -> tipsy.config.v1.GetStaticConfigResponse.ValuesEntry
 	10, // 3: tipsy.config.v1.PullAllResponse.snapshots:type_name -> tipsy.config.v1.NamespaceSnapshot
-	26, // 4: tipsy.config.v1.SubscribeRequest.known_seqs:type_name -> tipsy.config.v1.SubscribeRequest.KnownSeqsEntry
+	27, // 4: tipsy.config.v1.SubscribeRequest.known_seqs:type_name -> tipsy.config.v1.SubscribeRequest.KnownSeqsEntry
 	11, // 5: tipsy.config.v1.NamespaceSnapshot.keys:type_name -> tipsy.config.v1.KeyState
-	27, // 6: tipsy.config.v1.KeyState.versions:type_name -> tipsy.config.v1.KeyState.VersionsEntry
+	28, // 6: tipsy.config.v1.KeyState.versions:type_name -> tipsy.config.v1.KeyState.VersionsEntry
 	10, // 7: tipsy.config.v1.ConfigUpdateEvent.snapshot:type_name -> tipsy.config.v1.NamespaceSnapshot
-	0,  // 8: tipsy.config.v1.ListNamespacesByKindRequest.kind:type_name -> tipsy.config.v1.NamespaceKind
-	28, // 9: tipsy.config.v1.ListConfigKeysResponse.keys:type_name -> tipsy.config.v1.ListConfigKeysResponse.ConfigKeyInfo
-	29, // 10: tipsy.config.v1.ListConfigVersionsResponse.versions:type_name -> tipsy.config.v1.ListConfigVersionsResponse.ConfigVersionInfo
-	30, // 11: tipsy.config.v1.GetConfigVersionNosResponse.version_nos:type_name -> tipsy.config.v1.GetConfigVersionNosResponse.VersionNosEntry
-	1,  // 12: tipsy.config.v1.GetDynamicConfigRequest.UserAttrsEntry.value:type_name -> tipsy.config.v1.Value
-	9,  // 13: tipsy.config.v1.SubscribeRequest.KnownSeqsEntry.value:type_name -> tipsy.config.v1.NamespaceSeqs
-	6,  // 14: tipsy.config.v1.ConfigService.PullAll:input_type -> tipsy.config.v1.PullAllRequest
-	8,  // 15: tipsy.config.v1.ConfigService.Subscribe:input_type -> tipsy.config.v1.SubscribeRequest
-	13, // 16: tipsy.config.v1.ConfigService.ListNamespacesByKind:input_type -> tipsy.config.v1.ListNamespacesByKindRequest
-	15, // 17: tipsy.config.v1.ConfigService.ListConfigKeys:input_type -> tipsy.config.v1.ListConfigKeysRequest
-	17, // 18: tipsy.config.v1.ConfigService.ListConfigVersions:input_type -> tipsy.config.v1.ListConfigVersionsRequest
-	19, // 19: tipsy.config.v1.ConfigService.GetConfigVersionNos:input_type -> tipsy.config.v1.GetConfigVersionNosRequest
-	21, // 20: tipsy.config.v1.ConfigService.NotifyBusinessNamespaceChange:input_type -> tipsy.config.v1.NotifyBusinessNamespaceChangeRequest
-	2,  // 21: tipsy.config.v1.ConfigService.GetDynamicConfig:input_type -> tipsy.config.v1.GetDynamicConfigRequest
-	4,  // 22: tipsy.config.v1.ConfigService.GetStaticConfig:input_type -> tipsy.config.v1.GetStaticConfigRequest
-	7,  // 23: tipsy.config.v1.ConfigService.PullAll:output_type -> tipsy.config.v1.PullAllResponse
-	12, // 24: tipsy.config.v1.ConfigService.Subscribe:output_type -> tipsy.config.v1.ConfigUpdateEvent
-	14, // 25: tipsy.config.v1.ConfigService.ListNamespacesByKind:output_type -> tipsy.config.v1.ListNamespacesByKindResponse
-	16, // 26: tipsy.config.v1.ConfigService.ListConfigKeys:output_type -> tipsy.config.v1.ListConfigKeysResponse
-	18, // 27: tipsy.config.v1.ConfigService.ListConfigVersions:output_type -> tipsy.config.v1.ListConfigVersionsResponse
-	20, // 28: tipsy.config.v1.ConfigService.GetConfigVersionNos:output_type -> tipsy.config.v1.GetConfigVersionNosResponse
-	22, // 29: tipsy.config.v1.ConfigService.NotifyBusinessNamespaceChange:output_type -> tipsy.config.v1.NotifyBusinessNamespaceChangeResponse
-	3,  // 30: tipsy.config.v1.ConfigService.GetDynamicConfig:output_type -> tipsy.config.v1.GetDynamicConfigResponse
-	5,  // 31: tipsy.config.v1.ConfigService.GetStaticConfig:output_type -> tipsy.config.v1.GetStaticConfigResponse
-	23, // [23:32] is the sub-list for method output_type
-	14, // [14:23] is the sub-list for method input_type
-	14, // [14:14] is the sub-list for extension type_name
-	14, // [14:14] is the sub-list for extension extendee
-	0,  // [0:14] is the sub-list for field type_name
+	13, // 8: tipsy.config.v1.ConfigUpdateEvent.heartbeat:type_name -> tipsy.config.v1.Heartbeat
+	0,  // 9: tipsy.config.v1.ListNamespacesByKindRequest.kind:type_name -> tipsy.config.v1.NamespaceKind
+	29, // 10: tipsy.config.v1.ListConfigKeysResponse.keys:type_name -> tipsy.config.v1.ListConfigKeysResponse.ConfigKeyInfo
+	30, // 11: tipsy.config.v1.ListConfigVersionsResponse.versions:type_name -> tipsy.config.v1.ListConfigVersionsResponse.ConfigVersionInfo
+	31, // 12: tipsy.config.v1.GetConfigVersionNosResponse.version_nos:type_name -> tipsy.config.v1.GetConfigVersionNosResponse.VersionNosEntry
+	1,  // 13: tipsy.config.v1.GetDynamicConfigRequest.UserAttrsEntry.value:type_name -> tipsy.config.v1.Value
+	9,  // 14: tipsy.config.v1.SubscribeRequest.KnownSeqsEntry.value:type_name -> tipsy.config.v1.NamespaceSeqs
+	6,  // 15: tipsy.config.v1.ConfigService.PullAll:input_type -> tipsy.config.v1.PullAllRequest
+	8,  // 16: tipsy.config.v1.ConfigService.Subscribe:input_type -> tipsy.config.v1.SubscribeRequest
+	14, // 17: tipsy.config.v1.ConfigService.ListNamespacesByKind:input_type -> tipsy.config.v1.ListNamespacesByKindRequest
+	16, // 18: tipsy.config.v1.ConfigService.ListConfigKeys:input_type -> tipsy.config.v1.ListConfigKeysRequest
+	18, // 19: tipsy.config.v1.ConfigService.ListConfigVersions:input_type -> tipsy.config.v1.ListConfigVersionsRequest
+	20, // 20: tipsy.config.v1.ConfigService.GetConfigVersionNos:input_type -> tipsy.config.v1.GetConfigVersionNosRequest
+	22, // 21: tipsy.config.v1.ConfigService.NotifyBusinessNamespaceChange:input_type -> tipsy.config.v1.NotifyBusinessNamespaceChangeRequest
+	2,  // 22: tipsy.config.v1.ConfigService.GetDynamicConfig:input_type -> tipsy.config.v1.GetDynamicConfigRequest
+	4,  // 23: tipsy.config.v1.ConfigService.GetStaticConfig:input_type -> tipsy.config.v1.GetStaticConfigRequest
+	7,  // 24: tipsy.config.v1.ConfigService.PullAll:output_type -> tipsy.config.v1.PullAllResponse
+	12, // 25: tipsy.config.v1.ConfigService.Subscribe:output_type -> tipsy.config.v1.ConfigUpdateEvent
+	15, // 26: tipsy.config.v1.ConfigService.ListNamespacesByKind:output_type -> tipsy.config.v1.ListNamespacesByKindResponse
+	17, // 27: tipsy.config.v1.ConfigService.ListConfigKeys:output_type -> tipsy.config.v1.ListConfigKeysResponse
+	19, // 28: tipsy.config.v1.ConfigService.ListConfigVersions:output_type -> tipsy.config.v1.ListConfigVersionsResponse
+	21, // 29: tipsy.config.v1.ConfigService.GetConfigVersionNos:output_type -> tipsy.config.v1.GetConfigVersionNosResponse
+	23, // 30: tipsy.config.v1.ConfigService.NotifyBusinessNamespaceChange:output_type -> tipsy.config.v1.NotifyBusinessNamespaceChangeResponse
+	3,  // 31: tipsy.config.v1.ConfigService.GetDynamicConfig:output_type -> tipsy.config.v1.GetDynamicConfigResponse
+	5,  // 32: tipsy.config.v1.ConfigService.GetStaticConfig:output_type -> tipsy.config.v1.GetStaticConfigResponse
+	24, // [24:33] is the sub-list for method output_type
+	15, // [15:24] is the sub-list for method input_type
+	15, // [15:15] is the sub-list for extension type_name
+	15, // [15:15] is the sub-list for extension extendee
+	0,  // [0:15] is the sub-list for field type_name
 }
 
 func init() { file_tipsy_config_v1_config_proto_init() }
@@ -1711,15 +1781,16 @@ func file_tipsy_config_v1_config_proto_init() {
 	file_tipsy_config_v1_config_proto_msgTypes[10].OneofWrappers = []any{}
 	file_tipsy_config_v1_config_proto_msgTypes[11].OneofWrappers = []any{
 		(*ConfigUpdateEvent_Snapshot)(nil),
+		(*ConfigUpdateEvent_Heartbeat)(nil),
 	}
-	file_tipsy_config_v1_config_proto_msgTypes[20].OneofWrappers = []any{}
+	file_tipsy_config_v1_config_proto_msgTypes[21].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_tipsy_config_v1_config_proto_rawDesc), len(file_tipsy_config_v1_config_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   30,
+			NumMessages:   31,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

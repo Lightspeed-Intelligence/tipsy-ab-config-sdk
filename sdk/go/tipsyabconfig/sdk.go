@@ -244,6 +244,13 @@ type Client struct {
 	// Health and updated by fireBackgroundError.
 	health healthState
 
+	// stableResetThreshold is the minimum uptime for a just-ended Subscribe
+	// connection to count as "healthy" so runSubscribe resets its reconnect
+	// backoff to the initial value (see resetBackoffIfStable). Init seeds it
+	// to defaultSubscribeStableResetThreshold; white-box tests may set a tiny
+	// value to deterministically exercise the reset wiring.
+	stableResetThreshold time.Duration
+
 	// Lifecycle.
 	rootCtx    context.Context
 	rootCancel context.CancelFunc
@@ -345,6 +352,7 @@ func Init(ctx context.Context, cfg Config) (*Client, error) {
 		logger:               cfg.Logger,
 		subscribedNamespaces: subs,
 		defaultNamespace:     cfg.DefaultNamespace,
+		stableResetThreshold: defaultSubscribeStableResetThreshold,
 		rootCtx:              rootCtx,
 		rootCancel:           rootCancel,
 	}

@@ -170,9 +170,17 @@ message KeyState {
 
 message ConfigUpdateEvent {
   oneof payload {
-    NamespaceSnapshot snapshot = 1;
-    // Reserved for future streaming extensions.
+    NamespaceSnapshot snapshot  = 1;
+    Heartbeat         heartbeat = 2;   // 空闲保活 DATA 帧；无配置载荷
   }
+}
+
+// Heartbeat is a liveness frame the server emits on an otherwise-idle Subscribe
+// stream so intermediary proxies (e.g. Cloudflare) do not tear the stream down
+// as a stalled response. It carries no config; clients must ignore it (no cache
+// change, no seq advance).
+message Heartbeat {
+  int64 unix_nanos = 1;   // server send time; NOT read by current SDK, reserved for future OnHeartbeat/liveness observability
 }
 
 message ListNamespacesByKindRequest  { NamespaceKind kind = 1; }

@@ -10,17 +10,37 @@ import (
 	"github.com/google/uuid"
 )
 
+// initialSubscribeBackoff is the starting reconnect backoff for runSubscribe
+// (also the value the backoff resets to after a clean EOF and after a healthy
+// connection is torn down — see resetBackoffIfStable).
+const initialSubscribeBackoff = time.Second
+
+// defaultSubscribeStableResetThreshold is the default minimum uptime for a
+// just-ended connection to count as "healthy" so the reconnect backoff resets
+// to the initial value. It sits above the 20 s server heartbeat interval and
+// clearly above the dial+instant-failure band, yet below the observed CF
+// ~124 s stream lifetime, so a CF idle-timeout teardown after minutes of
+// uptime reconnects promptly instead of inheriting an escalated backoff.
+const defaultSubscribeStableResetThreshold = 60 * time.Second
+
 // runSubscribe maintains a long-lived ConfigService.Subscribe stream with
 // exponential backoff (1 s → 2 s → 4 s → … capped at 30 s) per design §5.2.
 // It exits when the SDK root context is cancelled.
+//
+// Backoff reset on the real-error path: a connection that stayed up at least
+// c.stableResetThreshold before being torn down (e.g. an edge-proxy idle
+// timeout after minutes of uptime) is treated as "healthy then dropped" and
+// reconnects at the initial backoff instead of inheriting the escalated
+// backoff meant for a server that cannot be reached at all.
 func (c *Client) runSubscribe() {
 	defer c.wg.Done()
-	backoff := time.Second
+	backoff := initialSubscribeBackoff
 	const maxBackoff = 30 * time.Second
 	for {
 		if err := c.rootCtx.Err(); err != nil {
 			return
 		}
+		start := time.Now()
 		err := c.subscribeOnce(c.rootCtx)
 		if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, io.EOF) {
 			// Server closed cleanly; reconnect immediately on EOF, exit
@@ -28,10 +48,13 @@ func (c *Client) runSubscribe() {
 			if errors.Is(err, context.Canceled) {
 				return
 			}
-			backoff = time.Second
+			backoff = initialSubscribeBackoff
 			continue
 		}
-		// Real error path: bump disconnect metric and back off.
+		// Real error path: bump disconnect metric and back off. Reset the
+		// backoff BEFORE sleeping when the just-ended connection was healthy,
+		// so the logged backoff matches the actual time.After wait below.
+		backoff = resetBackoffIfStable(backoff, time.Since(start), c.stableResetThreshold)
 		for _, ns := range c.subscribedNamespaces {
 			c.metrics.subscribeDisc.inc(ns)
 		}
@@ -53,6 +76,26 @@ func (c *Client) runSubscribe() {
 			backoff = maxBackoff
 		}
 	}
+}
+
+// resetBackoffIfStable returns the initial backoff when the just-ended
+// connection was up long enough to count as healthy (uptime >= threshold);
+// otherwise it keeps the current backoff (which the caller then doubles).
+// A healthy connection that is later torn down (e.g. an edge-proxy idle
+// timeout after minutes of uptime) should reconnect promptly, not inherit the
+// escalated backoff meant for a server that cannot be reached at all.
+//
+// A non-positive threshold (threshold <= 0) never counts as stable, so it
+// falls through to the escalating backoff. This is a defensive guard: a
+// hand-built Client that forgot to set stableResetThreshold (zero value) must
+// not turn every failure against an unreachable server into a ~1s hot
+// reconnect loop. Production always seeds it to 60s via Init, so this path is
+// unreachable there.
+func resetBackoffIfStable(backoff, uptime, threshold time.Duration) time.Duration {
+	if threshold > 0 && uptime >= threshold {
+		return initialSubscribeBackoff
+	}
+	return backoff
 }
 
 // subscribeOnce opens one Subscribe stream and pumps events into the cache.
@@ -109,6 +152,10 @@ func (c *Client) handleEvent(ev *configv1.ConfigUpdateEvent) {
 				"experiment_seq", s.ExperimentSnapshotSeq,
 			)
 		}
+	case *configv1.ConfigUpdateEvent_Heartbeat:
+		// Liveness only — no cache work, no seq advance, not counted as a
+		// config event. Keeps the stream non-idle for edge proxies (e.g.
+		// Cloudflare).
 	default:
 		// Unknown payload — silently skip.
 	}
