@@ -242,6 +242,25 @@ def _parse_bool_lenient(raw: str) -> bool:
     return s.casefold() == "true" or s == "1"
 
 
+def _reset_backoff_if_stable(
+    backoff: float, uptime_s: float, threshold_s: float
+) -> float:
+    """Decide the reconnect backoff after a Subscribe stream drops.
+
+    Pure/deterministic so it can be unit-tested without a live stream. If the
+    connection stayed up at least ``threshold_s`` seconds before dropping it is
+    treated as healthy and the backoff resets to the initial ``1.0``; otherwise
+    the current ``backoff`` is returned unchanged (the caller then keeps its
+    exponential climb).
+
+    Guard (mirrors the Go SDK): a ``threshold_s <= 0`` means "never treat any
+    connection as stable", so the backoff is never reset in that mode.
+    """
+    if threshold_s > 0 and uptime_s >= threshold_s:
+        return 1.0
+    return backoff
+
+
 class Client:
     """Tipsy AB-config Python SDK handle.
 
@@ -284,6 +303,11 @@ class Client:
         self._auth = auth_plugin
         self._tasks: List[asyncio.Task] = []
         self._closed = False
+        # Subscribe reconnect backoff: reset to the initial value only after a
+        # connection that stayed up at least this long before dropping (mirrors
+        # the Go SDK). A short-lived connection keeps the exponential climb.
+        # Overridable by tests. A value <= 0 means "never treat as stable".
+        self._stable_reset_threshold_s = 60.0
         self._namespaces: List[str] = sorted({ns for ns in cfg.namespaces if ns})
         self._namespace_set = set(self._namespaces)
 
@@ -1095,6 +1119,7 @@ class Client:
         max_backoff = 30.0
         try:
             while not self._closed:
+                start = time.monotonic()
                 try:
                     await self._subscribe_once()
                     backoff = 1.0
@@ -1103,6 +1128,15 @@ class Client:
                 except Exception as e:  # noqa: BLE001
                     for ns in self._namespaces:
                         self._metrics.inc_subscribe_disconnect(ns)
+                    # R3: reset the backoff BEFORE logging/sleeping so the logged
+                    # backoff matches the actual wait (mirrors the Go SDK). A
+                    # connection that stayed up >= threshold before dropping is
+                    # treated as healthy and resets to the initial delay.
+                    backoff = _reset_backoff_if_stable(
+                        backoff,
+                        time.monotonic() - start,
+                        self._stable_reset_threshold_s,
+                    )
                     logger.error(
                         "tipsy_ab_config: Subscribe stream error; reconnecting",
                         extra={"err": str(e), "backoff_s": backoff},
@@ -1152,6 +1186,11 @@ class Client:
                 cur = self._cache.snapshot(snap.namespace)
                 if cur is not None:
                     self._metrics.set_local_cache_bytes(snap.namespace, cur.cached_bytes)
+        elif which == "heartbeat":
+            # Liveness-only frame: no cache mutation, no seq tracking, no metric.
+            # Explicit no-op so heartbeats are consciously ignored (parity with
+            # the Go SDK) rather than falling through the unknown-payload path.
+            pass
         # Unknown payload branches are silently skipped per design §5.2.
 
     # ---- lifecycle ----

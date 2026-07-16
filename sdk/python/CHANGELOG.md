@@ -8,6 +8,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-07-16
+
+### Added
+
+- Ignore Subscribe `Heartbeat` events (forward-compat): the server may emit
+  liveness-only `Heartbeat` frames on an otherwise-idle Subscribe stream. The
+  SDK now handles them as an explicit no-op — no cache mutation, no sequence
+  tracking, no metric — and regenerates the vendored proto bindings
+  (`config_pb2.py`) to include the `Heartbeat` message. Mirrors the Go SDK.
+
+### Changed
+
+- Reset the Subscribe reconnect backoff after a healthy connection drop: a
+  stream that stayed up at least 60s before dropping now reconnects at the
+  initial delay instead of continuing the exponential climb. A short-lived
+  connection still backs off exponentially. Mirrors the Go SDK.
+
 ## [0.10.0] - 2026-07-03
 
 ### Added
