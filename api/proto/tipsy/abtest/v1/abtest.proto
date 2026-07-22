@@ -68,6 +68,11 @@ message GetExperimentResultRequest {
   ExperimentType experiment_type = 5;    // optional; default custom_params
   ResultDisplayType display_type = 6;    // optional; default flat_kv
   string trace_id = 7;                   // optional; empty ⇒ server fills uuid.New()
+  // env: single-value environment identifier carried with the request; ""
+  // means unspecified. Server-side hit filtering: an experiment configured
+  // with a non-empty env set is only entered when this env is a member of
+  // that set; env="" enters only experiments with an empty (unrestricted) env.
+  string env = 8;
 }
 
 message GetExperimentResultResponse {

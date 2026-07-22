@@ -250,8 +250,13 @@ type GetExperimentResultRequest struct {
 	ExperimentType ExperimentType         `protobuf:"varint,5,opt,name=experiment_type,json=experimentType,proto3,enum=tipsy.abtest.v1.ExperimentType" json:"experiment_type,omitempty"`                       // optional; default custom_params
 	DisplayType    ResultDisplayType      `protobuf:"varint,6,opt,name=display_type,json=displayType,proto3,enum=tipsy.abtest.v1.ResultDisplayType" json:"display_type,omitempty"`                             // optional; default flat_kv
 	TraceId        string                 `protobuf:"bytes,7,opt,name=trace_id,json=traceId,proto3" json:"trace_id,omitempty"`                                                                                 // optional; empty ⇒ server fills uuid.New()
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// env: single-value environment identifier carried with the request; ""
+	// means unspecified. Server-side hit filtering: an experiment configured
+	// with a non-empty env set is only entered when this env is a member of
+	// that set; env="" enters only experiments with an empty (unrestricted) env.
+	Env           string `protobuf:"bytes,8,opt,name=env,proto3" json:"env,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *GetExperimentResultRequest) Reset() {
@@ -329,6 +334,13 @@ func (x *GetExperimentResultRequest) GetDisplayType() ResultDisplayType {
 func (x *GetExperimentResultRequest) GetTraceId() string {
 	if x != nil {
 		return x.TraceId
+	}
+	return ""
+}
+
+func (x *GetExperimentResultRequest) GetEnv() string {
+	if x != nil {
+		return x.Env
 	}
 	return ""
 }
@@ -921,7 +933,7 @@ const file_tipsy_abtest_v1_abtest_proto_rawDesc = "" +
 	"\x01i\x18\x02 \x01(\x03H\x00R\x01i\x12\x0e\n" +
 	"\x01d\x18\x03 \x01(\x01H\x00R\x01d\x12\x0e\n" +
 	"\x01b\x18\x04 \x01(\bH\x00R\x01bB\x03\n" +
-	"\x01v\"\xcd\x03\n" +
+	"\x01v\"\xdf\x03\n" +
 	"\x1aGetExperimentResultRequest\x12\x1c\n" +
 	"\tnamespace\x18\x01 \x01(\tR\tnamespace\x12\x17\n" +
 	"\auser_id\x18\x02 \x01(\tR\x06userId\x12Y\n" +
@@ -930,7 +942,8 @@ const file_tipsy_abtest_v1_abtest_proto_rawDesc = "" +
 	"\tlayer_ids\x18\x04 \x03(\tR\blayerIds\x12H\n" +
 	"\x0fexperiment_type\x18\x05 \x01(\x0e2\x1f.tipsy.abtest.v1.ExperimentTypeR\x0eexperimentType\x12E\n" +
 	"\fdisplay_type\x18\x06 \x01(\x0e2\".tipsy.abtest.v1.ResultDisplayTypeR\vdisplayType\x12\x19\n" +
-	"\btrace_id\x18\a \x01(\tR\atraceId\x1aT\n" +
+	"\btrace_id\x18\a \x01(\tR\atraceId\x12\x10\n" +
+	"\x03env\x18\b \x01(\tR\x03env\x1aT\n" +
 	"\x0eUserAttrsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12,\n" +
 	"\x05value\x18\x02 \x01(\v2\x16.tipsy.abtest.v1.ValueR\x05value:\x028\x01\"\xf7\x03\n" +

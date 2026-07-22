@@ -184,12 +184,16 @@ func (*Value_D) isValue_V() {}
 func (*Value_B) isValue_V() {}
 
 type GetDynamicConfigRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Namespace     string                 `protobuf:"bytes,1,opt,name=namespace,proto3" json:"namespace,omitempty"` // defaulted by the SDK
-	UserId        string                 `protobuf:"bytes,2,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
-	UserAttrs     map[string]*Value      `protobuf:"bytes,3,rep,name=user_attrs,json=userAttrs,proto3" json:"user_attrs,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	Keys          []string               `protobuf:"bytes,4,rep,name=keys,proto3" json:"keys,omitempty"`                      // requested key names; empty = all keys
-	TraceId       string                 `protobuf:"bytes,5,opt,name=trace_id,json=traceId,proto3" json:"trace_id,omitempty"` // optional; empty ⇒ server fills uuid.New()
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	Namespace string                 `protobuf:"bytes,1,opt,name=namespace,proto3" json:"namespace,omitempty"` // defaulted by the SDK
+	UserId    string                 `protobuf:"bytes,2,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	UserAttrs map[string]*Value      `protobuf:"bytes,3,rep,name=user_attrs,json=userAttrs,proto3" json:"user_attrs,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	Keys      []string               `protobuf:"bytes,4,rep,name=keys,proto3" json:"keys,omitempty"`                      // requested key names; empty = all keys
+	TraceId   string                 `protobuf:"bytes,5,opt,name=trace_id,json=traceId,proto3" json:"trace_id,omitempty"` // optional; empty ⇒ server fills uuid.New()
+	// env: single-value environment identifier carried with the request; ""
+	// means unspecified. Passed through to the internal GetExperimentResult
+	// call for experiment hit filtering (see abtest.proto env semantics).
+	Env           string `protobuf:"bytes,6,opt,name=env,proto3" json:"env,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -259,6 +263,13 @@ func (x *GetDynamicConfigRequest) GetTraceId() string {
 	return ""
 }
 
+func (x *GetDynamicConfigRequest) GetEnv() string {
+	if x != nil {
+		return x.Env
+	}
+	return ""
+}
+
 type GetDynamicConfigResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Values        map[string]string      `protobuf:"bytes,1,rep,name=values,proto3" json:"values,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"` // key_name → resolved value
@@ -304,10 +315,14 @@ func (x *GetDynamicConfigResponse) GetValues() map[string]string {
 }
 
 type GetStaticConfigRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Namespace     string                 `protobuf:"bytes,1,opt,name=namespace,proto3" json:"namespace,omitempty"`
-	Keys          []string               `protobuf:"bytes,2,rep,name=keys,proto3" json:"keys,omitempty"`
-	TraceId       string                 `protobuf:"bytes,3,opt,name=trace_id,json=traceId,proto3" json:"trace_id,omitempty"` // optional; empty ⇒ server fills uuid.New()
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	Namespace string                 `protobuf:"bytes,1,opt,name=namespace,proto3" json:"namespace,omitempty"`
+	Keys      []string               `protobuf:"bytes,2,rep,name=keys,proto3" json:"keys,omitempty"`
+	TraceId   string                 `protobuf:"bytes,3,opt,name=trace_id,json=traceId,proto3" json:"trace_id,omitempty"` // optional; empty ⇒ server fills uuid.New()
+	// env: single-value environment identifier carried with the request; ""
+	// means unspecified. Field carried for parity; server records it but does
+	// not narrow static config by env (see abtest.proto env semantics).
+	Env           string `protobuf:"bytes,4,opt,name=env,proto3" json:"env,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -363,6 +378,13 @@ func (x *GetStaticConfigRequest) GetTraceId() string {
 	return ""
 }
 
+func (x *GetStaticConfigRequest) GetEnv() string {
+	if x != nil {
+		return x.Env
+	}
+	return ""
+}
+
 type GetStaticConfigResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Values        map[string]string      `protobuf:"bytes,1,rep,name=values,proto3" json:"values,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"` // key_name → full-release value
@@ -408,9 +430,13 @@ func (x *GetStaticConfigResponse) GetValues() map[string]string {
 }
 
 type PullAllRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Namespaces    []string               `protobuf:"bytes,1,rep,name=namespaces,proto3" json:"namespaces,omitempty"`
-	TraceId       string                 `protobuf:"bytes,2,opt,name=trace_id,json=traceId,proto3" json:"trace_id,omitempty"` // optional; empty ⇒ server fills uuid.New()
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	Namespaces []string               `protobuf:"bytes,1,rep,name=namespaces,proto3" json:"namespaces,omitempty"`
+	TraceId    string                 `protobuf:"bytes,2,opt,name=trace_id,json=traceId,proto3" json:"trace_id,omitempty"` // optional; empty ⇒ server fills uuid.New()
+	// env: single-value environment identifier carried with the request; ""
+	// means unspecified. Field carried for parity; server records it but does
+	// not narrow the snapshot by env (see abtest.proto env semantics).
+	Env           string `protobuf:"bytes,3,opt,name=env,proto3" json:"env,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -455,6 +481,13 @@ func (x *PullAllRequest) GetNamespaces() []string {
 func (x *PullAllRequest) GetTraceId() string {
 	if x != nil {
 		return x.TraceId
+	}
+	return ""
+}
+
+func (x *PullAllRequest) GetEnv() string {
+	if x != nil {
+		return x.Env
 	}
 	return ""
 }
@@ -511,7 +544,11 @@ type SubscribeRequest struct {
 	KnownSeqs map[string]*NamespaceSeqs `protobuf:"bytes,2,rep,name=known_seqs,json=knownSeqs,proto3" json:"known_seqs,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	// trace_id describes "which subscribe-establish action"; per-event pushes
 	// do not carry their own trace_id (see design.md §2 Subscribe semantics).
-	TraceId       string `protobuf:"bytes,3,opt,name=trace_id,json=traceId,proto3" json:"trace_id,omitempty"`
+	TraceId string `protobuf:"bytes,3,opt,name=trace_id,json=traceId,proto3" json:"trace_id,omitempty"`
+	// env: single-value environment identifier carried with the request; ""
+	// means unspecified. Field carried for parity; server records it but does
+	// not narrow pushed snapshots by env (see abtest.proto env semantics).
+	Env           string `protobuf:"bytes,4,opt,name=env,proto3" json:"env,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -563,6 +600,13 @@ func (x *SubscribeRequest) GetKnownSeqs() map[string]*NamespaceSeqs {
 func (x *SubscribeRequest) GetTraceId() string {
 	if x != nil {
 		return x.TraceId
+	}
+	return ""
+}
+
+func (x *SubscribeRequest) GetEnv() string {
+	if x != nil {
+		return x.Env
 	}
 	return ""
 }
@@ -1548,14 +1592,15 @@ const file_tipsy_config_v1_config_proto_rawDesc = "" +
 	"\x01i\x18\x02 \x01(\x03H\x00R\x01i\x12\x0e\n" +
 	"\x01d\x18\x03 \x01(\x01H\x00R\x01d\x12\x0e\n" +
 	"\x01b\x18\x04 \x01(\bH\x00R\x01bB\x03\n" +
-	"\x01v\"\xad\x02\n" +
+	"\x01v\"\xbf\x02\n" +
 	"\x17GetDynamicConfigRequest\x12\x1c\n" +
 	"\tnamespace\x18\x01 \x01(\tR\tnamespace\x12\x17\n" +
 	"\auser_id\x18\x02 \x01(\tR\x06userId\x12V\n" +
 	"\n" +
 	"user_attrs\x18\x03 \x03(\v27.tipsy.config.v1.GetDynamicConfigRequest.UserAttrsEntryR\tuserAttrs\x12\x12\n" +
 	"\x04keys\x18\x04 \x03(\tR\x04keys\x12\x19\n" +
-	"\btrace_id\x18\x05 \x01(\tR\atraceId\x1aT\n" +
+	"\btrace_id\x18\x05 \x01(\tR\atraceId\x12\x10\n" +
+	"\x03env\x18\x06 \x01(\tR\x03env\x1aT\n" +
 	"\x0eUserAttrsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12,\n" +
 	"\x05value\x18\x02 \x01(\v2\x16.tipsy.config.v1.ValueR\x05value:\x028\x01\"\xa4\x01\n" +
@@ -1563,30 +1608,33 @@ const file_tipsy_config_v1_config_proto_rawDesc = "" +
 	"\x06values\x18\x01 \x03(\v25.tipsy.config.v1.GetDynamicConfigResponse.ValuesEntryR\x06values\x1a9\n" +
 	"\vValuesEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"e\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"w\n" +
 	"\x16GetStaticConfigRequest\x12\x1c\n" +
 	"\tnamespace\x18\x01 \x01(\tR\tnamespace\x12\x12\n" +
 	"\x04keys\x18\x02 \x03(\tR\x04keys\x12\x19\n" +
-	"\btrace_id\x18\x03 \x01(\tR\atraceId\"\xa2\x01\n" +
+	"\btrace_id\x18\x03 \x01(\tR\atraceId\x12\x10\n" +
+	"\x03env\x18\x04 \x01(\tR\x03env\"\xa2\x01\n" +
 	"\x17GetStaticConfigResponse\x12L\n" +
 	"\x06values\x18\x01 \x03(\v24.tipsy.config.v1.GetStaticConfigResponse.ValuesEntryR\x06values\x1a9\n" +
 	"\vValuesEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"K\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"]\n" +
 	"\x0ePullAllRequest\x12\x1e\n" +
 	"\n" +
 	"namespaces\x18\x01 \x03(\tR\n" +
 	"namespaces\x12\x19\n" +
-	"\btrace_id\x18\x02 \x01(\tR\atraceId\"S\n" +
+	"\btrace_id\x18\x02 \x01(\tR\atraceId\x12\x10\n" +
+	"\x03env\x18\x03 \x01(\tR\x03env\"S\n" +
 	"\x0fPullAllResponse\x12@\n" +
-	"\tsnapshots\x18\x01 \x03(\v2\".tipsy.config.v1.NamespaceSnapshotR\tsnapshots\"\xfc\x01\n" +
+	"\tsnapshots\x18\x01 \x03(\v2\".tipsy.config.v1.NamespaceSnapshotR\tsnapshots\"\x8e\x02\n" +
 	"\x10SubscribeRequest\x12\x1e\n" +
 	"\n" +
 	"namespaces\x18\x01 \x03(\tR\n" +
 	"namespaces\x12O\n" +
 	"\n" +
 	"known_seqs\x18\x02 \x03(\v20.tipsy.config.v1.SubscribeRequest.KnownSeqsEntryR\tknownSeqs\x12\x19\n" +
-	"\btrace_id\x18\x03 \x01(\tR\atraceId\x1a\\\n" +
+	"\btrace_id\x18\x03 \x01(\tR\atraceId\x12\x10\n" +
+	"\x03env\x18\x04 \x01(\tR\x03env\x1a\\\n" +
 	"\x0eKnownSeqsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x124\n" +
 	"\x05value\x18\x02 \x01(\v2\x1e.tipsy.config.v1.NamespaceSeqsR\x05value:\x028\x01\"{\n" +

@@ -96,6 +96,10 @@ message GetDynamicConfigRequest {
   map<string, Value> user_attrs = 3;
   repeated string keys = 4;             // requested key names; empty = all keys
   string trace_id = 5;                  // optional; empty ⇒ server fills uuid.New()
+  // env: single-value environment identifier carried with the request; ""
+  // means unspecified. Passed through to the internal GetExperimentResult
+  // call for experiment hit filtering (see abtest.proto env semantics).
+  string env = 6;
 }
 message GetDynamicConfigResponse {
   map<string, string> values = 1;       // key_name → resolved value
@@ -105,6 +109,10 @@ message GetStaticConfigRequest {
   string namespace = 1;
   repeated string keys = 2;
   string trace_id = 3;                  // optional; empty ⇒ server fills uuid.New()
+  // env: single-value environment identifier carried with the request; ""
+  // means unspecified. Field carried for parity; server records it but does
+  // not narrow static config by env (see abtest.proto env semantics).
+  string env = 4;
 }
 message GetStaticConfigResponse {
   map<string, string> values = 1;       // key_name → full-release value
@@ -118,6 +126,10 @@ enum NamespaceKind {
 message PullAllRequest  {
   repeated string namespaces = 1;
   string trace_id = 2;                  // optional; empty ⇒ server fills uuid.New()
+  // env: single-value environment identifier carried with the request; ""
+  // means unspecified. Field carried for parity; server records it but does
+  // not narrow the snapshot by env (see abtest.proto env semantics).
+  string env = 3;
 }
 message PullAllResponse { repeated NamespaceSnapshot snapshots = 1; }
 
@@ -129,6 +141,10 @@ message SubscribeRequest {
   // trace_id describes "which subscribe-establish action"; per-event pushes
   // do not carry their own trace_id (see design.md §2 Subscribe semantics).
   string trace_id = 3;
+  // env: single-value environment identifier carried with the request; ""
+  // means unspecified. Field carried for parity; server records it but does
+  // not narrow pushed snapshots by env (see abtest.proto env semantics).
+  string env = 4;
 }
 
 message NamespaceSeqs {
