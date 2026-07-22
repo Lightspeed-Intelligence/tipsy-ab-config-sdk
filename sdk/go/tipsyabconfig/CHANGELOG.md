@@ -20,6 +20,38 @@ bump first, then an SDK tag bump.
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-07-22
+
+### Added
+
+- `Config.Env` (`string`, default `""`) — a single-value environment
+  identifier stamped onto **every** outbound request: `GetExperimentResult`,
+  the `config_version` flat_kv fetch behind `GetConfig`, the background
+  `PullAll`, and the `Subscribe` stream. It tells the server which environment
+  this process runs in so experiment env filtering can apply (an experiment
+  with a non-empty env set is only entered when this env is a member; `env=""`
+  enters only experiments that do not restrict their env). There is **no**
+  environment-variable fallback and no `applyDefaults` handling — the value is
+  used verbatim.
+- `Client.Env()` accessor returning the configured env (`""` when unset),
+  for debugging / parity with the Python and Java SDKs.
+
+### Changed
+
+- Requires `api/gen/go` v0.7.0 for the new `env` request field (added to the
+  five SDK-facing request messages). The `go.mod` pin is bumped at release,
+  alongside the `api/gen/go/v0.7.0` tag; the same bump also catches up the pin,
+  which had lagged at `v0.5.0` while the v0.10.0 `Heartbeat` handling already
+  required `v0.6.0`.
+
+### Compatibility
+
+- 100% backwards compatible. `Env` defaults to `""`; protojson omits an empty
+  scalar in HTTP mode, so an unset `Env` is byte-for-byte wire-compatible with
+  older servers. A configured env sent to an older server that predates the
+  field is safely ignored (gRPC drops unknown fields; the HTTP gateway decodes
+  with `DiscardUnknown`).
+
 ## [0.10.0] - 2026-07-16
 
 ### Added

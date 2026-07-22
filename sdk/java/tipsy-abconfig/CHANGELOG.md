@@ -8,6 +8,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-07-22
+
+### Added
+
+- `Config.env` (builder `env(String)`, default `""`) — a single-value
+  environment identifier stamped onto **every** outbound request:
+  `getExperimentResult`, the `config_version` flat_kv fetch behind
+  `getConfig`, the background `PullAll`, and the `Subscribe` stream. It tells
+  the server which environment this process runs in so experiment env
+  filtering can apply (an experiment with a non-empty env set is only entered
+  when this env is a member; `env=""` enters only experiments that do not
+  restrict their env). No environment-variable fallback — the value is used
+  verbatim. The build-time protobuf plugin regenerates the request stubs from
+  `api/proto` automatically. Mirrors the Go and Python SDKs.
+
+### Compatibility
+
+- 100% backwards compatible. `env` defaults to `""`; the HTTP transport's
+  `JsonFormat` omits an empty scalar, so an unset `env` is byte-for-byte
+  wire-compatible with older servers. A configured env sent to an older server
+  that predates the field is safely ignored.
+
 ## [0.7.0] - 2026-07-16
 
 ### Changed
