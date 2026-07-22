@@ -38,6 +38,9 @@ type fakeConfigServer struct {
 	pullResponses map[string]*configv1.NamespaceSnapshot // ns -> snapshot
 	pullErr       error
 	pullCalls     int
+	// pullReqs records every PullAllRequest received (used to verify fields
+	// like env/trace_id land on the wire). Mirrors subscribeReqs.
+	pullReqs []*configv1.PullAllRequest
 
 	// Subscribe knobs.
 	subscribeReqs []*configv1.SubscribeRequest
@@ -107,9 +110,21 @@ func (f *fakeConfigServer) LastSubscribeReq() *configv1.SubscribeRequest {
 	return f.subscribeReqs[len(f.subscribeReqs)-1]
 }
 
+// LastPullReq returns the most recent PullAllRequest received by the server
+// (used to verify env / trace_id land on the wire).
+func (f *fakeConfigServer) LastPullReq() *configv1.PullAllRequest {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.pullReqs) == 0 {
+		return nil
+	}
+	return f.pullReqs[len(f.pullReqs)-1]
+}
+
 func (f *fakeConfigServer) PullAll(_ context.Context, req *configv1.PullAllRequest) (*configv1.PullAllResponse, error) {
 	f.mu.Lock()
 	f.pullCalls++
+	f.pullReqs = append(f.pullReqs, req)
 	pullErr := f.pullErr
 	out := []*configv1.NamespaceSnapshot{}
 	for _, ns := range req.GetNamespaces() {
