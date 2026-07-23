@@ -30,6 +30,17 @@ PRE_COMMIT="${REPO_ROOT}/.githooks/pre-commit"
 # Point config at throwaway empty files, disable the system config, and pin the
 # default branch + a test identity so runs are byte-for-byte reproducible
 # regardless of where they execute.
+# Decide dependency strictness BEFORE we scrub the CI env vars below. In an
+# automated run (CI/GITHUB_ACTIONS set, or an explicit opt-in) a missing jq/git
+# must FAIL, not silently skip — otherwise this job, the sole guard against CI
+# false-greens, would itself go false-green if a runner image ever dropped a
+# dependency. Interactive/local runs keep the convenience skip.
+if [ -n "${CI:-}" ] || [ -n "${GITHUB_ACTIONS:-}" ] || [ -n "${HOOKS_TEST_REQUIRE_DEPS:-}" ]; then
+  require_deps=1
+else
+  require_deps=0
+fi
+
 # The hooks self-disable when CI / GITHUB_ACTIONS is set — that is their
 # intended production opt-out (they must no-op during real CI jobs). These
 # tests exercise the hook LOGIC, so neutralize that guard here (same intent as
@@ -47,8 +58,16 @@ git config --file "$GIT_CONFIG_GLOBAL" user.name test
 git config --file "$GIT_CONFIG_GLOBAL" commit.gpgsign false
 CHECK_CI="${REPO_ROOT}/scripts/check-pr-ci.sh"
 
-command -v jq >/dev/null 2>&1 || { echo "SKIP: jq not installed"; exit 0; }
-command -v git >/dev/null 2>&1 || { echo "SKIP: git not installed"; exit 0; }
+missing_dep() {
+  if [ "$require_deps" -eq 1 ]; then
+    echo "FAIL: required dependency '$1' not found (this run requires deps)" >&2
+    exit 1
+  fi
+  echo "SKIP: $1 not installed (local run; set HOOKS_TEST_REQUIRE_DEPS=1 to enforce)"
+  exit 0
+}
+command -v jq  >/dev/null 2>&1 || missing_dep jq
+command -v git >/dev/null 2>&1 || missing_dep git
 
 pass=0 fail=0
 ok()   { pass=$((pass+1)); echo "  ✓ $1"; }
