@@ -9,6 +9,13 @@
 # working repo.
 #
 # Usage: bash scripts/test-hooks.sh   (exit 0 = all pass, 1 = a case failed)
+# Explicitly DISABLE errexit. Many cases below intentionally run commands that
+# exit non-zero (a rejected push, a blocked commit) as part of setup or as the
+# thing under test; each is checked explicitly via its captured rc. Under `set
+# -e` — which GitHub Actions applies to `run:` steps by default (`bash -e`) —
+# the first such non-zero would abort the whole script mid-setup and produce
+# spurious failures. `-u`/pipefail stay on.
+set +e
 set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
