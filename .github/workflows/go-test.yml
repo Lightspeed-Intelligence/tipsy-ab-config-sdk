@@ -71,3 +71,21 @@ jobs:
           protoc --version
           bash scripts/gen-proto.sh
           git diff --exit-code -- api/gen/go
+
+  # Hermetic regression tests for the git hooks + CI watcher. Runs the
+  # self-contained scripts/test-hooks.sh (fake gh + local bare remotes, no
+  # network) so the self-wrap push semantics, the CI false-green guards and the
+  # staged-only pre-commit can't silently regress.
+  hooks-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.0'
+      - name: git identity for hook test commits
+        run: |
+          git config --global user.email ci@example.com
+          git config --global user.name ci
+      - name: run hook tests
+        run: bash scripts/test-hooks.sh

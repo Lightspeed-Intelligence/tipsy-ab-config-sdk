@@ -92,9 +92,17 @@ if [ "$check_count" -eq 0 ]; then
 fi
 
 # Block until all checks finish. --fail-fast returns as soon as one fails.
-# We intentionally ignore the watch exit code here and re-derive the final
-# verdict from a fresh --json query, so the reporting logic is single-sourced.
-gh pr checks "$pr_number" --watch --fail-fast --interval 15 >/dev/null 2>&1 || true
+# We re-derive the final verdict from a fresh --json query below (single source
+# of truth), but the watch exit status is NOT ignored: `gh pr checks --watch`
+# exits 0 only when every check is complete and passing, 1 when a check fails,
+# and 8 when it stops with checks still pending. If it exits non-zero for a
+# reason OTHER than a real failure (network drop, auth expiry, rate limit, CLI
+# abort), the loop below may have stopped early with checks still pending, so we
+# must NOT trust an empty `failures` list as "all passed". We capture the code
+# and, combined with the terminal-state assertion further down, refuse to emit
+# a false green when the watch bailed out before CI actually finished.
+gh pr checks "$pr_number" --watch --fail-fast --interval 15 >/dev/null 2>&1
+watch_rc=$?
 
 # Fresh snapshot of all checks. Guard against BOTH an empty string (query
 # failure) and a valid-but-empty JSON array `[]` (checks vanished between the
@@ -109,6 +117,31 @@ fi
 snapshot_count="$(printf '%s' "$checks_json" | jq 'length' 2>/dev/null)"
 if [ -z "$snapshot_count" ] || ! { [ "$snapshot_count" -eq "$snapshot_count" ] 2>/dev/null; } || [ "$snapshot_count" -eq 0 ]; then
   log "post-push: CI check set for PR #${pr_number} is empty or unreadable on final read — cannot confirm a pass. Failing safe."
+  exit 1
+fi
+
+# Terminal-state assertion. A green verdict requires EVERY check to have reached
+# a terminal bucket (pass / skipping); the "no failures" test alone is not
+# enough because a check still in `pending` is neither fail nor cancel, so an
+# early-exited watch would otherwise slip a not-yet-finished CI through as green.
+# gh buckets: pass | fail | cancel | skipping | pending. Anything outside the
+# known-terminal set (pass/fail/cancel/skipping) — `pending` or an
+# unrecognized/empty bucket from a future gh — counts as not-yet-terminal.
+nonterminal="$(printf '%s' "$checks_json" \
+  | jq -r '.[] | select((.bucket // "") as $b | ($b=="pass" or $b=="fail" or $b=="cancel" or $b=="skipping") | not) | "\(.name)\t\(.bucket // "")"')"
+if [ -n "$nonterminal" ]; then
+  log ""
+  log "════════════════════════════════════════════════════════════"
+  log "  ✗ post-push: CI has NOT finished for PR #${pr_number}"
+  log "    (gh pr checks --watch exited rc=${watch_rc} with checks still"
+  log "     in a non-terminal state — likely a dropped/rate-limited watch)."
+  log "  Unfinished checks:"
+  while IFS=$'\t' read -r name bucket; do
+    [ -z "$name" ] && continue
+    log "    • ${name} [${bucket:-unknown}]"
+  done <<< "$nonterminal"
+  log "  → NOT a pass. Re-run the watch (re-push or re-invoke) once CI settles."
+  log "════════════════════════════════════════════════════════════"
   exit 1
 fi
 

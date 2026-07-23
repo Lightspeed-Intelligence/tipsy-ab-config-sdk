@@ -123,3 +123,23 @@ The inner push then applies `--force-with-lease`, pinned to the remote SHA git
 negotiated for this push (so a concurrent remote advance still aborts it).
 Without the env var, a genuine non-fast-forward inner push is rejected by the
 remote exactly as it would be without the hook.
+
+**Push options the hook can't see.** The pre-push protocol does not pass the
+outer command's flags (`--atomic`, `--signed`, `--push-option`,
+`--follow-tags`, …) to the hook, so the inner push cannot mirror them
+automatically. Two mitigations avoid a silent downgrade:
+
+- **Atomicity is preserved for multi-ref pushes.** When more than one refspec
+  is being pushed, the inner push adds `--atomic` itself, so an all-or-nothing
+  push does not degrade into partial success. (Single-ref pushes are atomic
+  regardless.)
+- **Forward anything else via `GIT_POSTPUSH_PUSH_OPTS`.** Set it to the extra
+  push options you need and the inner push appends them verbatim:
+
+  ```bash
+  GIT_POSTPUSH_PUSH_OPTS='--signed --push-option=ci.skip' git push
+  ```
+
+If you rely on a push option that the hook cannot observe and cannot be
+supplied through `GIT_POSTPUSH_PUSH_OPTS`, bypass the self-wrap for that push
+(`GIT_POSTPUSH=1 git push …`) and watch CI separately.
