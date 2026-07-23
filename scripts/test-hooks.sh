@@ -21,6 +21,22 @@ set -uo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PRE_PUSH="${REPO_ROOT}/.githooks/pre-push"
 PRE_COMMIT="${REPO_ROOT}/.githooks/pre-commit"
+
+# Isolate every git invocation in this test from the host/CI global + system
+# config. A CI runner's global config can carry settings that break the
+# assumptions here — e.g. commit.gpgsign=true (a no-key signed commit fails, so
+# the "commit is blocked by the hook" cases can't tell a hook rejection from a
+# signing failure), a global core.hooksPath, or init.defaultBranch != main.
+# Point config at throwaway empty files, disable the system config, and pin the
+# default branch + a test identity so runs are byte-for-byte reproducible
+# regardless of where they execute.
+export GIT_CONFIG_NOSYSTEM=1
+_GITISO="$(mktemp -d)"
+export GIT_CONFIG_GLOBAL="${_GITISO}/gitconfig"
+git config --file "$GIT_CONFIG_GLOBAL" init.defaultBranch main
+git config --file "$GIT_CONFIG_GLOBAL" user.email test@example.com
+git config --file "$GIT_CONFIG_GLOBAL" user.name test
+git config --file "$GIT_CONFIG_GLOBAL" commit.gpgsign false
 CHECK_CI="${REPO_ROOT}/scripts/check-pr-ci.sh"
 
 command -v jq >/dev/null 2>&1 || { echo "SKIP: jq not installed"; exit 0; }
@@ -34,7 +50,7 @@ check(){ # check <desc> <actual> <expected>
 }
 
 SANDBOX="$(mktemp -d)"
-trap 'rm -rf "$SANDBOX"' EXIT
+trap 'rm -rf "$SANDBOX" "$_GITISO"' EXIT
 
 # ── fake gh factory ─────────────────────────────────────────────────────────
 # Writes a $1/bin/gh whose `pr checks` output is driven by a JSON file the
