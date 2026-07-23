@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tipsy-ab-config"
-version = "0.11.0"
+version = "0.12.0"
 description = "Tipsy AB-config Python SDK — local config cache + abtest Compute client"
 readme = "README.md"
 requires-python = ">=3.10"

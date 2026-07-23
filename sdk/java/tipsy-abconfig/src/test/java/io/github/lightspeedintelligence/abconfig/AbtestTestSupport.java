@@ -196,6 +196,10 @@ final class AbtestTestSupport implements AutoCloseable {
     static final class FakeConfigService extends ConfigServiceGrpc.ConfigServiceImplBase {
         private final Map<String, NsCache> snapshotsByNs;
         final AtomicInteger pullAllCalls = new AtomicInteger();
+        /** Every PullAll request received, in arrival order (for wire assertions). */
+        final ConcurrentLinkedQueue<PullAllRequest> pullAllRequests = new ConcurrentLinkedQueue<>();
+        /** Every Subscribe request received, in arrival order (for wire assertions). */
+        final ConcurrentLinkedQueue<SubscribeRequest> subscribeRequests = new ConcurrentLinkedQueue<>();
 
         FakeConfigService(Map<String, NsCache> snapshotsByNs) {
             this.snapshotsByNs = snapshotsByNs;
@@ -204,6 +208,7 @@ final class AbtestTestSupport implements AutoCloseable {
         @Override
         public void pullAll(PullAllRequest request, StreamObserver<PullAllResponse> responseObserver) {
             pullAllCalls.incrementAndGet();
+            pullAllRequests.add(request);
             PullAllResponse.Builder resp = PullAllResponse.newBuilder();
             for (String ns : request.getNamespacesList()) {
                 NsCache nc = snapshotsByNs.get(ns);
@@ -219,6 +224,7 @@ final class AbtestTestSupport implements AutoCloseable {
         public void subscribe(SubscribeRequest request, StreamObserver<ConfigUpdateEvent> responseObserver) {
             // Park: a clean, idle server-streaming call. Never push, never error.
             // The client's close() cancels it; we simply never complete here.
+            subscribeRequests.add(request);
         }
     }
 
@@ -297,6 +303,7 @@ final class AbtestTestSupport implements AutoCloseable {
     static final class Builder {
         private final List<String> namespaces = new ArrayList<>();
         private String defaultNamespace = "";
+        private String env = "";
         private boolean withAbtest = true;
         private final Map<String, NsCache> snapshots = new java.util.LinkedHashMap<>();
         private final Map<String, Map<String, Long>> abtestKv = new java.util.LinkedHashMap<>();
@@ -311,6 +318,12 @@ final class AbtestTestSupport implements AutoCloseable {
 
         Builder defaultNamespace(String ns) {
             this.defaultNamespace = ns;
+            return this;
+        }
+
+        /** Sets the client-level {@code env} carried on every outbound request. */
+        Builder env(String env) {
+            this.env = env;
             return this;
         }
 
@@ -369,6 +382,7 @@ final class AbtestTestSupport implements AutoCloseable {
                     .configServiceAddr("passthrough:///fake-config")
                     .token("test-token")
                     .defaultNamespace(defaultNamespace)
+                    .env(env)
                     .transport(Transport.GRPC)
                     .abtestTimeout(abtestTimeout)
                     .pullTimeout(Duration.ofSeconds(2))

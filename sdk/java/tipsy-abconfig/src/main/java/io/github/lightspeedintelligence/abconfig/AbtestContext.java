@@ -278,6 +278,7 @@ public final class AbtestContext {
                 .setExperimentType(io.github.lightspeedintelligence.abconfig.proto.abtest.v1.ExperimentType.EXPERIMENT_TYPE_CONFIG_VERSION)
                 .setDisplayType(io.github.lightspeedintelligence.abconfig.proto.abtest.v1.ResultDisplayType.RESULT_DISPLAY_TYPE_FLAT_KV)
                 .setTraceId(traceId)
+                .setEnv(owner.configEnv())
                 .build();
         long __start = System.nanoTime();
         try {

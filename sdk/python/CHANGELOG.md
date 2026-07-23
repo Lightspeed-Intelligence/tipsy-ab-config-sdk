@@ -8,6 +8,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-07-22
+
+### Added
+
+- `Config.env` (`str`, default `""`) — a single-value environment identifier
+  stamped onto **every** outbound request: `GetExperimentResult`, the
+  `config_version` flat_kv fetch behind `get_config`, the background `PullAll`,
+  and the `Subscribe` stream. It tells the server which environment this
+  process runs in so experiment env filtering can apply (an experiment with a
+  non-empty env set is only entered when this env is a member; `env=""` enters
+  only experiments that do not restrict their env). No `os.getenv` fallback —
+  the value is used verbatim. Regenerates the vendored proto bindings
+  (`abtest_pb2.py` / `config_pb2.py`) to include the `env` field on the five
+  SDK-facing request messages. Mirrors the Go and Java SDKs.
+
+### Compatibility
+
+- 100% backwards compatible. `env` defaults to `""`; the HTTP transport's
+  `MessageToJson` omits an empty scalar, so an unset `env` is byte-for-byte
+  wire-compatible with older servers. A configured env sent to an older server
+  that predates the field is safely ignored.
+
 ## [0.11.0] - 2026-07-16
 
 ### Added

@@ -1,6 +1,7 @@
 package tipsyabconfig
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -47,6 +48,11 @@ type httpHarness struct {
 	pullAuth    []string // Authorization header seen on each pull_all request
 	abtestAuth  []string // Authorization header seen on each experiment_result request
 	pullURLPath []string // raw request path seen on each pull_all request
+	// pullBodies / abtestBodies capture the raw protojson request bytes seen
+	// on each route, so tests can assert the whole-packet wire form (e.g. that
+	// env is present when set and omitted when "").
+	pullBodies   [][]byte
+	abtestBodies [][]byte
 
 	// statusOverride, when set !=0, makes the route reply with that status
 	// and an {"error": ...} body BEFORE touching the fakes (failure injection
@@ -111,6 +117,39 @@ func (h *httpHarness) pullPaths() []string {
 	return out
 }
 
+// lastPullBody / lastAbtestBody return the raw protojson request bytes most
+// recently seen on each route (nil when none observed yet).
+func (h *httpHarness) lastPullBody() []byte {
+	h.authMu.Lock()
+	defer h.authMu.Unlock()
+	if len(h.pullBodies) == 0 {
+		return nil
+	}
+	return h.pullBodies[len(h.pullBodies)-1]
+}
+
+func (h *httpHarness) lastAbtestBody() []byte {
+	h.authMu.Lock()
+	defer h.authMu.Unlock()
+	if len(h.abtestBodies) == 0 {
+		return nil
+	}
+	return h.abtestBodies[len(h.abtestBodies)-1]
+}
+
+// captureBody reads the whole request body and restores r.Body so a downstream
+// decodeHTTPReq still sees the same bytes. Returns a copy of the raw protojson
+// packet the SDK sent (nil on read error / empty body).
+func captureBody(r *http.Request) []byte {
+	raw, err := io.ReadAll(r.Body)
+	if err != nil {
+		return nil
+	}
+	_ = r.Body.Close()
+	r.Body = io.NopCloser(bytes.NewReader(raw))
+	return raw
+}
+
 // decodeReq reads a protojson request body into msg, mirroring publicread's
 // decodeProto (empty body → zero-value request, DiscardUnknown).
 func decodeHTTPReq(w http.ResponseWriter, r *http.Request, msg proto.Message) bool {
@@ -168,9 +207,11 @@ func jsonQuote(s string) string {
 }
 
 func (h *httpHarness) handlePullAll(w http.ResponseWriter, r *http.Request) {
+	rawBody := captureBody(r)
 	h.authMu.Lock()
 	h.pullAuth = append(h.pullAuth, r.Header.Get("Authorization"))
 	h.pullURLPath = append(h.pullURLPath, r.URL.Path)
+	h.pullBodies = append(h.pullBodies, rawBody)
 	override := h.pullStatusOverride
 	h.authMu.Unlock()
 
@@ -196,8 +237,10 @@ func (h *httpHarness) handlePullAll(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *httpHarness) handleExperimentResult(w http.ResponseWriter, r *http.Request) {
+	rawBody := captureBody(r)
 	h.authMu.Lock()
 	h.abtestAuth = append(h.abtestAuth, r.Header.Get("Authorization"))
+	h.abtestBodies = append(h.abtestBodies, rawBody)
 	override := h.abtestStatusOverride
 	h.authMu.Unlock()
 

@@ -960,6 +960,7 @@ public final class TipsyAbConfigClient implements AutoCloseable {
                 .setExperimentType(req.type().toProto())
                 .setDisplayType(req.displayType().toProto())
                 .setTraceId(traceId)
+                .setEnv(cfg.env())
                 .build();
         long __start = System.nanoTime();
         try {
@@ -1097,6 +1098,7 @@ public final class TipsyAbConfigClient implements AutoCloseable {
         PullAllRequest req = PullAllRequest.newBuilder()
                 .addNamespaces(ns)
                 .setTraceId(traceId)
+                .setEnv(cfg.env())
                 .build();
         PullAllResponse resp = configTr.pullAll(req, effectivePullTimeout());
         applySnapshots(resp.getSnapshotsList());
@@ -1255,6 +1257,7 @@ public final class TipsyAbConfigClient implements AutoCloseable {
                 .addAllNamespaces(subscribedNamespaces)
                 .putAllKnownSeqs(cache.knownSeqs(subscribedNamespaces))
                 .setTraceId(traceId)
+                .setEnv(cfg.env())
                 .build();
         LOG.debug("tipsyabconfig: Subscribe (namespaces={}, trace_id={})", subscribedNamespaces, traceId);
         Iterator<ConfigUpdateEvent> stream = subscribeStub.subscribe(req);
@@ -1349,6 +1352,11 @@ public final class TipsyAbConfigClient implements AutoCloseable {
     /** The per-compute {@code GetExperimentResult} deadline. */
     Duration abtestTimeout() {
         return abtestTimeout;
+    }
+
+    /** The configured environment identifier stamped on outbound requests ("" = unspecified). */
+    String configEnv() {
+        return cfg.env();
     }
 
     /** Whether {@code ns} is in the subscribed set (linear scan over the small sorted list). */

@@ -132,6 +132,18 @@ type Config struct {
 	// case ns-optional entry points return ErrNamespaceRequired.
 	DefaultNamespace string
 
+	// Env is the single-value environment identifier stamped onto EVERY
+	// outbound request (GetExperimentResult, the config_version flat_kv fetch
+	// behind GetConfig, PullAll, and Subscribe). It tells the server which
+	// environment this process runs in so experiment env filtering can apply.
+	// The zero value "" means "unspecified": the server treats "" as matching
+	// only experiments that do not restrict their env set, and protojson omits
+	// the field entirely in HTTP mode so an unset Env is byte-for-byte
+	// wire-compatible with older servers. Unlike DefaultNamespace there is NO
+	// environment-variable fallback and NO applyDefaults handling — the value is
+	// used verbatim.
+	Env string
+
 	// Transport selects the wire transport: TransportGRPC ("grpc", the
 	// default) or TransportHTTP ("http"). When empty, the SDK reads the
 	// TIPSY_SDK_TRANSPORT environment variable; if that is also empty it
@@ -479,6 +491,11 @@ func (c *Client) Namespaces() []string {
 // Returns "" when no default namespace was configured (decision A-3 — the SDK
 // never hard-codes one).
 func (c *Client) DefaultNamespace() string { return c.defaultNamespace }
+
+// Env returns the environment identifier this client stamps onto every
+// outbound request (Config.Env). Returns "" when no env was configured
+// ("unspecified"). Exposed for debugging / parity with the other SDKs.
+func (c *Client) Env() string { return c.cfg.Env }
 
 // isSubscribed reports whether ns is one of the namespaces this client
 // subscribed to at Init. subscribedNamespaces is sorted + de-duped and small,
