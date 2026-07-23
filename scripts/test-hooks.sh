@@ -30,6 +30,14 @@ PRE_COMMIT="${REPO_ROOT}/.githooks/pre-commit"
 # Point config at throwaway empty files, disable the system config, and pin the
 # default branch + a test identity so runs are byte-for-byte reproducible
 # regardless of where they execute.
+# The hooks self-disable when CI / GITHUB_ACTIONS is set — that is their
+# intended production opt-out (they must no-op during real CI jobs). These
+# tests exercise the hook LOGIC, so neutralize that guard here (same intent as
+# the git-config isolation below). Without this, every hook invoked under
+# GitHub Actions returns 0 immediately and the push/commit assertions all
+# "pass through", silently breaking the force / --atomic / staged-bad cases.
+unset CI GITHUB_ACTIONS
+
 export GIT_CONFIG_NOSYSTEM=1
 _GITISO="$(mktemp -d)"
 export GIT_CONFIG_GLOBAL="${_GITISO}/gitconfig"
