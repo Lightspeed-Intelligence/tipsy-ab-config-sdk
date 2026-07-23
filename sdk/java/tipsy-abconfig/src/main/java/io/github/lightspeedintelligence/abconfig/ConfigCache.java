@@ -139,9 +139,13 @@ final class ConfigCache {
      * advances" invariant. Reads ({@link #snapshot}, {@link #valueOf},
      * {@link #fullReleaseVersion}, {@link #knownSeqs}) stay lock-free. The
      * candidate snapshot and its {@code byteSize} are built before {@code compute}
-     * (pure work, no side effects) so the mapping function stays light; metrics
-     * side effects are applied after {@code compute} returns, driven by the
-     * decision the mapping function recorded.
+     * (pure work, no side effects) so the mapping function stays light; the
+     * metrics side effects, being cheap, are applied inside {@code compute} on the
+     * replace path so the gauge {@code set} and the snapshot swap are one atomic
+     * step under the same bin lock (mirroring Go's {@code set} under
+     * {@code c.mu.Lock()}). Doing them after {@code compute} let a stale writer's
+     * delayed {@code set(ns, byteSize)} overwrite the survivor's, pinning the gauge
+     * to the wrong byte count.
      */
     ApplyResult applyProto(io.github.lightspeedintelligence.abconfig.proto.config.v1.NamespaceSnapshot pb) {
         if (pb == null || pb.getNamespace().isEmpty()) {
@@ -177,8 +181,15 @@ final class ConfigCache {
         NamespaceSnapshot candidate = new NamespaceSnapshot(ns, newBiz, newExp, Map.copyOf(keys));
         long byteSize = byteSizeAccum;
 
-        // The mapping function records its decision here so metrics side effects
-        // run outside compute (no re-entrant heavy work inside the bin lock).
+        // The mapping function records its decision here for the ApplyResult. The
+        // metrics side effects run INSIDE compute on the replace path so the gauge
+        // set and the snapshot swap are one atomic step under the CHM bin lock,
+        // mirroring Go's "set under c.mu.Lock()" (cache.go). Applying them after
+        // compute let a stale (lower-seq) writer's delayed set(ns, byteSize)
+        // overwrite the survivor's, leaving localCacheBytes stuck on the wrong
+        // byte count. The candidate build/byteSize accumulation stays outside
+        // compute (pure heavy work); only the light set/inc move in.
+        final Metrics m = metrics; // hoist null check out of the mapping function
         boolean[] decision = {false, false, false}; // {replaced, businessMoved, experimentMoved}
         byNs.compute(ns, (k, cur) -> {
             long curBiz = cur == null ? 0L : cur.businessSnapshotSeq;
@@ -191,21 +202,20 @@ final class ConfigCache {
             decision[0] = true;
             decision[1] = businessMoved;
             decision[2] = experimentMoved;
+            if (m != null) {
+                m.localCacheBytes.set(ns, byteSize);
+                if (businessMoved) {
+                    m.businessSeqMoved.inc(ns);
+                }
+                if (experimentMoved) {
+                    m.experimentSeqMov.inc(ns);
+                }
+            }
             return candidate;
         });
 
         if (!decision[0]) {
             return new ApplyResult(false, false, false);
-        }
-
-        if (metrics != null) {
-            metrics.localCacheBytes.set(ns, byteSize);
-            if (decision[1]) {
-                metrics.businessSeqMoved.inc(ns);
-            }
-            if (decision[2]) {
-                metrics.experimentSeqMov.inc(ns);
-            }
         }
         return new ApplyResult(true, decision[1], decision[2]);
     }
