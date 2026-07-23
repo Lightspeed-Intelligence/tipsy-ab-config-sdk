@@ -8,6 +8,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-07-23
+
+### Changed
+
+- **env is now judged server-side; the SDK no longer sends an env request
+  field.** env matching moved to the abConfig server, which reads its own
+  `TIPSY_ENV` process environment variable and compares it against each
+  experiment's env set. Removed `Config.env` (the builder `env(String)` method
+  and the `env()` accessor); the four request construction points
+  (`getExperimentResult`, the `config_version` flat_kv fetch behind
+  `getConfig`, `pullOnce`, `subscribeOnce`) no longer set the request's `env`
+  field.
+
+### Compatibility
+
+- The `env` field remains in the generated request stubs and is left unset by
+  this SDK — retained for wire compatibility with the previously released 0.8.0
+  and now deprecated on the request path. Newer servers ignore any
+  request-supplied env and use `TIPSY_ENV` instead, so both old (0.8.0, still
+  sending env) and new SDK builds interoperate with the new server. The proto
+  is unchanged (no regen of the request field).
+
 ## [0.8.0] - 2026-07-22
 
 ### Added
