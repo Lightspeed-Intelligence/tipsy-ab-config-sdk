@@ -16,6 +16,13 @@ permissions:
 
 jobs:
   pr-review:
+    # Pinned to @main intentionally, to stay in lockstep with the org-wide
+    # agentic-workflow-template (tipsy-backend and the other repos all track
+    # @main). The template repo is org-controlled; pinning a commit SHA here
+    # would fork this pair of repos off that shared baseline and require a
+    # manual SHA bump on every template update. If supply-chain isolation is
+    # later prioritized over lockstep, pin to a reviewed full commit SHA and
+    # narrow the permissions/secrets below to what the template actually needs.
     uses: Lightspeed-Intelligence/agentic-workflow-template/.github/workflows/pr-review.yml@main
     secrets:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}

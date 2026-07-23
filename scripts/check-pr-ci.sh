@@ -34,13 +34,16 @@ fi
 
 branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null)"
 
-# Lock the "new activity" cut-off NOW, before we spend minutes watching CI —
-# any GitHub comment with createdAt > this moment is strictly newer than our
-# most recent push. Done up front (not after the CI watch) so legitimate
-# review activity arriving during CI is still counted as new. UTC ('Z') keeps
-# the jq lexical comparison aligned with GitHub's UTC createdAt fields; a
-# local-tz offset like "+08:00" would collate wrong against 'Z' strings.
-push_cutoff="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+# Lock the "new activity" cut-off. Prefer the value the caller (pre-push)
+# captured BEFORE performing the inner push: this script only starts after the
+# remote has already been updated, so sampling the time here would set the
+# cut-off later than the push and miss any review/comment created in the window
+# between the remote update and this line. GIT_POSTPUSH_CUTOFF carries that
+# earlier timestamp; we fall back to sampling now only when it is absent (e.g.
+# the script is run standalone). UTC ('Z') keeps the jq lexical comparison
+# aligned with GitHub's UTC createdAt fields; a local-tz offset like "+08:00"
+# would collate wrong against 'Z' strings.
+push_cutoff="${GIT_POSTPUSH_CUTOFF:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
 
 # Resolve the PR number for this branch. If none, nothing to watch.
 pr_number="$(gh pr view --json number --jq '.number' 2>/dev/null)"
@@ -59,24 +62,54 @@ log "post-push: watching CI for PR #${pr_number} (branch '$branch')..."
 #   PINE_PREPUSH_CHECK_POLL_INTERVAL (default 5, seconds)
 poll_tries="${PINE_PREPUSH_CHECK_POLL_TRIES:-24}"
 poll_interval="${PINE_PREPUSH_CHECK_POLL_INTERVAL:-5}"
+check_count=0
 for _ in $(seq 1 "$poll_tries"); do
   cnt="$(gh pr checks "$pr_number" --json state --jq 'length' 2>/dev/null)"
-  if [ -n "$cnt" ] && [ "$cnt" -gt 0 ]; then
+  # Only trust an all-digits reply; a query error or malformed value (empty,
+  # "[]", an error string) is treated as "no checks yet" rather than tripping
+  # the arithmetic test with a non-integer operand.
+  if [ -n "$cnt" ] && [ "$cnt" -eq "$cnt" ] 2>/dev/null && [ "$cnt" -gt 0 ]; then
+    check_count="$cnt"
     break
   fi
   sleep "$poll_interval"
 done
+
+# No check ever appeared for this PR head. Do NOT fall through to the "all
+# checks passed" path below — an empty check set is not a green CI, it means CI
+# never registered (workflow not triggered, paths-ignore hit, registration lag
+# beyond the poll budget, or a query error). Returning non-zero forces the
+# caller hook to treat this as "needs a human", never a silent green.
+if [ "$check_count" -eq 0 ]; then
+  log ""
+  log "════════════════════════════════════════════════════════════"
+  log "  ✗ post-push: no CI checks registered for PR #${pr_number}"
+  log "    after ${poll_tries}×${poll_interval}s. This is NOT a pass —"
+  log "    the workflow may not have triggered, or registration lagged."
+  log "  → Inspect the PR's Checks tab; re-push if CI never started."
+  log "════════════════════════════════════════════════════════════"
+  exit 1
+fi
 
 # Block until all checks finish. --fail-fast returns as soon as one fails.
 # We intentionally ignore the watch exit code here and re-derive the final
 # verdict from a fresh --json query, so the reporting logic is single-sourced.
 gh pr checks "$pr_number" --watch --fail-fast --interval 15 >/dev/null 2>&1 || true
 
-# Fresh snapshot of all checks.
+# Fresh snapshot of all checks. Guard against BOTH an empty string (query
+# failure) and a valid-but-empty JSON array `[]` (checks vanished between the
+# poll above and now — e.g. a re-run cleared them): either way we cannot assert
+# a green CI, so fail safe rather than emitting a false pass from an empty
+# `failures` list further down.
 checks_json="$(gh pr checks "$pr_number" --json name,state,bucket,link 2>/dev/null)"
 if [ -z "$checks_json" ]; then
   log "post-push: could not read CI checks for PR #${pr_number}."
   exit 2
+fi
+snapshot_count="$(printf '%s' "$checks_json" | jq 'length' 2>/dev/null)"
+if [ -z "$snapshot_count" ] || ! { [ "$snapshot_count" -eq "$snapshot_count" ] 2>/dev/null; } || [ "$snapshot_count" -eq 0 ]; then
+  log "post-push: CI check set for PR #${pr_number} is empty or unreadable on final read — cannot confirm a pass. Failing safe."
+  exit 1
 fi
 
 # Collect every failing job (bucket == fail or cancel) as a list of

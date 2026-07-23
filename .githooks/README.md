@@ -103,8 +103,23 @@ with:
 
 ### Refspec handling
 
-The inner push mirrors the exact refspecs git hands the hook on stdin, so
-force-pushes (`--force-with-lease` is applied automatically for
-non-fast-forward updates), tag pushes, multi-ref pushes (`git push --all`) and
-ref deletions (`git push origin :branch`) all work. Deletion-only pushes skip
-the CI watch entirely.
+The inner push mirrors the exact refspecs git hands the hook on stdin, so tag
+pushes, multi-ref pushes (`git push --all`) and ref deletions
+(`git push origin :branch`) all work. Deletion-only pushes skip the CI watch
+entirely.
+
+**Force pushes require explicit opt-in.** A pre-push hook runs *before* the
+remote would reject a non-fast-forward push and is not told whether you typed
+`--force`, so the hook never infers force intent from commit topology — doing
+so would silently rewrite remote history on an ordinary `git push` from a
+stale (rebased/reset/behind) branch. To force through the self-wrap, set
+`GIT_POSTPUSH_FORCE=1` on the push:
+
+```bash
+GIT_POSTPUSH_FORCE=1 git push
+```
+
+The inner push then applies `--force-with-lease`, pinned to the remote SHA git
+negotiated for this push (so a concurrent remote advance still aborts it).
+Without the env var, a genuine non-fast-forward inner push is rejected by the
+remote exactly as it would be without the hook.

@@ -67,7 +67,7 @@ echo "pre-push: all lint checks passed."
 zero="0000000000000000000000000000000000000000"
 refspecs=()
 have_update=0          # at least one non-delete ref → CI watch is meaningful
-force_lease_args=()    # one --force-with-lease=ref:sha per non-fast-forward ref
+non_ff_refs=()         # "remote_ref:remote_sha" for each non-fast-forward update
 
 while read -r local_ref local_sha remote_ref remote_sha; do
   [ -z "${remote_ref:-}" ] && continue
@@ -77,19 +77,13 @@ while read -r local_ref local_sha remote_ref remote_sha; do
   else
     refspecs+=("${local_ref}:${remote_ref}")
     have_update=1
-    # Non-fast-forward (remote has commits not contained in local) ⇒ a plain
-    # push would be rejected, so the user must have used --force. Mirror that
-    # with --force-with-lease so the inner push isn't rejected either.
-    #
-    # Bare `--force-with-lease` computes the lease from refs/remotes/origin/*
-    # (the local tracking ref), which can be stale if the developer hasn't
-    # fetched recently and silently mismatch the real remote. The remote_sha
-    # we got on stdin is git's *current* view of the actual remote sha (freshly
-    # negotiated as part of this push), so pin the lease to it explicitly per
-    # refspec — exact, no fetch-or-die requirement.
+    # Record non-fast-forward updates (remote has commits not contained in
+    # local). We do NOT decide here whether to force — that is gated on
+    # explicit user intent below, because a pre-push hook cannot see the outer
+    # `--force` flag and must not infer it from topology.
     if [ "$remote_sha" != "$zero" ] \
        && ! git merge-base --is-ancestor "$remote_sha" "$local_sha" 2>/dev/null; then
-      force_lease_args+=("--force-with-lease=${remote_ref}:${remote_sha}")
+      non_ff_refs+=("${remote_ref}:${remote_sha}")
     fi
   fi
 done
@@ -106,6 +100,34 @@ if [ "$have_update" -eq 0 ]; then
 fi
 
 remote_name="${1:-origin}"
+
+# Force intent must be EXPLICIT, never inferred. A pre-push hook runs before the
+# remote would reject a non-fast-forward push and is NOT told whether the outer
+# command used `--force`, so treating "non-fast-forward" as "user wants to force"
+# would silently rewrite remote history on an ordinary `git push` from a stale
+# branch (rebase/reset/behind). We therefore only force-push when the user opts
+# in via GIT_POSTPUSH_FORCE=1; otherwise the inner push runs as a plain push and
+# a genuine non-fast-forward is rejected by the remote exactly as it would be
+# without this hook.
+force_lease_args=()
+if [ -n "${GIT_POSTPUSH_FORCE:-}" ] && [ "${#non_ff_refs[@]}" -gt 0 ]; then
+  # Pin the lease to the remote_sha git negotiated for this push (exact, no
+  # fetch-or-die), so a concurrent remote advance still aborts the force.
+  for rr in "${non_ff_refs[@]}"; do
+    force_lease_args+=("--force-with-lease=${rr}")
+  done
+  echo "post-push: GIT_POSTPUSH_FORCE set — inner push will force ${#non_ff_refs[@]} non-fast-forward ref(s) with a pinned lease." >&2
+elif [ "${#non_ff_refs[@]}" -gt 0 ]; then
+  echo "post-push: ${#non_ff_refs[@]} non-fast-forward ref(s) detected; NOT forcing (set GIT_POSTPUSH_FORCE=1 to force). The inner push will be rejected by the remote if it is truly non-fast-forward." >&2
+fi
+
+# Capture the "new review activity" cut-off BEFORE the inner push updates the
+# remote, then hand it to check-pr-ci.sh via GIT_POSTPUSH_CUTOFF. Sampling it
+# inside that script would be too late: it runs only after the push, so a
+# comment created in the gap between the remote update and the script start
+# would have createdAt < a script-sampled cut-off and be missed. UTC 'Z' to
+# match GitHub's createdAt lexical ordering.
+export GIT_POSTPUSH_CUTOFF="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 echo "post-push: performing real push to '${remote_name}' (${refspecs[*]})..." >&2
 # `${arr[@]+"${arr[@]}"}` is the parameter-expansion guard form: empty under
