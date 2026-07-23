@@ -1,0 +1,400 @@
+#!/bin/bash
+# check-pr-ci.sh — block until the current branch's PR finishes CI, then report.
+#
+# Exit codes:
+#   0  all CI checks passed AND no new review activity since the last push
+#      AND no unresolved review threads — terminal state.
+#   1  one or more CI checks failed (all failing jobs listed on stderr).
+#   2  no PR found for the current branch, or gh unavailable (treated as
+#      non-fatal by the caller hook, but returned distinctly here).
+#   75 CI passed, but there is new review activity since the last push or
+#      lingering unresolved review threads. The instruction block above
+#      this exit explains exactly what to do next. Surfacing this as a
+#      non-zero distinct code lets the caller hook fail the outer push so
+#      tooling that only inspects exit status (e.g. agent loops) doesn't
+#      treat the stderr instructions as silent context.
+#
+# This script does NOT push. It only inspects the already-pushed branch's PR.
+set -uo pipefail
+
+log() { echo "$@" >&2; }
+
+if ! command -v gh >/dev/null 2>&1; then
+  log "post-push: gh CLI not found — skipping CI check."
+  exit 2
+fi
+
+# jq is required to parse the check list. The gh CLI itself ships jq-style
+# filtering via --jq, but we also do a standalone jq parse below; without it we
+# could silently miss failures (false green), so treat its absence as fatal.
+if ! command -v jq >/dev/null 2>&1; then
+  log "post-push: jq not found — cannot reliably parse CI checks. Failing safe."
+  exit 1
+fi
+
+branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null)"
+
+# Lock the "new activity" cut-off. Prefer the value the caller (pre-push)
+# captured BEFORE performing the inner push: this script only starts after the
+# remote has already been updated, so sampling the time here would set the
+# cut-off later than the push and miss any review/comment created in the window
+# between the remote update and this line. GIT_POSTPUSH_CUTOFF carries that
+# earlier timestamp; we fall back to sampling now only when it is absent (e.g.
+# the script is run standalone). UTC ('Z') keeps the jq lexical comparison
+# aligned with GitHub's UTC createdAt fields; a local-tz offset like "+08:00"
+# would collate wrong against 'Z' strings.
+push_cutoff="${GIT_POSTPUSH_CUTOFF:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
+
+# Resolve the PR number for this branch. If none, nothing to watch.
+pr_number="$(gh pr view --json number --jq '.number' 2>/dev/null)"
+if [ -z "$pr_number" ]; then
+  log "post-push: no open PR for branch '$branch' yet — skipping CI check."
+  log "post-push: (open a PR, then CI status will be watched on the next push)"
+  exit 2
+fi
+
+log "post-push: watching CI for PR #${pr_number} (branch '$branch')..."
+
+# After a fresh push, GitHub needs a few seconds to register check runs for the
+# new head commit. Poll until at least one check appears (or give up), so we
+# don't mistake "not created yet" for "no CI". Tunable via env:
+#   PINE_PREPUSH_CHECK_POLL_TRIES    (default 24)
+#   PINE_PREPUSH_CHECK_POLL_INTERVAL (default 5, seconds)
+poll_tries="${PINE_PREPUSH_CHECK_POLL_TRIES:-24}"
+poll_interval="${PINE_PREPUSH_CHECK_POLL_INTERVAL:-5}"
+check_count=0
+for _ in $(seq 1 "$poll_tries"); do
+  cnt="$(gh pr checks "$pr_number" --json state --jq 'length' 2>/dev/null)"
+  # Only trust an all-digits reply; a query error or malformed value (empty,
+  # "[]", an error string) is treated as "no checks yet" rather than tripping
+  # the arithmetic test with a non-integer operand.
+  if [ -n "$cnt" ] && [ "$cnt" -eq "$cnt" ] 2>/dev/null && [ "$cnt" -gt 0 ]; then
+    check_count="$cnt"
+    break
+  fi
+  sleep "$poll_interval"
+done
+
+# No check ever appeared for this PR head. Do NOT fall through to the "all
+# checks passed" path below — an empty check set is not a green CI, it means CI
+# never registered (workflow not triggered, paths-ignore hit, registration lag
+# beyond the poll budget, or a query error). Returning non-zero forces the
+# caller hook to treat this as "needs a human", never a silent green.
+if [ "$check_count" -eq 0 ]; then
+  log ""
+  log "════════════════════════════════════════════════════════════"
+  log "  ✗ post-push: no CI checks registered for PR #${pr_number}"
+  log "    after ${poll_tries}×${poll_interval}s. This is NOT a pass —"
+  log "    the workflow may not have triggered, or registration lagged."
+  log "  → Inspect the PR's Checks tab; re-push if CI never started."
+  log "════════════════════════════════════════════════════════════"
+  exit 1
+fi
+
+# Block until all checks finish. --fail-fast returns as soon as one fails.
+# We re-derive the final verdict from a fresh --json query below (single source
+# of truth), but the watch exit status is NOT ignored: `gh pr checks --watch`
+# exits 0 only when every check is complete and passing, 1 when a check fails,
+# and 8 when it stops with checks still pending. If it exits non-zero for a
+# reason OTHER than a real failure (network drop, auth expiry, rate limit, CLI
+# abort), the loop below may have stopped early with checks still pending, so we
+# must NOT trust an empty `failures` list as "all passed". We capture the code
+# and, combined with the terminal-state assertion further down, refuse to emit
+# a false green when the watch bailed out before CI actually finished.
+gh pr checks "$pr_number" --watch --fail-fast --interval 15 >/dev/null 2>&1
+watch_rc=$?
+
+# Fresh snapshot of all checks. Guard against BOTH an empty string (query
+# failure) and a valid-but-empty JSON array `[]` (checks vanished between the
+# poll above and now — e.g. a re-run cleared them): either way we cannot assert
+# a green CI, so fail safe rather than emitting a false pass from an empty
+# `failures` list further down.
+checks_json="$(gh pr checks "$pr_number" --json name,state,bucket,link 2>/dev/null)"
+if [ -z "$checks_json" ]; then
+  log "post-push: could not read CI checks for PR #${pr_number}."
+  exit 2
+fi
+snapshot_count="$(printf '%s' "$checks_json" | jq 'length' 2>/dev/null)"
+if [ -z "$snapshot_count" ] || ! { [ "$snapshot_count" -eq "$snapshot_count" ] 2>/dev/null; } || [ "$snapshot_count" -eq 0 ]; then
+  log "post-push: CI check set for PR #${pr_number} is empty or unreadable on final read — cannot confirm a pass. Failing safe."
+  exit 1
+fi
+
+# Terminal-state assertion. A green verdict requires EVERY check to have reached
+# a terminal bucket (pass / skipping); the "no failures" test alone is not
+# enough because a check still in `pending` is neither fail nor cancel, so an
+# early-exited watch would otherwise slip a not-yet-finished CI through as green.
+# gh buckets: pass | fail | cancel | skipping | pending. Anything outside the
+# known-terminal set (pass/fail/cancel/skipping) — `pending` or an
+# unrecognized/empty bucket from a future gh — counts as not-yet-terminal.
+nonterminal="$(printf '%s' "$checks_json" \
+  | jq -r '.[] | select((.bucket // "") as $b | ($b=="pass" or $b=="fail" or $b=="cancel" or $b=="skipping") | not) | "\(.name)\t\(.bucket // "")"')"
+if [ -n "$nonterminal" ]; then
+  log ""
+  log "════════════════════════════════════════════════════════════"
+  log "  ✗ post-push: CI has NOT finished for PR #${pr_number}"
+  log "    (gh pr checks --watch exited rc=${watch_rc} with checks still"
+  log "     in a non-terminal state — likely a dropped/rate-limited watch)."
+  log "  Unfinished checks:"
+  while IFS=$'\t' read -r name bucket; do
+    [ -z "$name" ] && continue
+    log "    • ${name} [${bucket:-unknown}]"
+  done <<< "$nonterminal"
+  log "  → NOT a pass. Re-run the watch (re-push or re-invoke) once CI settles."
+  log "════════════════════════════════════════════════════════════"
+  exit 1
+fi
+
+# Collect every failing job (bucket == fail or cancel) as a list of
+# "name<TAB>link" lines. Using jq (required above) keeps this dependency-light
+# and avoids a silent empty result when an interpreter is missing.
+failures="$(printf '%s' "$checks_json" \
+  | jq -r '.[] | select(.bucket=="fail" or .bucket=="cancel") | "\(.name)\t\(.link // "")"')"
+
+review_decision="$(gh pr view "$pr_number" --json reviewDecision --jq '.reviewDecision' 2>/dev/null)"
+[ -z "$review_decision" ] && review_decision="(no review yet)"
+
+if [ -n "$failures" ]; then
+  log ""
+  log "════════════════════════════════════════════════════════════"
+  log "  ✗ post-push: CI FAILED for PR #${pr_number}"
+  log "  Failing checks:"
+  while IFS=$'\t' read -r name link; do
+    [ -z "$name" ] && continue
+    log "    • ${name}"
+    [ -n "$link" ] && log "        ${link}"
+  done <<< "$failures"
+  log ""
+  log "  → Investigate the failing jobs above."
+  log "  → Also check the PR review status (currently: ${review_decision})."
+  log "════════════════════════════════════════════════════════════"
+  exit 1
+fi
+
+log ""
+log "════════════════════════════════════════════════════════════"
+log "  ✓ post-push: all CI checks passed for PR #${pr_number}"
+log "  → PR review decision: ${review_decision}"
+log "════════════════════════════════════════════════════════════"
+
+# ── instruction block for Claude Code ──────────────────────────────────────
+# When this script runs inside a Claude Code background bash task, the entire
+# stderr above is fed back into the main conversation on completion. The block
+# below is written for Claude to consume directly: it spells out the next-step
+# loop (fetch review comments → understand each one → fix the real issues →
+# push again) using concrete gh commands, so no human roundtrip is needed for
+# the "address review feedback" step.
+#
+# Trigger model (intentionally signal-only, not semantic):
+#   We do NOT try to grep review-bot output for "APPROVE" strings. The bot is
+#   itself an LLM; its wording is non-deterministic, and even an APPROVE often
+#   ships with non-blocking suggestions that we still want to evaluate. So the
+#   script's only job is to detect whether *anything new* has happened since
+#   the current HEAD was pushed, and hand the actual judgment (real issue vs.
+#   false positive, blocking vs. nit) over to Claude.
+#
+# We emit the next-step block when ANY of these hold:
+#   - new top-level issue comments since HEAD push time
+#   - new inline review (PR review) comments since HEAD push time
+#   - new review submissions since HEAD push time (APPROVE / CHANGES_REQUESTED
+#     events themselves count as new activity to inspect)
+#   - any unresolved review threads (regardless of age — an old unresolved
+#     thread still represents debt the loop has not closed)
+#
+# When none of the above hold, the script exits silently with a single success
+# line, so an automated loop reaches a stable terminal state.
+
+owner="$(gh repo view --json owner --jq '.owner.login' 2>/dev/null)"
+repo="$(gh repo view --json name --jq '.name' 2>/dev/null)"
+
+# Single GraphQL round-trip pulling everything we need to detect "new activity
+# since our push". Each list is independently filtered by createdAt >
+# $push_cutoff (locked at script start, before the CI watch) in jq below.
+activity_json="$(gh api graphql -f query='
+  query($owner:String!, $repo:String!, $pr:Int!) {
+    repository(owner:$owner, name:$repo) {
+      pullRequest(number:$pr) {
+        comments(last:50)        { nodes { createdAt } }
+        reviews(last:50)         { nodes { createdAt state } }
+        reviewThreads(first:100) {
+          nodes {
+            isResolved
+            comments(last:50) { nodes { createdAt } }
+          }
+        }
+      }
+    }
+  }' \
+  -F owner="$owner" -F repo="$repo" -F pr="$pr_number" 2>/dev/null)"
+
+# Two kinds of "couldn't read activity":
+#   (a) gh produced no stdout at all (network down, gh broken, missing auth)
+#   (b) gh returned a GraphQL error envelope `{"errors":[...]}` and exit 0 — a
+#       common shape for auth expiry, transient 5xx, and schema mismatch. The
+#       envelope is non-empty, so a `[ -z ]` guard alone is not enough; without
+#       this branch the jq filters below would hit `.data == null` and die with
+#       "Cannot iterate over null", leaving the four counters as empty strings
+#       and leaking "integer expression expected" from the later `[ -eq ]` test.
+# Both paths must surface as "work remains" so the next-step block fires and
+# the operator looks at the PR by hand — silently treating a malformed
+# envelope as a clean terminal state would defeat the autonomous loop.
+activity_unreadable=0
+if [ -z "$activity_json" ]; then
+  activity_unreadable=1
+elif ! printf '%s' "$activity_json" | jq empty >/dev/null 2>&1; then
+  # gh produced non-empty stdout that is not valid JSON (auth interstitial,
+  # captive-portal HTML, transient gateway error page, etc.). Without this
+  # guard the next `jq -e has("errors")` would itself fail to parse, the
+  # elif would be false, and we would silently fall through to the readable
+  # branch where every counter collapses to 0 via `${var:-0}` — masquerading
+  # as a clean terminal "done" state.
+  activity_unreadable=1
+elif printf '%s' "$activity_json" \
+       | jq -e 'has("errors") or .data == null' >/dev/null 2>&1; then
+  activity_unreadable=1
+fi
+
+if [ "$activity_unreadable" -eq 1 ]; then
+  log "  ! could not query PR activity — assuming work remains, see comments manually."
+  # Force the next-step block to fire (total_new > 0) so the operator must
+  # inspect the PR manually rather than the script silently exiting 0.
+  new_issue_comments=1
+  new_review_submissions=0
+  new_inline_comments=0
+  unresolved_threads=0
+else
+  # `// []` collapses an absent or null `nodes` to an empty array so jq stays
+  # total even on partial responses; `?` on the inner inline-comments traversal
+  # tolerates a thread node missing its comments. `2>/dev/null` + `${var:-0}`
+  # keep the four counters numeric on any further surprise so the arithmetic
+  # and `[ -eq ]` tests below never hit an empty operand.
+  new_issue_comments="$(printf '%s' "$activity_json" \
+    | jq --arg t "$push_cutoff" \
+        '[(.data.repository.pullRequest.comments.nodes // [])[] | select(.createdAt > $t)] | length' 2>/dev/null)"
+  new_review_submissions="$(printf '%s' "$activity_json" \
+    | jq --arg t "$push_cutoff" \
+        '[(.data.repository.pullRequest.reviews.nodes // [])[] | select(.createdAt > $t)] | length' 2>/dev/null)"
+  new_inline_comments="$(printf '%s' "$activity_json" \
+    | jq --arg t "$push_cutoff" \
+        '[(.data.repository.pullRequest.reviewThreads.nodes // [])[].comments.nodes[]? | select(.createdAt > $t)] | length' 2>/dev/null)"
+  unresolved_threads="$(printf '%s' "$activity_json" \
+    | jq '[(.data.repository.pullRequest.reviewThreads.nodes // [])[] | select(.isResolved==false)] | length' 2>/dev/null)"
+  new_issue_comments="${new_issue_comments:-0}"
+  new_review_submissions="${new_review_submissions:-0}"
+  new_inline_comments="${new_inline_comments:-0}"
+  unresolved_threads="${unresolved_threads:-0}"
+fi
+
+total_new=$(( new_issue_comments + new_review_submissions + new_inline_comments ))
+
+# Terminal state: nothing new since the last push AND no lingering unresolved
+# threads. Stay silent — an automated loop reads this as "done".
+if [ "$total_new" -eq 0 ] && [ "$unresolved_threads" -eq 0 ]; then
+  log "  ✓ no new review activity since last push, no unresolved threads — done."
+  exit 0
+fi
+
+log ""
+log "════════════════════════════════════════════════════════════"
+log "  ▶ Next step for Claude Code (autonomous loop)"
+log "════════════════════════════════════════════════════════════"
+log ""
+log "PR #${pr_number} has activity since our push cut-off"
+log "  ${push_cutoff}"
+log "  • new top-level comments:   ${new_issue_comments}"
+log "  • new review submissions:   ${new_review_submissions}  (each may be APPROVE / REQUEST_CHANGES / COMMENT)"
+log "  • new inline thread replies: ${new_inline_comments}"
+log "  • unresolved review threads: ${unresolved_threads}  (any age)"
+log ""
+log "An APPROVE verdict from the review bot does NOT mean there is nothing to"
+log "do — bots are LLMs, their wording is non-deterministic, and they often"
+log "approve while still flagging real issues as non-blocking. Read every new"
+log "comment and every unresolved thread, then decide on the merits."
+log ""
+log "Step 1. Fetch the current review surface:"
+log ""
+log "    # Top-level issue-style comments (often where the review bot posts)"
+log "    gh pr view ${pr_number} --json comments \\"
+log "        --jq '.comments[] | {author: .author.login, createdAt, body}'"
+log ""
+log "    # Formal Review submissions (APPROVE / REQUEST_CHANGES / COMMENT)"
+log "    gh api graphql -f query='"
+log "      query(\$owner:String!, \$repo:String!, \$pr:Int!) {"
+log "        repository(owner:\$owner, name:\$repo) {"
+log "          pullRequest(number:\$pr) {"
+log "            reviews(last:20) { nodes { author { login } state body submittedAt } }"
+log "          }"
+log "        }"
+log "      }' \\"
+log "      -F owner=\"${owner}\" -F repo=\"${repo}\" -F pr=${pr_number}"
+log ""
+log "    # Inline review threads with resolved state and per-thread comments"
+log "    gh api graphql -f query='"
+log "      query(\$owner:String!, \$repo:String!, \$pr:Int!) {"
+log "        repository(owner:\$owner, name:\$repo) {"
+log "          pullRequest(number:\$pr) {"
+log "            reviewThreads(first:100) {"
+log "              nodes {"
+log "                isResolved"
+log "                path"
+log "                line"
+log "                comments(first:50) { nodes { author { login } body createdAt } }"
+log "              }"
+log "            }"
+log "          }"
+log "        }"
+log "      }' \\"
+log "      -F owner=\"${owner}\" -F repo=\"${repo}\" -F pr=${pr_number}"
+log ""
+log "Step 2. Verify EVERY item one by one and judge it independently — do NOT"
+log "        just chase APPROVE, and do NOT accept a finding on the bot's word:"
+log "  - Open the cited file:line and read the surrounding code yourself."
+log "  - Decide, on the merits: does the issue OBJECTIVELY exist?"
+log "    (bots produce false positives — the decision must be backed by reading"
+log "    the code, not by trusting the verdict label)"
+log "  - If it objectively exists: it's a work item, whether the bot called it"
+log "    blocking or not. We do not ship technical debt just because a reviewer"
+log "    waved it through. Fix it (Step 3)."
+log "  - If you judge the finding does NOT hold: do NOT fabricate a fix to"
+log "    placate the bot. Instead REJECT it — reply on the PR (or in the review"
+log "    thread) rebutting the finding and stating WHY it does not apply, citing"
+log "    the code/behavior that disproves it. Leaving it silently is not enough;"
+log "    the rejection must be recorded on the PR so the decision is auditable."
+log "    Example:"
+log "      gh pr comment ${pr_number} --body \"Re: <finding> — rejected: <reason,"
+log "        with file:line evidence>.\""
+log ""
+log "Step 3. Fix every item you judged real:"
+log "  - Apply the smallest correct change; do NOT bundle drive-by refactors."
+log "  - Run the local validations the original reviewer would have run"
+log "    (gofmt, go vet, go test; ruff/pytest for python; mvn for java)."
+log "  - Commit with per-language isolation: one logical fix = one commit."
+log ""
+log "Step 4. Push again:"
+log ""
+log "    git push"
+log ""
+log "  The push re-enters this hook chain. CI will be re-watched and this"
+log "  block will reappear if any further activity appears after the new HEAD."
+log ""
+log "Termination model:"
+log "  This repo has an active agentic-pr-review bot that posts a new comment"
+log "  after every push. That comment's createdAt is necessarily > push_cutoff,"
+log "  so total_new ≥ 1 on every cycle and the script's"
+log "      ✓ no new review activity since last push ... done."
+log "  literal terminal is **practically unreachable** while the bot is active."
+log ""
+log "  Termination is therefore Claude's call, not a script signal:"
+log "    1. Read the bot's latest comment (it's the new top-level comment that"
+log "       triggered this block)."
+log "    2. If every flagged item is addressed OR a false positive, STOP PUSHING"
+log "       — the PR is ready. Tell the user."
+log "    3. If new real items appear, fix them and loop back to Step 2 above."
+log ""
+log "  Only if the bot is skipped (docs-only / paths-ignore hit) will the"
+log "  literal ✓ done line actually fire; do not rely on it as the sole stop"
+log "  signal."
+log ""
+log "Current state: push_cutoff=${push_cutoff}, new_total=${total_new}, unresolved_threads=${unresolved_threads}, reviewDecision=${review_decision}"
+log "════════════════════════════════════════════════════════════"
+exit 75

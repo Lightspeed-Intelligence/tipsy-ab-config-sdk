@@ -1,0 +1,90 @@
+#!/bin/bash
+# pre-commit: block commit if a STAGED source file fails its formatter/linter.
+#
+# Scope: only files staged for THIS commit (git diff --cached), so unrelated
+# in-tree violations never slow down or block an isolated commit. Each language
+# is checked with a file-level tool:
+#   - Go  (.go)   → gofmt -l
+#   - Py  (.py)   → ruff check  (only when ruff is installed)
+#
+# Java (.java) is intentionally NOT checked here: the SDK's Maven build carries
+# no checkstyle/spotless config, so there is no file-level formatter to run.
+#
+# Checks run against the STAGED blob of each file (`git show :path`), not the
+# worktree copy, so a file with both staged and unstaged hunks is judged by
+# exactly what would be committed.
+set -uo pipefail
+
+if [ -n "${CI:-}" ] || [ -n "${GITHUB_ACTIONS:-}" ]; then
+  exit 0
+fi
+
+cd "$(git rev-parse --show-toplevel 2>/dev/null || echo .)"
+
+# Staged files, added/copied/modified only (skip deletions/renames-away).
+# while-read instead of mapfile: macOS ships bash 3.2 as /bin/bash (mapfile
+# is bash 4+), and hooks must run under the system interpreter.
+staged=()
+while IFS= read -r line; do
+  staged+=("$line")
+done < <(git diff --cached --name-only --diff-filter=ACM)
+if [ "${#staged[@]}" -eq 0 ]; then
+  exit 0
+fi
+
+go_files=()
+py_files=()
+for f in "${staged[@]}"; do
+  [ -f "$f" ] || continue
+  case "$f" in
+    *.go) go_files+=("$f") ;;
+    *.py) py_files+=("$f") ;;
+  esac
+done
+
+errors=""
+
+# Go — gofmt on the STAGED blob (`git show :path`), not the worktree file. A
+# file may have staged content that differs from the worktree (partial `git
+# add`, then further edits); checking the worktree would let a badly-formatted
+# staged blob through, or block on a worktree-only issue. gofmt -l on stdin
+# prints "<standard input>" when the input needs formatting (exit stays 0), so
+# we key off non-empty output.
+if [ "${#go_files[@]}" -gt 0 ] && command -v gofmt &>/dev/null; then
+  bad_go=()
+  for f in "${go_files[@]}"; do
+    if [ -n "$(git show ":${f}" 2>/dev/null | gofmt -l 2>/dev/null)" ]; then
+      bad_go+=("$f")
+    fi
+  done
+  if [ "${#bad_go[@]}" -gt 0 ]; then
+    errors+="=== gofmt (staged Go, files need formatting) ===\n"
+    for f in "${bad_go[@]}"; do errors+="${f}\n"; done
+    errors+="fix: gofmt -w ${bad_go[*]} && git add ${bad_go[*]}\n\n"
+  fi
+fi
+
+# Python — ruff on the STAGED blob, piped via stdin with --stdin-filename so
+# ruff resolves the file's config/rules by path while linting the index content
+# (not the worktree). Skipped silently if ruff isn't installed locally.
+if [ "${#py_files[@]}" -gt 0 ] && command -v ruff &>/dev/null; then
+  bad_py=()
+  for f in "${py_files[@]}"; do
+    if ! git show ":${f}" 2>/dev/null | ruff check --stdin-filename "$f" - >/dev/null 2>&1; then
+      bad_py+=("$f")
+    fi
+  done
+  if [ "${#bad_py[@]}" -gt 0 ]; then
+    errors+="=== ruff check (staged Python, files have lint errors) ===\n"
+    for f in "${bad_py[@]}"; do errors+="${f}\n"; done
+    errors+="fix: ruff check --fix ${bad_py[*]} && git add ${bad_py[*]}\n\n"
+  fi
+fi
+
+if [ -n "$errors" ]; then
+  echo -e "\npre-commit: staged files failed lint/format checks:\n" >&2
+  echo -e "$errors" >&2
+  exit 1
+fi
+
+exit 0
