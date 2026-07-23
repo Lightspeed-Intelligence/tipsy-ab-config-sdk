@@ -111,7 +111,6 @@ func (c *Client) subscribeOnce(ctx context.Context) error {
 		Namespaces: append([]string(nil), c.subscribedNamespaces...),
 		KnownSeqs:  c.cache.knownSeqs(c.subscribedNamespaces),
 		TraceId:    traceID,
-		Env:        c.cfg.Env,
 	}
 	c.logger.Debug("tipsyabconfig: Subscribe", "namespaces", req.Namespaces, "trace_id", traceID)
 	stream, err := c.configCli.Subscribe(ctx, req)

@@ -78,7 +78,6 @@ func (c *Client) pullOnce(ctx context.Context, ns string) error {
 	resp, err := c.configTr.PullAll(rpcCtx, &configv1.PullAllRequest{
 		Namespaces: []string{ns},
 		TraceId:    traceID,
-		Env:        c.cfg.Env,
 	})
 	if err != nil {
 		return err

@@ -359,7 +359,6 @@ func (c *Client) fetchConfigVersionFlatKvForNamespace(parentCtx context.Context,
 		ExperimentType: abtestv1.ExperimentType_EXPERIMENT_TYPE_CONFIG_VERSION,
 		DisplayType:    abtestv1.ResultDisplayType_RESULT_DISPLAY_TYPE_FLAT_KV,
 		TraceId:        traceID,
-		Env:            c.cfg.Env,
 	}
 	start := time.Now()
 	resp, err := c.abtestTr.GetExperimentResult(callCtx, req)

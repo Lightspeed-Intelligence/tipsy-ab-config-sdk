@@ -130,17 +130,6 @@ class Config:
     # ``default_namespace`` AND an empty env var leaves the SDK with no default
     # namespace, in which case ns-optional entry points raise NamespaceRequired.
     default_namespace: str = ""
-    # ``env`` is the environment identifier stamped onto every outgoing request
-    # (GetExperimentResult / PullAll / Subscribe) so the server can filter
-    # experiment admission by environment. It is a single-value string carried
-    # on the wire over both the gRPC and HTTP transports (protojson omits the
-    # zero value, so an empty ``env`` never widens the request body on HTTP).
-    # The default "" means "unspecified": the server treats it as matching
-    # experiments that place no env restriction, and never matching an
-    # experiment that restricts to a non-empty env set. Unlike
-    # ``default_namespace`` this has NO environment-variable fallback (decision:
-    # default "" only; a TIPSY_SDK_ENV override is an explicit Follow-up).
-    env: str = ""
     # When ``channel_options`` is non-empty it is appended to the SDK's own
     # grpc.aio options (later entries override earlier).
     channel_options: Optional[List[Tuple[str, Any]]] = None
@@ -921,7 +910,6 @@ class Client:
             experiment_type=experiment_type,
             display_type=display_type,
             trace_id=tid,
-            env=self._cfg.env,
         )
         start = time.perf_counter()
         try:
@@ -980,7 +968,6 @@ class Client:
             experiment_type=abtest_pb2.ExperimentType.EXPERIMENT_TYPE_CONFIG_VERSION,
             display_type=abtest_pb2.ResultDisplayType.RESULT_DISPLAY_TYPE_FLAT_KV,
             trace_id=trace_id,
-            env=self._cfg.env,
         )
         start = time.perf_counter()
         try:
@@ -1077,7 +1064,7 @@ class Client:
             extra={"ns": ns, "trace_id": trace_id},
         )
         req = config_pb2.PullAllRequest(
-            namespaces=[ns], trace_id=trace_id, env=self._cfg.env
+            namespaces=[ns], trace_id=trace_id
         )
         try:
             resp = await asyncio.wait_for(
@@ -1177,7 +1164,6 @@ class Client:
         req = config_pb2.SubscribeRequest(
             namespaces=list(self._namespaces),
             trace_id=trace_id,
-            env=self._cfg.env,
         )
         for ns, (biz, exp) in known.items():
             req.known_seqs[ns].business_snapshot_seq = biz

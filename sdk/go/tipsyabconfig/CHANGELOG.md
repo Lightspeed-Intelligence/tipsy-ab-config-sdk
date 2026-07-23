@@ -20,6 +20,28 @@ bump first, then an SDK tag bump.
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-07-23
+
+### Changed
+
+- **env is now judged server-side; the SDK no longer sends an env request
+  field.** `env` matching moved to the abConfig server, which reads its own
+  `TIPSY_ENV` process environment variable and compares it against each
+  experiment's env set. As a result the SDK no longer stamps env onto any
+  outbound request. Removed `Config.Env` and the `Client.Env()` accessor; the
+  four request construction points (`GetExperimentResult`, the `config_version`
+  flat_kv fetch behind `GetConfig`, `PullAll`, `Subscribe`) no longer set the
+  request's `env` field.
+
+### Compatibility
+
+- The `env` field remains in the proto request messages (`api/gen/go` v0.7.0)
+  and is left unset by this SDK — it is retained for wire compatibility with the
+  previously released v0.11.0 and is now deprecated on the request path. Newer
+  servers ignore any request-supplied env and use `TIPSY_ENV` instead, so both
+  old (v0.11.0, still sending env) and new SDK builds interoperate with the new
+  server. The `go.mod` `api/gen/go` pin is unchanged (no proto regen).
+
 ## [0.11.0] - 2026-07-22
 
 ### Added

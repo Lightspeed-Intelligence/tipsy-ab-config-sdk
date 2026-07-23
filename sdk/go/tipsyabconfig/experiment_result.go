@@ -127,7 +127,6 @@ func (c *Client) GetExperimentResult(ctx context.Context, req ExperimentResultRe
 		ExperimentType: abtestv1.ExperimentType(req.Type),
 		DisplayType:    abtestv1.ResultDisplayType(req.DisplayType),
 		TraceId:        traceID,
-		Env:            c.cfg.Env,
 	}
 	start := time.Now()
 	resp, err := c.abtestTr.GetExperimentResult(callCtx, pbReq)

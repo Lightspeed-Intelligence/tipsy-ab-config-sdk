@@ -50,7 +50,6 @@ public final class Config {
     private final int maxSendMessageSize;
     private final Consumer<BackgroundErrorEvent> onBackgroundError;
     private final String defaultNamespace;
-    private final String env;
     private final Transport transport;
     private final UnaryOperator<ManagedChannelBuilder<?>> channelConfigurator;
     private final HttpClient httpClient;
@@ -70,7 +69,6 @@ public final class Config {
         this.maxSendMessageSize = b.maxSendMessageSize;
         this.onBackgroundError = b.onBackgroundError;
         this.defaultNamespace = b.defaultNamespace;
-        this.env = b.env;
         this.transport = b.transport;
         this.channelConfigurator = b.channelConfigurator;
         this.httpClient = b.httpClient;
@@ -155,15 +153,6 @@ public final class Config {
     }
 
     /**
-     * The configured environment identifier, carried with every outbound request
-     * (grpc + http); empty ("", the default) means "unspecified". Unlike
-     * {@link #defaultNamespace()} it has no environment-variable fallback.
-     */
-    public String env() {
-        return env;
-    }
-
-    /**
      * The configured transport, or {@code null} meaning "consult the
      * {@code TIPSY_SDK_TRANSPORT} environment variable, defaulting to gRPC".
      */
@@ -201,7 +190,6 @@ public final class Config {
         private int maxSendMessageSize = 512 * 1024 * 1024;
         private Consumer<BackgroundErrorEvent> onBackgroundError;
         private String defaultNamespace = "";
-        private String env = "";
         private Transport transport;
         private UnaryOperator<ManagedChannelBuilder<?>> channelConfigurator;
         private HttpClient httpClient;
@@ -301,16 +289,6 @@ public final class Config {
          */
         public Builder defaultNamespace(String defaultNamespace) {
             this.defaultNamespace = defaultNamespace == null ? "" : defaultNamespace;
-            return this;
-        }
-
-        /**
-         * Sets the environment identifier carried with every outbound request
-         * (grpc + http). Empty ("", the default) means "unspecified"; there is no
-         * environment-variable fallback. A {@code null} is normalized to "".
-         */
-        public Builder env(String env) {
-            this.env = env == null ? "" : env;
             return this;
         }
 
