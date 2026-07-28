@@ -85,10 +85,14 @@ try (TipsyAbConfigClient client = TipsyAbConfigClient.create(Config.builder()
     // 动态解析：abtest 命中（白名单 > 实验）> 全量发布 > 默认值。
     String threshold = client.getConfig(abctx, "tipsy-chat", "rerank.threshold", "0.5");
 
+    // 一次拿该 ns 下全部动态 config（key → value）：逐 key 解析同 getConfig，
+    // 无 abtest 命中且无全量的 key 会被剔除。返回的是可变 HashMap。
+    Map<String, String> all = client.getAllConfigs(abctx, "tipsy-chat");
+
     // 纯缓存静态读：getConfigStatic 返回 Optional（空串是合法值）。
     String staticVal = client.getConfigStatic("tipsy-chat", "rerank.threshold").orElse("0.5");
 
-    System.out.println(threshold + " / " + staticVal);
+    System.out.println(threshold + " / " + staticVal + " / " + all.size());
 }
 ```
 
@@ -109,6 +113,8 @@ TIPSY_TOKEN=... CONFIG_ADDR=grpcs://config.example.com:443 \
 | `getConfigStatic(ns, key) → Optional<String>` | 纯全量缓存读，**不**做 ns 解析、不抛 ns 异常；空串是合法命中值，未命中返回 `Optional.empty()`。 |
 | `getConfig(abctx, ns, key, default)` | 按用户解析动态配置；优先级 abtest 命中 > 全量 > 默认；单 ns abtest 失败静默降级到全量。 |
 | `getConfigDefault(abctx, key, default)` | `getConfig` 的 ns-可省形式（ns 取项目默认）。 |
+| `getAllConfigs(abctx, ns) → Map<String,String>` | 一次解析该 ns 下**全部**动态 config，返回全新可变 `HashMap`（`key → value`）；逐 key 解析与 `getConfig` 一致（abtest 命中 > 全量），无 abtest 命中且无全量的 key 从 map 中**剔除**（get-all 无逐 key 默认值概念，空串是合法值）；不新增 RPC（复用同一 ns 的 memoized 结果，全量快路径时零 RPC）。无快照（已订阅但尚未拉到）返回空 map、零 RPC。 |
+| `getAllConfigsDefault(abctx) → Map<String,String>` | `getAllConfigs` 的 ns-可省形式（ns 取项目默认）。 |
 | `getExperimentResult(ExperimentResultRequest)` | 直通 `AbtestService.GetExperimentResult`，返回原始 proto 响应（读 `config_flat_kv` / `custom_flat_kv` / `groups` / `gray_hits`）。**破坏性变更**：`gray_hits` 已从平铺的 `{release_id, key, version_id}`（每个 `(release, key)` 一条）改为按 release 分组的 `{release_id, key_versions}`（每个命中 release 一条，`key_versions` 为 `config_key.key 名 → versionId` 的 map），对齐 `groups[].params_versions`；读某 key 用 `getKeyVersionsMap().get(keyName)`。所有 int64 版本值为 versionId（主键 id 全局唯一），非语义 version_no。 |
 
 `AbtestContext` 工厂：`newAbtestContext(uid, attrs)` / `(…, traceId)` /
@@ -138,6 +144,14 @@ false** 时跳等;字段缺省(旧服务端)或 `true` 一律走现有等待路�
 > `has_dynamic_resolution` 字段的版本(`api/gen/go` v0.3.0+)。**先升级服务端,再升级
 > 业务侧 SDK**。若误连旧服务端(字段缺省),SDK 安全回退到「总是等 abtest」的现有
 > 行为——功能正确,仅无快路径收益。不做版本协商,字段缺省即唯一兼容信号。
+
+**无用户 uid 静态直返（`""` / `"0"`）**：当 `AbtestContext` 的 uid 为空串
+（`null` 归一为 `""`）或字符串零 `"0"` 时，视为无真实用户身份——`getConfig` 与
+`getAllConfigs` 跳过 abtest 分桶/白名单逻辑，**不发** `GetExperimentResult` RPC，
+直接按全量解析（`getConfig` 无全量时返回默认值，`getAllConfigs` 剔除该 key）。短路
+落在共享的惰性拉取层，故 `prefetchConfigVersionFlatKvForNamespace` 同样不发 RPC；
+`emptyAbtestContext()` / `mockAbtestContext(...)` 语义不变（预置的 mock 结果仍生效）。
+此短路不计 fallback 指标（是主动跳过，非降级）。
 
 **命名空间解析**：显式 ns > 项目默认 ns（`Config.defaultNamespace` 覆盖环境变量
 `PROJECT_DEFAULT_NAMESPACE`）> `NamespaceRequiredException`；解析出的 ns 未订阅 →

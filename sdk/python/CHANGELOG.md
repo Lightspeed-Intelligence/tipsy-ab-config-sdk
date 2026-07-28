@@ -8,6 +8,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-07-28
+
+### Added
+
+- `Client.get_all_configs(ctx, namespace)` and
+  `Client.get_all_configs_default(ctx)` — resolve **every** dynamic config under
+  a `(namespace, user)` into a fresh `dict[str, str]` mapping key → value, using
+  the exact same resolution logic as `get_config` (abtest whitelist / experiment
+  hit > full-release fallback), just without a specific `key`. A key that
+  resolves to neither an abtest hit nor a full-release value is **omitted** from
+  the map (no value = not present; a genuinely empty-string value is still
+  returned). A subscribed-but-not-yet-pulled namespace (no snapshot) returns an
+  empty `dict` with zero RPC. The per-ns abtest result is shared with
+  `get_config`, so the whole request link issues **at most one**
+  `GetExperimentResult` RPC per namespace; when every key in the namespace is
+  explicitly pure-full-release (`has_dynamic_resolution` present and `False`) the
+  abtest wait is skipped entirely (zero RPC). `get_all_configs_default` resolves
+  the project default namespace. Mirrors the Go and Java SDKs.
+
+### Changed
+
+- **A `user_id` of `""` or `"0"` is now treated as identity-less: no
+  `GetExperimentResult` RPC, static resolution only.** Both `get_config` and
+  `get_all_configs` for such a context skip the experiment / whitelist logic
+  entirely (no RPC) and resolve straight to the full-release value — for
+  `get_config` the default when no full release exists; for `get_all_configs`
+  the key is dropped. The short-circuit lives in the lazy-fetch layer, so
+  `prefetch_config_version_flat_kv_for_namespace` / `wait_for_abtest` also issue
+  no RPC for these uids (behaving like `empty_abtest_context`). A pre-seeded
+  `mock_abtest_context(user_id="", …)` result still wins. Any other uid is
+  unchanged. The `"0"` value is called out explicitly because it is a common
+  "no logged-in user" sentinel. Previously both `""` and `"0"` sent a
+  `GetExperimentResult` RPC with an empty/zero user_id, which has no meaningful
+  experiment bucketing. Mirrors the Go and Java SDKs.
+- `AbtestContext(user_id=None)` is now normalised to `""` at construction
+  (parity with the Java constructor), so a `None` uid takes the identity-less
+  short-circuit above instead of reaching proto encoding.
+
 ## [0.13.0] - 2026-07-23
 
 ### Changed

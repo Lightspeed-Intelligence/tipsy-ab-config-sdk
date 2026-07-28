@@ -80,6 +80,30 @@ func main() {
 
 完整可运行示例参见 [`sdk/go/example/main.go`](sdk/go/example/main.go)。
 
+### 按用户解析动态配置 / 一次取整个 namespace（Go）
+
+```go
+// 每次业务请求构造一个 AbtestContext（纯创建，不发 RPC）
+abctx := client.NewAbtestContext(ctx, "user-123", map[string]any{"country": "JP"})
+
+// 单 key：abtest 命中（白名单 > 实验）> full release > default
+value, err := client.GetConfig(ctx, abctx, "my-app", "feature_x", "off")
+
+// 整个 namespace：一次拿全部动态 config 的 key→value map。
+// 逐 key 解析逻辑与 GetConfig 完全一致；既无 abtest 命中也无 full release
+// 的 key 会被剔除（get-all 没有逐 key 默认值；空串是合法 value）。
+// 与同一 abctx 上的 GetConfig 共享同一次实验结果拉取（每 ns 最多一次 RPC）。
+all, err := client.GetAllConfigs(ctx, abctx, "my-app")
+
+// ns 可省形式（取项目默认 namespace）
+all, err = client.GetAllConfigsDefault(ctx, abctx)
+```
+
+> **无用户身份的 uid（`""` / `"0"`）**：uid 传空字符串或 `"0"` 表示"无真实用户身份"——
+> `GetConfig` / `GetAllConfigs` 会跳过实验/白名单逻辑（不发 `GetExperimentResult` RPC），
+> 直接按静态 full-release 解析（单 key 无 full release 时返回 default，get-all 剔除该 key），
+> 行为等价于 `EmptyAbtestContext()`。其它 uid 走正常 abtest 路径。
+
 ## 快速开始（Java）
 
 ```java

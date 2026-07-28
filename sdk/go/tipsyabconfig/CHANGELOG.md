@@ -20,6 +20,49 @@ bump first, then an SDK tag bump.
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-07-28
+
+### Added
+
+- `Client.GetAllConfigs(ctx, abctx, ns)` and `Client.GetAllConfigsDefault(ctx,
+  abctx)` — resolve EVERY dynamic config key under a namespace for one user in a
+  single call and return a freshly allocated, caller-owned `map[string]string`.
+  Each key resolves with the identical precedence as `GetConfig` (abtest
+  whitelist / experiment hit > full release), sharing the same internal per-key
+  resolver, so a key yields the same value under either call. Keys with neither
+  an abtest hit nor a full-release value are **omitted** from the map (the
+  batched form has no per-key default); an empty-string value is a valid value
+  and is kept. The whole namespace is resolved against ONE cache snapshot
+  captured up front (snapshot-consistent — never torn across a concurrent cache
+  replace). At most one `GetExperimentResult` RPC is issued per (request link,
+  ns) and it is **reused** with any `GetConfig` on the same `AbtestContext` +
+  ns; when every key is pure full-release (`has_dynamic_resolution` explicitly
+  `false`) no RPC is issued at all — a zero-key snapshot counts as vacuously
+  all-static (no key could be an abtest hit), matching the Python/Java SDKs.
+  A subscribed-but-not-yet-pulled namespace
+  returns a non-nil empty map with a nil error and no RPC. `GetAllConfigsDefault`
+  is the ns-optional form (resolves the project default namespace; returns
+  `ErrNamespaceRequired` when none is configured). Nil-receiver / nil-`abctx`
+  errors match `GetConfig` (`ErrClosed` / `ErrAbtestContextMissing`).
+
+### Changed
+
+- **A user id of `""` or `"0"` is now treated as identity-less.** When an
+  `AbtestContext` carries such a uid, `GetConfig` / `GetAllConfigs` no longer
+  issue a `GetExperimentResult` RPC — every namespace short-circuits to static
+  full-release resolution (equivalent to `EmptyAbtestContext`), because neither
+  value can be bucketed into an experiment or matched against a whitelist
+  server-side. In particular `"0"`, previously sent verbatim as a real user id,
+  is now identity-less. The short-circuit lives in the shared lazy-fetch layer,
+  so it applies uniformly to `GetConfig`, `GetAllConfigs`,
+  `PrefetchConfigVersionFlatKvForNamespace`, and `WaitForAbtest`. This is a
+  behavior change but not breaking: an empty/`"0"` uid had no dependable
+  experiment semantics before (server-side bucketing of an empty identity is
+  meaningless). It is a deliberate short-circuit, not a degraded fallback, so it
+  does NOT bump the `abtestFallback` metric; a single DEBUG line
+  (`skip abtest: no-user uid`) is logged instead. Pre-seeded `MockAbtestContext`
+  results still win (the results-map lookup precedes the short-circuit).
+
 ## [0.12.0] - 2026-07-23
 
 ### Changed

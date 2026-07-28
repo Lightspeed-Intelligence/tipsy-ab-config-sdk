@@ -8,6 +8,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-07-28
+
+### Added
+
+- **`getAllConfigs(abctx, ns)` and `getAllConfigsDefault(abctx)`.** Resolve
+  EVERY dynamic config in a namespace for a user in one call, returning a fresh
+  mutable `Map<String, String>` of `key → value`. Per-key resolution is
+  identical to `getConfig` (abtest whitelist / experiment hit > full release),
+  assembled client-side from the local cache snapshot plus the same
+  at-most-once memoised `GetExperimentResult` result — no new RPC beyond the one
+  `getConfig` would already issue for the namespace (and zero when every key is
+  pure full-rollout). A key with neither an abtest hit nor a full-release value
+  is OMITTED from the map (there is no per-key default in the get-all form); the
+  empty string is a valid value and is preserved. An absent snapshot
+  (subscribed but not yet pulled) returns an empty map with zero RPC.
+  `getAllConfigsDefault` is `getAllConfigs` with the project default namespace.
+  Mirrors the Go and Python SDKs.
+
+### Changed
+
+- **A no-user uid (`""` or `"0"`) now resolves statically — no
+  `GetExperimentResult` RPC.** When an `AbtestContext` carries an empty uid
+  (`null` normalises to `""`) or the string zero `"0"`, both `getConfig` and
+  `getAllConfigs` skip the abtest bucketing / whitelist logic entirely and
+  resolve straight from the full-release value (single-key `getConfig` returns
+  the supplied default when there is no full release; `getAllConfigs` omits such
+  a key). Previously an empty uid still issued a `GetExperimentResult` RPC with
+  `user_id=""` — that had no dependable experiment semantics (the server cannot
+  meaningfully bucket a no-user request), so this is a behaviour change but not
+  a breaking one. The short-circuit lives in the shared lazy-fetch primitive, so
+  `prefetchConfigVersionFlatKvForNamespace` also issues no RPC for a no-user
+  uid. `emptyAbtestContext()` / `mockAbtestContext(...)` semantics are unchanged
+  (a pre-seeded mock result still wins). No fallback metric is bumped (this is a
+  deliberate skip, not a degradation).
+
 ## [0.9.0] - 2026-07-23
 
 ### Changed

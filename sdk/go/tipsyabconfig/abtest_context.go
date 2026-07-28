@@ -100,6 +100,11 @@ var emptyAbtestResult = &abtestComputeResult{keyVersions: map[string]int64{}}
 // warm a specific namespace ahead of time, call the opt-in
 // PrefetchConfigVersionFlatKvForNamespace.
 //
+// No-user uid: when userID is "" or "0" the ctx is treated as identity-less —
+// every not-yet-resolved namespace short-circuits to the empty result without
+// an RPC (equivalent to EmptyAbtestContext), so GetConfig / GetAllConfigs
+// resolve purely from full release. A real uid keeps the lazy per-ns fetch.
+//
 // parentCtx is the parent ctx whose deadline / cancel signal propagates to
 // every lazy per-ns GetExperimentResult RPC (and any explicit prefetch). Pass
 // the request ctx.
@@ -219,16 +224,26 @@ func (a *AbtestContext) TraceID() string {
 	return a.traceID
 }
 
+// isNoUserUID reports whether uid denotes "no real user identity". Both the
+// empty string and the string zero "0" mean identity-less: neither can be
+// bucketed into an experiment or matched against a whitelist server-side, so
+// the SDK skips the GetExperimentResult RPC entirely and resolves statically
+// (full release / default), matching an EmptyAbtestContext.
+func isNoUserUID(uid string) bool {
+	return uid == "" || uid == "0"
+}
+
 // ensureFetch guarantees that ns is being fetched (at most once) into this
 // ctx's results map and returns its computeStatus. It owns the full critical
 // section: it takes a.mu itself, double-checks the per-ns computeStatus, and —
 // only when the ns is not yet present — creates it (with an open done channel)
-// and either short-circuits to the empty result (identity-less / mock ctx, or
-// an unsubscribed ns; no RPC) or spawns the single fetch goroutine. Idempotent:
-// when ns is already present it returns the existing computeStatus without
-// issuing a new RPC. This is the shared dedup primitive behind both the lazy
-// resultFor wait path and the explicit PrefetchConfigVersionFlatKvForNamespace
-// warm path, so concurrent first-accessors of the same ns share one RPC.
+// and either short-circuits to the empty result (identity-less / mock ctx, a
+// no-user uid, or an unsubscribed ns; no RPC) or spawns the single fetch
+// goroutine. Idempotent: when ns is already present it returns the existing
+// computeStatus without issuing a new RPC. This is the shared dedup primitive
+// behind both the lazy resultFor wait path and the explicit
+// PrefetchConfigVersionFlatKvForNamespace warm path, so concurrent
+// first-accessors of the same ns share one RPC.
 func (a *AbtestContext) ensureFetch(ns string) *computeStatus {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -241,6 +256,16 @@ func (a *AbtestContext) ensureFetch(ns string) *computeStatus {
 	switch {
 	case a.empty || a.owner == nil:
 		// Identity-less / mock ctx: resolve to empty without an RPC.
+		st.result = emptyAbtestResult
+		close(st.done)
+	case isNoUserUID(a.userID):
+		// No-user uid ("" / "0"): identity-less, resolve statically without an
+		// RPC (same effect as an EmptyAbtestContext). This is a deliberate
+		// short-circuit, NOT a degraded fallback, so it does not bump the
+		// abtestFallback metric. owner is non-nil here (the arm above catches
+		// owner == nil), so logging never dereferences a nil owner.
+		a.owner.logger.Debug("tipsyabconfig: skip abtest: no-user uid",
+			"ns", ns, "uid", a.userID, "trace_id", a.traceID)
 		st.result = emptyAbtestResult
 		close(st.done)
 	case !a.owner.isSubscribed(ns):
