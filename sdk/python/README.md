@@ -207,6 +207,15 @@ async def main():
     )
     value = await client.get_config(ctx, "feature.flags", "key")
 
+    # Resolve EVERY dynamic config under (namespace, user) at once. Same
+    # resolution as get_config (abtest hit > full release), returned as a fresh
+    # dict[str, str] you may mutate freely. A key with no abtest hit and no
+    # full-release value is omitted; an empty-string value is kept. Reuses the
+    # same at-most-once per-ns abtest fetch as get_config.
+    all_flags = await client.get_all_configs(ctx, "feature.flags")
+    # ns-optional form resolves the project default namespace.
+    all_default = await client.get_all_configs_default(ctx)
+
     # Optional: warm a namespace up front (e.g. so it overlaps other I/O).
     # Idempotent + non-blocking; a later get_config reuses the same fetch.
     ctx.prefetch_config_version_flat_kv_for_namespace("feature.flags")
@@ -236,6 +245,16 @@ a one-shot WARN).
 > trace id; a service with its own internal tracing system can pass
 > that system's trace id. Pass `None` / omit the kwarg when there is
 > no upstream id — the SDK / server will fill a UUID v4.
+
+> **No-user uid (`""` / `"0"`).** An `AbtestContext` whose `user_id` is the
+> empty string `""` or `"0"` carries no real user identity, so both
+> `get_config` and `get_all_configs` skip the abtest experiment / whitelist
+> logic entirely — no `GetExperimentResult` RPC is issued — and resolve straight
+> to the static full-release value (`get_config` returns the supplied default
+> when a key has no full release; `get_all_configs` omits it). A `user_id` of
+> `None` is normalised to `""` and behaves the same. Any other uid takes the
+> normal abtest path. Use this on non-user paths instead of paying for an
+> experiment lookup that could never bucket meaningfully.
 
 See `example/` for a fully runnable script.
 

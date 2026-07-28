@@ -32,6 +32,7 @@ didn't pass one explicitly.
 from __future__ import annotations
 
 import asyncio
+import logging
 import uuid
 from dataclasses import dataclass, field
 from typing import Any, Dict, Mapping, Optional, TYPE_CHECKING
@@ -42,6 +43,9 @@ from .exceptions import AbtestContextMissing
 
 if TYPE_CHECKING:  # pragma: no cover
     from .client import Client
+
+
+logger = logging.getLogger("tipsy_ab_config")
 
 
 # ``abtest_ctx_var`` is the contextvar the FastAPI middleware writes to. Use
@@ -121,7 +125,11 @@ class AbtestContext:
         empty: bool = False,
         trace_id: Optional[str] = None,
     ) -> None:
-        self.user_id = user_id
+        # Normalise a None uid to "" (parity with the Java constructor's
+        # null → "" at AbtestContext.java:84). A None would otherwise bypass
+        # the no-user shortcut in _ensure_fetch and break proto encoding
+        # downstream (user_id must be a str on the wire).
+        self.user_id = user_id if user_id is not None else ""
         self.user_attrs: Dict[str, Any] = dict(user_attrs or {})
         # trace_id is the request-scoped identifier shared by every RPC this
         # ctx issues (design 04 §B.2 + sdk-trace-id §5). Empty / None on input
@@ -163,10 +171,16 @@ class AbtestContext:
         The single slot-creation primitive shared by :meth:`wait_for_abtest`
         and :meth:`prefetch_config_version_flat_kv_for_namespace`. Looks up the
         per-ns ``_NsResult`` slot; when absent it either short-circuits to the
-        empty result (identity-less / mock / owner-less / unsubscribed ns — NO
-        RPC) or spawns the single ``GetExperimentResult`` task and memoises its
-        slot. Idempotent: an already-present ns returns the existing slot
-        without spawning a new task, preserving at-most-once.
+        empty result (identity-less / mock / owner-less / unsubscribed ns, or a
+        no-user uid ``""`` / ``"0"`` — NO RPC) or spawns the single
+        ``GetExperimentResult`` task and memoises its slot. Idempotent: an
+        already-present ns returns the existing slot without spawning a new
+        task, preserving at-most-once.
+
+        A pre-seeded slot (mock via :meth:`_seed_result`) always wins: the slot
+        lookup precedes the short-circuit condition, so a
+        ``MockAbtestContext(user_id="", …)`` still serves its seeded per-ns
+        result rather than the empty short-circuit.
 
         Synchronous and lock-free: the lookup-then-create section crosses no
         ``await``, so on the single-threaded event loop it is atomic with
@@ -175,15 +189,29 @@ class AbtestContext:
         """
         slot = self._results.get(ns)
         if slot is None:
+            no_user = self.user_id in ("", "0")
             if (
                 self._empty
                 or self._owner is None
+                or no_user
                 or not self._owner.is_subscribed(ns)
             ):
-                # Identity-less / mock / unsubscribed ns: resolve to empty
-                # without an RPC. (Dynamic get_config rejects unsubscribed
-                # ns earlier via resolve_namespace; this guards the
-                # low-level entry.)
+                # Identity-less / mock / no-user uid / unsubscribed ns: resolve
+                # to empty without an RPC. A uid of "" or "0" carries no real
+                # user identity, so it never participates in experiment /
+                # whitelist logic — it short-circuits here (no abtestFallback
+                # metric: this is a deliberate skip, not a degradation).
+                # (Dynamic get_config rejects unsubscribed ns earlier via
+                # resolve_namespace; this guards the low-level entry.)
+                if no_user and not self._empty and self._owner is not None:
+                    logger.debug(
+                        "tipsy_ab_config: skip abtest: no-user uid",
+                        extra={
+                            "ns": ns,
+                            "uid": self.user_id,
+                            "trace_id": self.trace_id,
+                        },
+                    )
                 slot = _NsResult(result=_EMPTY_RESULT)
             else:
                 task = asyncio.ensure_future(

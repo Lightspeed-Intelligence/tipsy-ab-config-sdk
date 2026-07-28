@@ -59,7 +59,7 @@ from .abtest_context import (
     _ensure_ctx,
     abtest_ctx_var,
 )
-from .cache import ConfigCache
+from .cache import ConfigCache, NamespaceSnapshot
 from .exceptions import (
     NamespaceNotSubscribed,
     NamespaceRequired,
@@ -261,6 +261,25 @@ def _reset_backoff_if_stable(
     return backoff
 
 
+def _has_dynamic_resolution_in_snapshot(
+    snap: Optional[NamespaceSnapshot], key: str
+) -> Tuple[bool, bool]:
+    """Snapshot-scoped ``(value, present)`` for a key's dynamic-resolution flag.
+
+    Mirrors ``ConfigCache.has_dynamic_resolution`` but reads the caller's
+    already-captured ``snap`` instead of re-snapshotting, preserving the
+    snapshot-consistency invariant (design §2). ``present`` is ``True`` only
+    when the server explicitly set the ``optional bool`` field for this key; any
+    miss (no snapshot, no such key, or an absent field) returns ``(False, False)``.
+    """
+    if snap is None:
+        return (False, False)
+    ks = snap.keys.get(key)
+    if ks is None or ks.has_dynamic_resolution is None:
+        return (False, False)
+    return (ks.has_dynamic_resolution, True)
+
+
 class Client:
     """Tipsy AB-config Python SDK handle.
 
@@ -451,6 +470,14 @@ class Client:
         ctx = _ensure_ctx(ctx)
         resolved_ns = self.resolve_namespace(namespace)
 
+        # Snapshot-consistency invariant (design §2): capture the immutable
+        # snapshot ONCE and resolve against it via the shared per-key helper, so
+        # a concurrent cache replacement can never make this lookup read two
+        # different snapshots. A None snapshot (subscribed ns not yet pulled)
+        # resolves every branch to "absent" ⇒ default, and — matching the prior
+        # behaviour — still issues the at-most-once abtest RPC below.
+        snap = self._cache.snapshot(resolved_ns)
+
         # has_dynamic_resolution fast path (design §3): when the server has
         # explicitly told us this key carries NO gray release / experiment
         # (the flag is present AND False), the abtest result cannot possibly
@@ -459,38 +486,58 @@ class Client:
         # old server (field absent ⇒ present is False) keeps the existing
         # always-wait path and never wrongly skips abtest. A present-and-True
         # flag also keeps the existing path.
-        hdr_value, hdr_present = self._cache.has_dynamic_resolution(
-            resolved_ns, key
-        )
+        hdr_value, hdr_present = _has_dynamic_resolution_in_snapshot(snap, key)
         if hdr_present and hdr_value is False:
             logger.debug(
                 "get_config fast path (no dynamic resolution; skipping abtest)",
                 extra={"ns": resolved_ns, "key": key, "uid": ctx.user_id},
             )
-            v = self._cache.full_release_version(resolved_ns, key)
-            if v is None:
-                return default
-            value = self._cache.value_of(resolved_ns, key, v)
-            if value is None:
-                return default
-            logger.debug(
-                "get_config hit (full, fast path)",
-                extra={
-                    "ns": resolved_ns,
-                    "key": key,
-                    "version": v,
-                    "uid": ctx.user_id,
-                },
+            value, present = self._resolve_key_from_snapshot(
+                snap, key, None, resolved_ns, ctx.user_id
             )
-            return value
+            return value if present else default
 
         # Per-ns memoised abtest result (at-most-once RPC per request link).
         abresult: _ComputeResult = await ctx.wait_for_abtest(resolved_ns)
 
+        value, present = self._resolve_key_from_snapshot(
+            snap, key, abresult, resolved_ns, ctx.user_id
+        )
+        return value if present else default
+
+    def _resolve_key_from_snapshot(
+        self,
+        snap: Optional[NamespaceSnapshot],
+        key: str,
+        abresult: Optional[_ComputeResult],
+        resolved_ns: str,
+        uid: str,
+    ) -> Tuple[Optional[str], bool]:
+        """Resolve one key's value against a single captured snapshot.
+
+        Shared by :meth:`get_config` (single key) and :meth:`get_all_configs`
+        (whole ns). Reads ONLY ``snap`` — never the cache-level accessors
+        (``value_of`` / ``full_release_version`` / ``has_dynamic_resolution``),
+        each of which re-snapshots internally — so a whole get-all sweep sees
+        one consistent snapshot (the snapshot-consistency invariant, design §2).
+
+        Returns ``(value, present)``. ``present`` is ``False`` when the key
+        resolves to neither an abtest hit nor a full-release value (single key
+        ⇒ default; get-all ⇒ omit). An empty-string value is a valid hit
+        (``present`` ``True``, design §10.5).
+
+        Resolution order mirrors the single-key path exactly: abtest hit
+        (non-zero version present in the snapshot) > ab→full fallback (WARN +
+        the same per-ns abtest-fallback metric when the ab version is missing
+        from the snapshot) > full-release value > absent. ``abresult`` is
+        ``None`` for the has_dynamic_resolution fast path (abtest skipped).
+        """
+        ks = snap.keys.get(key) if snap is not None else None
+
         # abtest hit path: key present in config_flat_kv with a non-zero version.
         ab_version = abresult.key_versions.get(key) if abresult else None
         if ab_version is not None and ab_version != 0:
-            value = self._cache.value_of(resolved_ns, key, ab_version)
+            value = ks.versions.get(ab_version) if ks is not None else None
             if value is not None:
                 logger.debug(
                     "get_config hit (abtest)",
@@ -498,10 +545,10 @@ class Client:
                         "ns": resolved_ns,
                         "key": key,
                         "version": ab_version,
-                        "uid": ctx.user_id,
+                        "uid": uid,
                     },
                 )
-                return value
+                return value, True
             # ab → full fallback (design §B.3 / M6).
             self._metrics.inc_abtest_fallback(resolved_ns)
             logger.warning(
@@ -510,22 +557,125 @@ class Client:
             )
 
         # Full-release fallback (M6): key not in config_flat_kv, or ab→full.
-        v = self._cache.full_release_version(resolved_ns, key)
-        if v is None:
-            return default
-        value = self._cache.value_of(resolved_ns, key, v)
-        if value is None:
-            return default
+        if ks is not None and ks.full_release_version is not None:
+            value = ks.versions.get(ks.full_release_version)
+            if value is not None:
+                logger.debug(
+                    "get_config hit (full)",
+                    extra={
+                        "ns": resolved_ns,
+                        "key": key,
+                        "version": ks.full_release_version,
+                        "uid": uid,
+                    },
+                )
+                return value, True
+        return None, False
+
+    async def get_all_configs(
+        self,
+        ctx: Optional[AbtestContext],
+        namespace: Optional[str],
+    ) -> Dict[str, str]:
+        """Resolve EVERY dynamic config under ``(ns, user)`` into a key→value map.
+
+        The whole-namespace counterpart of :meth:`get_config`: it assembles the
+        value for every key in the namespace's cached snapshot using the exact
+        same resolution logic (abtest whitelist / experiment hit > full-release
+        fallback), only without a specific ``key`` argument.
+
+        ns resolution, closed-client and ctx handling mirror :meth:`get_config`
+        exactly: an empty/None ``namespace`` falls back to the project default
+        namespace (else :class:`NamespaceRequired`); a resolved-but-unsubscribed
+        ns raises :class:`NamespaceNotSubscribed`; a ``None`` ``ctx`` first falls
+        back to the ``abtest_ctx_var`` contextvar before raising
+        :class:`AbtestContextMissing`.
+
+        The per-ns abtest result is memoised into ``ctx`` and reused, so the
+        whole request link still issues AT MOST ONE GetExperimentResult RPC per
+        ns (shared with any :meth:`get_config` on the same ns). When every key
+        in the snapshot is explicitly pure-full-release
+        (``has_dynamic_resolution`` present and ``False``) the abtest wait is
+        skipped entirely (zero RPC). A subscribed-but-not-yet-pulled ns (no
+        snapshot) returns an empty ``dict`` with ZERO RPC.
+
+        A key that resolves to neither an abtest hit nor a full-release value is
+        OMITTED from the returned map (design D2: no value = not present; a
+        genuinely empty-string value is still returned). The returned ``dict``
+        is freshly allocated so the caller may mutate it freely.
+        """
+        if self._closed:
+            raise SDKClosed("client closed")
+        if ctx is None:
+            # Fallback: maybe the FastAPI middleware stashed one (parity with
+            # get_config, client.py get_config contextvar fallback).
+            ctx = abtest_ctx_var.get()
+        ctx = _ensure_ctx(ctx)
+        resolved_ns = self.resolve_namespace(namespace)
+
+        # Snapshot-consistency invariant (design §2): capture the immutable
+        # snapshot ONCE; every per-key resolution below reads only this object.
+        snap = self._cache.snapshot(resolved_ns)
+        if snap is None:
+            # Subscribed but not yet pulled: no data to assemble. Return an
+            # empty map with zero RPC (an intentional single-key/get-all
+            # difference, design §2 — get_config would still fire the RPC).
+            return {}
+
+        # Whole-ns fast path: if EVERY key is explicitly pure-full-release
+        # (has_dynamic_resolution present and False) the abtest result cannot
+        # hit any of them — skip the GetExperimentResult wait entirely. Any key
+        # with the flag absent (old server) or True keeps the abtest path.
+        skip_abtest = all(
+            ks.has_dynamic_resolution is False for ks in snap.keys.values()
+        )
+        if skip_abtest:
+            abresult: Optional[_ComputeResult] = None
+        else:
+            abresult = await ctx.wait_for_abtest(resolved_ns)
+
+        out: Dict[str, str] = {}
+        ab_hits = 0
+        for key, ks in snap.keys.items():
+            ab_version = abresult.key_versions.get(key) if abresult else None
+            resolved_from_ab = (
+                ab_version is not None
+                and ab_version != 0
+                and ks.versions.get(ab_version) is not None
+            )
+            value, present = self._resolve_key_from_snapshot(
+                snap, key, abresult, resolved_ns, ctx.user_id
+            )
+            if present:
+                out[key] = value
+                if resolved_from_ab:
+                    ab_hits += 1
+
         logger.debug(
-            "get_config hit (full)",
+            "tipsy_ab_config: get_all_configs",
             extra={
                 "ns": resolved_ns,
-                "key": key,
-                "version": v,
+                "total": len(snap.keys),
+                "ab": ab_hits,
+                "full": len(out) - ab_hits,
+                "dropped": len(snap.keys) - len(out),
                 "uid": ctx.user_id,
+                "trace_id": ctx.trace_id,
             },
         )
-        return value
+        return out
+
+    async def get_all_configs_default(
+        self,
+        ctx: Optional[AbtestContext],
+    ) -> Dict[str, str]:
+        """ns-optional convenience form of :meth:`get_all_configs` (design D3).
+
+        Resolves the namespace from the project default namespace. Exactly
+        :meth:`get_all_configs` with ``namespace=None``, so it raises
+        :class:`NamespaceRequired` when no default namespace is configured.
+        """
+        return await self.get_all_configs(ctx, None)
 
     async def get_config_default(
         self,

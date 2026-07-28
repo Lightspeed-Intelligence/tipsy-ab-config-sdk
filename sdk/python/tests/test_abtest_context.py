@@ -178,6 +178,171 @@ async def test_abtest_scope_sets_contextvar(
         await cli.aclose()
 
 
+# ---------------------------------------------------------------------------
+# uid ""/"0" shortcut (design §1): no-user uid ⇒ zero GetExperimentResult RPCs
+# across get_config / prefetch / wait_for_abtest; pure full-release resolution.
+# The shortcut lives in the lazy-fetch layer (_ensure_fetch), so it covers every
+# path that flows through it — mirrors EmptyAbtestContext, but keyed on uid.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("uid", ["", "0"])
+async def test_get_config_no_user_uid_skips_abtest(
+    uid, cfg_servicer, ab_servicer, running_servers
+):
+    cfg_addr, ab_addr = running_servers
+    cfg_servicer.set_pull_snapshot(
+        make_snapshot("ns1", 1, 1, {"k": (1, {1: "full", 2: "ab-v2"})})
+    )
+    # Arm an ab hit that WOULD win if the RPC fired — the shortcut must skip it.
+    ab_servicer.set_response("ns1", make_exp_result({"k": 2}))
+    cli = await init(
+        Config(
+            namespaces=["ns1"],
+            config_service_addr=cfg_addr,
+            abtest_service_addr=ab_addr,
+            token=issue_test_token(),
+            pull_interval=10.0,
+            pull_retries=1,
+        )
+    )
+    try:
+        abctx = cli.new_abtest_context(uid)
+        val = await cli.get_config(abctx, "ns1", "k", "def")
+        # Pure static resolution: the full-release value, never the ab version.
+        assert val == "full"
+        assert ab_servicer.calls == 0
+        assert ab_servicer.calls_by_ns.get("ns1", 0) == 0
+        # A proactive shortcut, not a degradation ⇒ no fallback metric.
+        assert cli.metrics.abtest_fallback_total("ns1") == 0
+    finally:
+        await cli.aclose()
+
+
+@pytest.mark.parametrize("uid", ["", "0"])
+async def test_get_config_no_user_uid_no_full_returns_default(
+    uid, cfg_servicer, ab_servicer, running_servers
+):
+    cfg_addr, ab_addr = running_servers
+    # No full release for the key ⇒ single-key get_config returns the default.
+    cfg_servicer.set_pull_snapshot(
+        make_snapshot("ns1", 1, 1, {"k": (None, {2: "ab-only"})})
+    )
+    ab_servicer.set_response("ns1", make_exp_result({"k": 2}))
+    cli = await init(
+        Config(
+            namespaces=["ns1"],
+            config_service_addr=cfg_addr,
+            abtest_service_addr=ab_addr,
+            token=issue_test_token(),
+            pull_interval=10.0,
+            pull_retries=1,
+        )
+    )
+    try:
+        abctx = cli.new_abtest_context(uid)
+        val = await cli.get_config(abctx, "ns1", "k", "the-default")
+        assert val == "the-default"
+        assert ab_servicer.calls == 0
+    finally:
+        await cli.aclose()
+
+
+async def test_get_config_normal_uid_still_calls_abtest(
+    cfg_servicer, ab_servicer, running_servers
+):
+    """Regression: uid="1" is a real identity ⇒ RPC fires, ab hit wins."""
+    cfg_addr, ab_addr = running_servers
+    cfg_servicer.set_pull_snapshot(
+        make_snapshot("ns1", 1, 1, {"k": (1, {1: "full", 2: "ab-v2"})})
+    )
+    ab_servicer.set_response("ns1", make_exp_result({"k": 2}))
+    cli = await init(
+        Config(
+            namespaces=["ns1"],
+            config_service_addr=cfg_addr,
+            abtest_service_addr=ab_addr,
+            token=issue_test_token(),
+            pull_interval=10.0,
+            pull_retries=1,
+        )
+    )
+    try:
+        abctx = cli.new_abtest_context("1")
+        val = await cli.get_config(abctx, "ns1", "k", "def")
+        assert val == "ab-v2"
+        assert ab_servicer.calls_by_ns.get("ns1", 0) == 1
+    finally:
+        await cli.aclose()
+
+
+@pytest.mark.parametrize("uid", ["", "0"])
+async def test_prefetch_no_user_uid_zero_rpc(
+    uid, cfg_servicer, ab_servicer, running_servers
+):
+    """prefetch flows through _ensure_fetch ⇒ no-user uid issues no RPC."""
+    cfg_addr, ab_addr = running_servers
+    cfg_servicer.set_pull_snapshot(
+        make_snapshot("ns1", 1, 1, {"k": (1, {1: "full", 2: "ab-v2"})})
+    )
+    ab_servicer.set_response("ns1", make_exp_result({"k": 2}))
+    cli = await init(
+        Config(
+            namespaces=["ns1"],
+            config_service_addr=cfg_addr,
+            abtest_service_addr=ab_addr,
+            token=issue_test_token(),
+            pull_interval=10.0,
+            pull_retries=1,
+        )
+    )
+    try:
+        abctx = cli.new_abtest_context(uid)
+        abctx.prefetch_config_version_flat_kv_for_namespace("ns1")
+        # wait_for_abtest returns the empty result without ever fetching.
+        result = await abctx.wait_for_abtest("ns1")
+        assert result.key_versions == {}
+        assert ab_servicer.calls == 0
+        assert ab_servicer.calls_by_ns.get("ns1", 0) == 0
+    finally:
+        await cli.aclose()
+
+
+async def test_abtest_context_none_user_id_normalises_and_shortcuts(
+    cfg_servicer, ab_servicer, running_servers
+):
+    """AbtestContext(user_id=None) normalises to "" and takes the shortcut.
+
+    Guards the design §1 note: a None uid must normalise to the empty string
+    (so proto encoding never sees None) AND fall into the no-user shortcut.
+    """
+    from tipsy_ab_config import AbtestContext
+
+    cfg_addr, ab_addr = running_servers
+    cfg_servicer.set_pull_snapshot(
+        make_snapshot("ns1", 1, 1, {"k": (1, {1: "full", 2: "ab-v2"})})
+    )
+    ab_servicer.set_response("ns1", make_exp_result({"k": 2}))
+    cli = await init(
+        Config(
+            namespaces=["ns1"],
+            config_service_addr=cfg_addr,
+            abtest_service_addr=ab_addr,
+            token=issue_test_token(),
+            pull_interval=10.0,
+            pull_retries=1,
+        )
+    )
+    try:
+        abctx = AbtestContext(user_id=None, owner=cli)
+        assert abctx.user_id == ""
+        val = await cli.get_config(abctx, "ns1", "k", "def")
+        assert val == "full"
+        assert ab_servicer.calls == 0
+    finally:
+        await cli.aclose()
+
+
 async def test_encode_value_types():
     from tipsy_ab_config.client import _encode_value, _encode_user_attrs
 
