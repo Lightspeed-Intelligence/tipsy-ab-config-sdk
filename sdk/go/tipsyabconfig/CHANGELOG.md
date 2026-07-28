@@ -20,6 +20,20 @@ bump first, then an SDK tag bump.
 
 ## [Unreleased]
 
+## [0.13.1] - 2026-07-28
+
+### Fixed
+
+- `go.mod` now correctly requires `api/gen/go` **v0.7.0**. v0.13.0 shipped with
+  a stale `v0.5.0` pin, but the SDK source references
+  `configv1.ConfigUpdateEvent_Heartbeat`, which only exists since `api/gen/go`
+  v0.6.0 — so a plain
+  `go get .../sdk/go/tipsyabconfig@v0.13.0` (MVS-resolving the pinned v0.5.0)
+  failed to compile with `undefined: configv1.ConfigUpdateEvent_Heartbeat`.
+  CI never caught it because the repo's committed `go.work` workspace resolves
+  `api/gen/go` to the in-tree copy, masking the pin. No source changes; module
+  manifest (`go.mod`/`go.sum`) only.
+
 ## [0.13.0] - 2026-07-28
 
 ### Added
