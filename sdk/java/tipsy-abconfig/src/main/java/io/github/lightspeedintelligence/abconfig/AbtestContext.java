@@ -130,12 +130,17 @@ public final class AbtestContext {
      *
      * <p>Owns the {@code synchronized(this)} critical section: under the lock the
      * per-ns future is double-checked; the first caller creates it (a completed
-     * {@link AbtestComputeResult#EMPTY_RESULT} future for an empty/owner-null or
-     * unsubscribed ns — no RPC — otherwise an executor-backed future running
+     * {@link AbtestComputeResult#EMPTY_RESULT} future for an empty/owner-null, a
+     * no-user uid ({@code ""} / {@code "0"}), or an unsubscribed ns — no RPC —
+     * otherwise an executor-backed future running
      * {@link #fetchConfigVersionFlatKvForNamespace(String)}), while every racing
      * caller finds and reuses the existing future. Net effect: AT MOST ONE
      * {@code GetExperimentResult} RPC per ns per request link. The returned
      * future never completes exceptionally (F5).
+     *
+     * <p>The pre-seeded results lookup precedes the short-circuit conditions, so a
+     * {@code mockAbtestContext(uid="", …)} pre-resolved namespace still wins over
+     * the no-user-uid short-circuit.
      */
     CompletableFuture<AbtestComputeResult> ensureFetch(String ns) {
         synchronized (this) {
@@ -143,6 +148,16 @@ public final class AbtestContext {
             if (future == null) {
                 if (empty || owner == null) {
                     // Identity-less / mock ctx: resolve to empty without an RPC.
+                    future = CompletableFuture.completedFuture(AbtestComputeResult.EMPTY_RESULT);
+                } else if (isNoUserUid(userId)) {
+                    // No real user identity (uid "" or "0"): the abtest bucketing /
+                    // whitelist logic is meaningless, so skip the RPC and resolve to
+                    // empty (caller falls through to full-release / default). Split
+                    // from the empty/owner-null branch so the DEBUG log below never
+                    // dereferences a null owner.
+                    owner.logger().debug(
+                            "tipsyabconfig: skip abtest: no-user uid (ns={}, uid={}, trace_id={})",
+                            ns, userId, traceId);
                     future = CompletableFuture.completedFuture(AbtestComputeResult.EMPTY_RESULT);
                 } else if (!owner.isSubscribed(ns)) {
                     // Unsubscribed ns: no local cache to resolve against, so
@@ -212,8 +227,9 @@ public final class AbtestContext {
      *
      * <p>Idempotent and at-most-once: calling this more than once for the same
      * ns (or prefetching then {@code getConfig}-ing) issues AT MOST ONE
-     * {@code GetExperimentResult} RPC. An empty / mock context or an unsubscribed
-     * ns short-circuits inside {@code ensureFetch} and issues NO RPC.
+     * {@code GetExperimentResult} RPC. An empty / mock context, a no-user uid
+     * ({@code ""} / {@code "0"}), or an unsubscribed ns short-circuits inside
+     * {@code ensureFetch} and issues NO RPC.
      *
      * <p>Construction itself never prefetches; this is the only way to warm a
      * namespace ahead of first use.
@@ -351,5 +367,16 @@ public final class AbtestContext {
             return Value.newBuilder().setD(((Number) v).doubleValue()).build();
         }
         return null;
+    }
+
+    /**
+     * Whether {@code uid} carries no real user identity. The empty string (the
+     * constructor normalises {@code null} to {@code ""}) and the string zero
+     * {@code "0"} both mean "no user", for which abtest bucketing / whitelisting
+     * is meaningless — {@link #ensureFetch} short-circuits these to the empty
+     * result without a {@code GetExperimentResult} RPC.
+     */
+    private static boolean isNoUserUid(String uid) {
+        return uid.isEmpty() || "0".equals(uid);
     }
 }

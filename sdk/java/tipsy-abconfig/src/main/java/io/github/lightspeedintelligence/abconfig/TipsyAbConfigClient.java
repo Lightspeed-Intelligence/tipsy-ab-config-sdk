@@ -517,57 +517,47 @@ public final class TipsyAbConfigClient implements AutoCloseable {
         }
         String resolvedNs = resolveNamespace(ns);
 
+        // Capture the snapshot ONCE so the fast-path decision and the per-key
+        // value/full-release reads all observe one immutable view (no torn read
+        // across a concurrent cache replace). An absent snapshot (null) preserves
+        // the legacy behaviour: hdr is null, so the abtest wait still fires, and
+        // resolveKeyFromSnapshot degrades to the default.
+        io.github.lightspeedintelligence.abconfig.NamespaceSnapshot snap =
+                cache.snapshot(resolvedNs).orElse(null);
+        KeyState ks = (snap == null) ? null : snap.keys.get(key);
+
         // Fast-path (has_dynamic_resolution): if the server explicitly reported
         // this key as pure full-rollout (no gray-release / experiment), the abtest
         // result cannot possibly hit it, so skip resultFor (and its potential
-        // GetExperimentResult RPC) entirely and fall straight through to the
-        // full-release / default block. Gated on an EXPLICIT false: absent (null,
-        // old server) or true keeps the existing always-wait path, so a new SDK
-        // pointed at an old server never mis-skips and breaks gray-release. The
-        // fallback / default semantics below are identical to the slow path's
-        // full-release branch, so no behaviour is lost for a fast-path key.
-        Boolean hdr = cache.hasDynamicResolution(resolvedNs, key);
+        // GetExperimentResult RPC) entirely and resolve straight from the
+        // full-release / default value. Gated on an EXPLICIT false: absent (null,
+        // old server / no snapshot) or true keeps the existing always-wait path,
+        // so a new SDK pointed at an old server never mis-skips and breaks
+        // gray-release.
+        Boolean hdr = (ks == null) ? null : ks.hasDynamicResolution;
+        AbtestComputeResult abresult = AbtestComputeResult.EMPTY_RESULT;
         if (!Boolean.FALSE.equals(hdr)) {
             // Per-ns memoised abtest result (at-most-once RPC per request link). The
             // result is never exceptional (F5); a per-ns RPC failure already degraded
             // to the empty result inside resultFor.
-            AbtestComputeResult abresult = abctx.resultFor(resolvedNs);
-
-            // abtest hit path: key present in config_flat_kv with a non-zero version.
-            if (abresult != null) {
-                Long abVersion = abresult.keyVersions.get(key);
-                if (abVersion != null && abVersion != 0L) {
-                    Optional<String> v = cache.valueOf(resolvedNs, key, abVersion);
-                    if (v.isPresent()) {
-                        LOG.debug("tipsyabconfig: get_config hit (abtest) "
-                                + "(ns={}, key={}, version={}, uid={}, trace_id={})",
-                                resolvedNs, key, abVersion, abctx.userId(), abctx.traceId());
-                        return v.get();
-                    }
-                    // ab→full fallback: local cache missing the ab version.
-                    metrics.abtestFallback.inc(resolvedNs);
-                    LOG.warn("tipsyabconfig: ab version missing in local cache; falling back to full "
-                            + "(ns={}, key={}, ab_version={}, trace_id={})",
-                            resolvedNs, key, abVersion, abctx.traceId());
-                }
-            }
+            abresult = abctx.resultFor(resolvedNs);
         }
 
-        // Full-release fallback (key not in config_flat_kv, ab→full, or
-        // has_dynamic_resolution fast-path). Shared by both the slow and fast
-        // paths: a fast-path (explicit-false) key reaches here directly.
-        OptionalLong fullVersion = cache.fullReleaseVersion(resolvedNs, key);
-        if (fullVersion.isEmpty()) {
-            return defaultValue;
+        KeyResolution r = resolveKeyFromSnapshot(snap, resolvedNs, key, abresult, abctx.traceId());
+        switch (r.source) {
+            case ABTEST:
+                LOG.debug("tipsyabconfig: get_config hit (abtest) "
+                        + "(ns={}, key={}, version={}, uid={}, trace_id={})",
+                        resolvedNs, key, r.version, abctx.userId(), abctx.traceId());
+                return r.value;
+            case FULL:
+                LOG.debug("tipsyabconfig: get_config hit (full) "
+                        + "(ns={}, key={}, version={}, uid={}, trace_id={})",
+                        resolvedNs, key, r.version, abctx.userId(), abctx.traceId());
+                return r.value;
+            default:
+                return defaultValue;
         }
-        Optional<String> v = cache.valueOf(resolvedNs, key, fullVersion.getAsLong());
-        if (v.isEmpty()) {
-            return defaultValue;
-        }
-        LOG.debug("tipsyabconfig: get_config hit (full) "
-                + "(ns={}, key={}, version={}, uid={}, trace_id={})",
-                resolvedNs, key, fullVersion.getAsLong(), abctx.userId(), abctx.traceId());
-        return v.get();
     }
 
     /**
@@ -578,6 +568,198 @@ public final class TipsyAbConfigClient implements AutoCloseable {
      */
     public String getConfigDefault(AbtestContext abctx, String key, String defaultValue) {
         return getConfig(abctx, "", key, defaultValue);
+    }
+
+    /**
+     * Where a resolved key's value came from. {@link #NONE} means the key has
+     * neither an abtest hit nor a full-release value in the captured snapshot.
+     */
+    private enum KeySource { ABTEST, FULL, NONE }
+
+    /**
+     * The outcome of resolving a single key against one captured snapshot: the
+     * source, the resolved value (meaningless when {@code source == NONE}), and
+     * the version id the value came from (0 when {@code source == NONE}).
+     */
+    private static final class KeyResolution {
+        final KeySource source;
+        final String value;
+        final long version;
+
+        KeyResolution(KeySource source, String value, long version) {
+            this.source = source;
+            this.value = value;
+            this.version = version;
+        }
+
+        static final KeyResolution NONE = new KeyResolution(KeySource.NONE, null, 0L);
+    }
+
+    /**
+     * Resolves one key's value against a single captured {@code snap} — the
+     * shared per-key resolution logic behind both {@link #getConfig} (single key,
+     * passing its own captured snapshot) and {@link #getAllConfigs} (the whole-ns
+     * loop, passing the same snapshot for every key). Priority mirrors
+     * {@code getConfig}: an abtest hit (non-zero version present in the snapshot)
+     * wins; a non-zero abtest version whose value is missing from the snapshot
+     * bumps the fallback metric + WARN and falls through to full release; then the
+     * full-release version; then {@link KeyResolution#NONE}.
+     *
+     * <p>Reads ONLY {@code snap} (never the {@link ConfigCache} per-key accessors,
+     * which re-snapshot internally) so a whole-ns resolution never mixes values
+     * from two snapshots across a concurrent cache replace. The empty string is a
+     * valid value (gated on {@code isPresent()}, not on length). A {@code null}
+     * {@code snap} yields {@link KeyResolution#NONE}.
+     */
+    private KeyResolution resolveKeyFromSnapshot(
+            io.github.lightspeedintelligence.abconfig.NamespaceSnapshot snap,
+            String resolvedNs,
+            String key,
+            AbtestComputeResult abresult,
+            String traceId) {
+        // ks may be null (no snapshot, or key absent from this snapshot). The
+        // abtest branch below still runs so getConfig keeps its WARN + fallback
+        // metric when a non-zero ab version cannot be resolved locally (matching
+        // the pre-refactor behaviour). get-all never reaches here with a null ks
+        // because it iterates snap.keys, so its intentional "silent omit" for a
+        // flat_kv key absent from the snapshot is preserved.
+        KeyState ks = (snap == null) ? null : snap.keys.get(key);
+
+        // abtest hit path: key present in config_flat_kv with a non-zero version.
+        if (abresult != null) {
+            Long abVersion = abresult.keyVersions.get(key);
+            if (abVersion != null && abVersion != 0L) {
+                String v = (ks == null) ? null : ks.versions.get(abVersion);
+                if (v != null) {
+                    return new KeyResolution(KeySource.ABTEST, v, abVersion);
+                }
+                // ab→full fallback: local cache missing the ab version.
+                metrics.abtestFallback.inc(resolvedNs);
+                LOG.warn("tipsyabconfig: ab version missing in local cache; falling back to full "
+                        + "(ns={}, key={}, ab_version={}, trace_id={})",
+                        resolvedNs, key, abVersion, traceId);
+            }
+        }
+
+        // Full-release fallback: full_release_version present (non-zero sentinel)
+        // and its value present in the snapshot.
+        if (ks != null && ks.fullReleaseVersion != 0L) {
+            String v = ks.versions.get(ks.fullReleaseVersion);
+            if (v != null) {
+                return new KeyResolution(KeySource.FULL, v, ks.fullReleaseVersion);
+            }
+        }
+        return KeyResolution.NONE;
+    }
+
+    /**
+     * Resolves EVERY dynamic config in {@code ns} for a specific user, returning a
+     * fresh mutable {@code key -> value} map. The per-key resolution is identical
+     * to {@link #getConfig} (abtest whitelist / experiment hit &gt; full release),
+     * just without a specific key argument — the SDK assembles the whole map
+     * client-side from the local cache snapshot plus the at-most-once memoised
+     * abtest result. No new RPC beyond the single per-ns
+     * {@code GetExperimentResult} that {@code getConfig} would already issue (and
+     * zero when it is skippable).
+     *
+     * <p>Error / resolution semantics mirror {@link #getConfig} exactly:
+     * <ul>
+     *   <li>{@link #closed()} &rArr; {@link SdkClosedException}.</li>
+     *   <li>{@code abctx == null} &rArr; {@link AbtestContextMissingException}.</li>
+     *   <li>{@code ns} resolution is identical (empty &rArr; default; still empty
+     *       &rArr; {@link NamespaceRequiredException}; unsubscribed &rArr;
+     *       {@link NamespaceNotSubscribedException}).</li>
+     * </ul>
+     *
+     * <p>Algorithm (design §2): capture the namespace snapshot ONCE. An absent
+     * snapshot (subscribed but not yet pulled) returns a fresh empty map with zero
+     * RPC. Whole-ns fast-path: when every key is explicitly
+     * {@code has_dynamic_resolution == false}, skip the abtest RPC; otherwise
+     * obtain the per-ns memoised abtest result exactly as {@code getConfig} does
+     * (at-most-once). Each key is then resolved against that one captured snapshot
+     * via {@link #resolveKeyFromSnapshot}; a key with neither an abtest hit nor a
+     * full-release value is OMITTED from the map (there is no per-key default in
+     * the get-all form). The empty string is a valid value and is preserved.
+     *
+     * <p>Two intentional, value-preserving differences from a key-by-key
+     * {@code getConfig} sweep (RPC / metric behaviour only): (1) an absent
+     * snapshot returns an empty map with zero RPC, whereas {@code getConfig} would
+     * still fire the abtest RPC then return the default; (2) a key present in
+     * {@code config_flat_kv} but absent from the snapshot is silently omitted (no
+     * WARN, no fallback metric), since it has no resolvable value anyway.
+     *
+     * <p>The returned {@code HashMap} is freshly allocated and mutable; callers
+     * may modify it freely without affecting the cache or later calls.
+     */
+    public Map<String, String> getAllConfigs(AbtestContext abctx, String ns) {
+        if (closed()) {
+            throw new SdkClosedException("tipsyabconfig: client closed");
+        }
+        if (abctx == null) {
+            throw new AbtestContextMissingException("tipsyabconfig: abtest context missing");
+        }
+        String resolvedNs = resolveNamespace(ns);
+
+        // Capture the snapshot ONCE: every per-key read below observes this single
+        // immutable view (snapshot-consistency invariant — never call the cache
+        // per-key accessors, which re-snapshot internally).
+        io.github.lightspeedintelligence.abconfig.NamespaceSnapshot snap =
+                cache.snapshot(resolvedNs).orElse(null);
+        if (snap == null) {
+            // Subscribed but no snapshot pulled yet: nothing to resolve, zero RPC.
+            return new HashMap<>();
+        }
+
+        // Whole-ns fast-path: if EVERY key is explicitly pure full-rollout
+        // (has_dynamic_resolution == false), abtest cannot hit any key, so skip the
+        // GetExperimentResult RPC. Any key that is null (old server / absent field)
+        // or true keeps the abtest wait, matching the single-key fast-path gate.
+        boolean allFullRollout = true;
+        for (KeyState ks : snap.keys.values()) {
+            if (!Boolean.FALSE.equals(ks.hasDynamicResolution)) {
+                allFullRollout = false;
+                break;
+            }
+        }
+        AbtestComputeResult abresult = allFullRollout
+                ? AbtestComputeResult.EMPTY_RESULT
+                : abctx.resultFor(resolvedNs);
+
+        Map<String, String> out = new HashMap<>(snap.keys.size() * 2);
+        int abHits = 0;
+        int fullHits = 0;
+        int omitted = 0;
+        for (String key : snap.keys.keySet()) {
+            KeyResolution r = resolveKeyFromSnapshot(snap, resolvedNs, key, abresult, abctx.traceId());
+            switch (r.source) {
+                case ABTEST:
+                    out.put(key, r.value);
+                    abHits++;
+                    break;
+                case FULL:
+                    out.put(key, r.value);
+                    fullHits++;
+                    break;
+                default:
+                    omitted++;
+                    break;
+            }
+        }
+        LOG.debug("tipsyabconfig: get_all_configs "
+                + "(ns={}, keys={}, ab_hits={}, full_hits={}, omitted={}, uid={}, trace_id={})",
+                resolvedNs, snap.keys.size(), abHits, fullHits, omitted,
+                abctx.userId(), abctx.traceId());
+        return out;
+    }
+
+    /**
+     * The namespace-optional convenience form of {@link #getAllConfigs}: resolves
+     * the namespace from the project default namespace (i.e. {@code getAllConfigs}
+     * with an empty {@code ns}). Throws {@link NamespaceRequiredException} when no
+     * default namespace is configured.
+     */
+    public Map<String, String> getAllConfigsDefault(AbtestContext abctx) {
+        return getAllConfigs(abctx, "");
     }
 
     // ------------------------------------------------------------------
