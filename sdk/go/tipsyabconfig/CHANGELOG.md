@@ -20,6 +20,8 @@ bump first, then an SDK tag bump.
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-07-28
+
 ### Added
 
 - `Client.GetAllConfigs(ctx, abctx, ns)` and `Client.GetAllConfigsDefault(ctx,
@@ -35,7 +37,9 @@ bump first, then an SDK tag bump.
   replace). At most one `GetExperimentResult` RPC is issued per (request link,
   ns) and it is **reused** with any `GetConfig` on the same `AbtestContext` +
   ns; when every key is pure full-release (`has_dynamic_resolution` explicitly
-  `false`) no RPC is issued at all. A subscribed-but-not-yet-pulled namespace
+  `false`) no RPC is issued at all — a zero-key snapshot counts as vacuously
+  all-static (no key could be an abtest hit), matching the Python/Java SDKs.
+  A subscribed-but-not-yet-pulled namespace
   returns a non-nil empty map with a nil error and no RPC. `GetAllConfigsDefault`
   is the ns-optional form (resolves the project default namespace; returns
   `ErrNamespaceRequired` when none is configured). Nil-receiver / nil-`abctx`

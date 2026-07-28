@@ -283,13 +283,20 @@ Group 字段：
 
 SDK 里有直接获取实验结果的 API，不需要绕到裸 HTTP：
 
-| 语言 | 动态配置 | 静态配置 | 获取实验结果 |
-| --- | --- | --- | --- |
-| Go | `Client.GetConfig` | `Client.GetConfigStatic` | `Client.GetExperimentResult` |
-| Python | `Client.get_config` | `Client.get_config_static` | `Client.get_experiment_result` |
-| Java | `TipsyAbConfigClient.getConfig` | `TipsyAbConfigClient.getConfigStatic` | `TipsyAbConfigClient.getExperimentResult` |
+| 语言 | 动态配置 | 全量动态配置 | 静态配置 | 获取实验结果 |
+| --- | --- | --- | --- | --- |
+| Go | `Client.GetConfig` | `Client.GetAllConfigs` | `Client.GetConfigStatic` | `Client.GetExperimentResult` |
+| Python | `Client.get_config` | `Client.get_all_configs` | `Client.get_config_static` | `Client.get_experiment_result` |
+| Java | `TipsyAbConfigClient.getConfig` | `TipsyAbConfigClient.getAllConfigs` | `TipsyAbConfigClient.getConfigStatic` | `TipsyAbConfigClient.getExperimentResult` |
 
 获取实验结果 API 是 `AbtestService.GetExperimentResult` 的 SDK 包装，适合直接读取 `custom_params`、查看命中的 group，或按 `layer_ids` / `experiment_type` / `display_type` 控制结果形态。它和 `GetConfig` 不同：不会读本地 config cache，不会做配置 value 合成，也不会自动发曝光事件；它返回原始实验计算结果。
+
+**全量动态配置（get-all）**：`GetAllConfigs` / `get_all_configs` / `getAllConfigs` 一次返回 (用户, namespace) 下**全部**动态 config 的 `key → value` map，SDK 侧从本地缓存快照拼装。三端均有 ns 可省的便捷变体（`GetAllConfigsDefault` / `get_all_configs_default` / `getAllConfigsDefault`，取项目默认 namespace）。语义要点：
+
+- 逐 key 解析逻辑与单 key 动态配置**完全一致**（abtest 白名单/实验命中 > full release），同一个 key 在两种调用下取到相同的值。
+- 既无 abtest 命中也无 full release 的 key **不出现在返回 map 中**（get-all 没有逐 key 默认值概念；空串是合法 value，原样保留）。
+- 与同一 `AbtestContext` 上的单 key 调用**共享**同一次 per-ns 实验结果拉取（每 (请求, ns) 最多一次 `GetExperimentResult` RPC）；当该 ns 下所有 key 都是纯全量发布（`has_dynamic_resolution` 显式 `false`）时零 RPC。
+- 已订阅但尚未拉到快照的 ns 返回空 map（非错误）、零 RPC。返回的 map 每次全新分配，调用方可自由改动。
 
 ### 4.0.0 实验入参语义：UID 与 attrs（被分流对象的身份与属性）
 
@@ -310,6 +317,8 @@ SDK 里有直接获取实验结果的 API，不需要绕到裸 HTTP：
 > 字段名沿用 `uid` / `user_id` / `user_attrs` 只是历史命名；语义上它代表"当前实验所分流的对象"，多数实验分流用户因而是用户 ID / 用户属性，但当实验按角色 / 项目等维度分流时，应传入对应对象的 ID 与属性。同一个 namespace 下不同实验若按不同维度分流，接入方需为每个调用传入与该实验设计一致的对象 ID 和属性。
 
 **关于 `attrs` 的职责边界**：`attrs` 仅用于**实验准入条件（admission / audience）**的计算判断。平台方只负责"按配置的准入条件对传入的属性做计算和命中判断"，**不规定也不校验**具体应该传哪些字段、字段的业务语义是什么——**传入哪些属性键、各自代表什么含义，由实验填写者（在 Console 配置准入条件时）与业务接入方（在调用时传入属性时）共同约定、各自负责并自行保证一致**。平台不对属性字段做语义层面的校验：键名拼错、漏传、或类型选错（见 §5 开头 "`user_attrs` 值的格式"）通常表现为**准入不命中**而非报错。
+
+**无用户身份的 uid（`""` / `"0"`）静态直返**：SDK 侧（Go / Python / Java 三端一致）把 uid 为空字符串 `""` 或字符串零 `"0"` 的 `AbtestContext` 视为**无真实用户身份**——这两个值都无法被有意义地分桶进实验或命中白名单。此时单 key 动态配置与 get-all 都**跳过实验/白名单逻辑，不发 `GetExperimentResult` RPC**，直接按静态 full-release 值解析（单 key 无 full release 时返回调用方传入的 default；get-all 中该 key 被剔除），行为等价于空 ctx（`EmptyAbtestContext` / `empty_abtest_context` / `emptyAbtestContext`）。短路作用于共享的惰性拉取层，因此显式预热（prefetch）在这类 uid 下同样不发 RPC；预置结果的 mock ctx 不受影响（预置结果仍优先生效）。其它任何 uid 走正常 abtest 路径。无用户身份的调用路径（定时任务、系统内部读取等）可直接用这类 uid，不必为省一次实验 RPC 而改用静态接口。（Python 侧 `user_id=None` 会归一化为 `""`，同样走短路。）
 
 准入条件（admission）的配置位置（domain / layer / experiment / group 级）见 §3.3–§3.5、§3.7；其 JSON 形态、计算与命中语义、属性类型的比较规则参见 tipsy-ab-config 平台文档与本文 §5 开头的 "`user_attrs` 值的格式"。
 
@@ -665,6 +674,21 @@ if err != nil {
 value, ok := sdk.GetConfigStatic("tipsy-chat", "rerank_threshold", "0.5")
 ```
 
+全量动态配置（get-all）：
+
+```go
+// 一次拿 (用户, ns) 下全部动态 config 的 key→value map；
+// 逐 key 解析与 GetConfig 一致，无 abtest 命中且无 full release 的 key 被剔除。
+// 与同一 abctx 的 GetConfig 共享同一次实验结果拉取（每 ns 最多一次 RPC）。
+all, err := sdk.GetAllConfigs(ctx, abctx, "tipsy-chat")
+if err != nil {
+    return err
+}
+
+// ns 可省形式（取项目默认 namespace）
+all, err = sdk.GetAllConfigsDefault(ctx, abctx)
+```
+
 默认 namespace：
 
 - SDK 初始化时读取 `PROJECT_DEFAULT_NAMESPACE`，或使用 `Config.DefaultNamespace` 覆盖。
@@ -854,6 +878,19 @@ value = sdk.get_config_static("tipsy-chat", "rerank_threshold", "0.5")
 value = await sdk.get_config_default(ctx, "rerank_threshold", "0.5")
 ```
 
+全量动态配置（get-all）：
+
+```python
+# 一次拿 (用户, ns) 下全部动态 config 的 key→value dict；
+# 逐 key 解析与 get_config 一致，无 abtest 命中且无 full release 的 key 被剔除。
+# 与同一 ctx 的 get_config 共享同一次实验结果拉取（每 ns 最多一次 RPC）。
+all_values = await sdk.get_all_configs(ctx, "tipsy-chat")
+
+# ns 可省形式（取项目默认 namespace）；ctx 传 None 时同 get_config
+# 一样回退读取 middleware 注入的 abtest_ctx_var。
+all_default = await sdk.get_all_configs_default(ctx)
+```
+
 AbtestContext 的构造、惰性拉取与复用（重要）：
 
 - **构造 `AbtestContext` 不再发起任何 `GetExperimentResult` RPC**。`new_abtest_context(...)` 现在是纯创建：只填充 user_id / user_attrs / trace_id，不对任何 namespace（包括默认 namespace）做预请求。
@@ -1021,6 +1058,10 @@ AbtestContext ctx = client.newAbtestContext(
 String threshold = client.getConfig(ctx, "tipsy-chat", "rerank_threshold", "0.5");
 String topK = client.getConfig(ctx, "tipsy-chat", "rerank_top_k", "20");
 // 上面两次 getConfig 共享 ctx，tipsy-chat 的实验结果只拉取一次
+// 一次拿 (用户, ns) 下全部动态 config（key → value，可变 HashMap）：
+// 逐 key 解析与 getConfig 一致，无 abtest 命中且无 full release 的 key 被剔除；
+// 复用同一 ctx 的 memoized 实验结果，不新增 RPC。ns 可省形式：getAllConfigsDefault(ctx)
+Map<String, String> all = client.getAllConfigs(ctx, "tipsy-chat");
 // 无用户身份的服务级读取：client.getConfigStatic("tipsy-chat", key).orElse("0.5");
 // 直接读实验结果（custom_params / 分组）：client.getExperimentResult(ExperimentResultRequest.builder()...build());
 ```
