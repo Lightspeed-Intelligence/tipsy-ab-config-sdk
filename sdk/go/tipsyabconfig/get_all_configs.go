@@ -96,14 +96,13 @@ func (c *Client) GetAllConfigsDefault(ctx context.Context, abctx *AbtestContext)
 
 // allKeysStaticInSnapshot reports whether EVERY key in snap is a pure
 // full-release key (has_dynamic_resolution present AND explicitly false). Only
-// then can GetAllConfigs skip the abtest RPC for the whole namespace. Any key
-// with an absent or true field (or an empty namespace) keeps the abtest path,
-// so a new SDK against an old server never silently skips a live experiment. It
-// reads only the passed snapshot (no cache re-snapshot).
+// then can GetAllConfigs skip the abtest RPC for the whole namespace. A
+// zero-key snapshot is vacuously all-static (no key could be an abtest hit, so
+// the RPC would be pointless — matches the Python/Java SDKs). Any key with an
+// absent or true field keeps the abtest path, so a new SDK against an old
+// server never silently skips a live experiment. It reads only the passed
+// snapshot (no cache re-snapshot).
 func allKeysStaticInSnapshot(snap *NamespaceSnapshot) bool {
-	if snap == nil || len(snap.Keys) == 0 {
-		return false
-	}
 	for _, ks := range snap.Keys {
 		if ks.HasDynamicResolution == nil || *ks.HasDynamicResolution {
 			return false
