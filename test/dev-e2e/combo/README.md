@@ -2,7 +2,8 @@
 
 Verifies the **combo / holdout-opt** data-plane semantics of the platform through
 the three released SDKs. Covers the five assertions in the platform repo's
-`docs/combo/design-testing.md` §「测试与验收」#2.
+`docs/combo/design-testing.md` §「测试与验收」#2, plus assertion #3b (runtime
+layer migration, 走查项 29) added when that capability landed.
 
 Combo has **no wire-protocol surface** (`api/proto/**` contains no combo/holdout
 message), so nothing here tests SDK features — it tests *server* semantics through
@@ -23,6 +24,7 @@ suite there would create a *third* diverging copy. The platform repo's
 | 1 | combo split is proportional | server | group width 50/50 → 70/30 ⇒ 7.85σ |
 | 2 | held key → frozen value; unheld key → live value | **3 SDKs** | group params follow live version ⇒ 4 cases red per language |
 | 3 | group membership survives layer migration, **per-uid on both arms** | server | salt changed ⇒ 23/60 change group; holdout-opt paused ⇒ 12 sliced users lose their group; ho slot 10%→99% ⇒ 47 stayed-users misplaced |
+| 3b | **runtime** migrate-out/in round trip: per-uid invariance + value switch | server + Go SDK | anchor 'was' corrupted / ho-group dropped / stayed drift / uid vanished ⇒ each kills the post-out accounting (all four mutated offline against the real snapshot) |
 | 4 | zero-slot group is never hit | server | give it real width ⇒ 5/400 hits |
 | 5 | layer-whitelist pin routes correctly | **Go SDK** | delete route target row ⇒ pin falls back to hashing |
 
@@ -90,6 +92,81 @@ observation path works at all) and the counts must add up to N with nothing
 unclassified. If either fence breaks, those would go red first. Do not "simplify"
 by dropping the arm checks or the coverage total — they are what makes `NONE`
 meaningful.
+
+## Assertion #3b — runtime layer migration (走查项 29)
+
+`server/runtime_migration.sh` + `clients/go/rtmig/`. Create-time migration
+(`migrate_layer_ids` at `POST /combos`, assertion #3) and runtime migration
+(`POST /api/v1/combos/{id}/layers/migrate-out|migrate-in`) **share
+`UpdateLayerDomain` underneath** — the layer's id/salt never change, so the
+mathematical claim "nobody moves group" is the same. They are still asserted
+**separately**: "shares the implementation" is an argument about the code, not
+evidence about the running system (the runtime path adds its own validation,
+optimistic-lock, and migrate-out key re-judgment around that shared core, any
+of which could corrupt the write it wraps).
+
+One scripted round trip (migrate-out → assert → migrate-in → assert) proves:
+
+1. **Immediate API semantics, before any cache wait** (走查项 13): right after
+   migrate-out, `GET /api/v1/layers` already reports the layer's `domain_id` =
+   host domain and `is_combo_layer=false`. These two fields are DB-backed by
+   design — asserting them *without* the 11s sleep is the point, it pins the
+   "no second value to be stale relative to" property the field exists for.
+2. **Post-out, per-uid on both arms** (after the cache window): every uid the
+   anchor says stayed in `E_mig` is still in its recorded group **and not in
+   the holdout-opt experiment**; every uid the anchor says was SLICED has now
+   *entered* `E_mig` — in the group of the anchor's `was` column — while
+   **keeping** its recorded holdout-opt group (migrating a sibling layer out
+   must not touch the comboLayer's own split). The `was` column is the
+   server-observed pre-create-time-migration group; with the layer back on
+   full host traffic and id/salt unchanged, that old observation *is* the
+   expectation — recomputing it with the solver would be the tautology
+   non-degeneracy #4 bans. Verified violable by mutating, offline against the
+   real snapshot: a corrupted `was` group, a dropped holdout-opt group, a
+   drifted stayed-uid, and a vanished sliced-uid each turn the accounting red.
+3. **Round-trip invariance** — the strongest claim: after migrate-in, a fresh
+   per-uid snapshot is **byte-identical** to the premig one, for all 60 uids
+   over ALL experiments in the namespace (c1/c3zero memberships ride along in
+   the same lines, so cross-combo damage would break the diff too).
+4. **Value semantics switch with the topology** (Go SDK, HTTP): the fixture
+   moves `mig_key`'s live release to a new version first so frozen ≠ live
+   (non-degeneracy #1), then asserts per phase — sliced uids resolve `exp_key`
+   to the **caller default** premig (they cannot reach `E_mig`, and the key
+   deliberately has no full release), to their `was`-group's version post-out,
+   and back to the default post-back; their `mig_key` stays the **frozen**
+   version in every phase (migration must not touch the combo freeze); a
+   stayed uid tracks the **live** `mig_key` value throughout. Go only: the
+   three-SDK × two-transport value-resolution equivalence is assertion #2's
+   result; the increment here is the server's bucketing response to a topology
+   move, and one SDK observation of a server-side verdict suffices. The run
+   also asserts `abtestFallback delta = 0` per phase, same reasoning as #2.
+5. **The migration had an observable effect at all**: the premig and postout
+   snapshots must differ (they differ in exactly the sliced uids' lines). An
+   all-identical trio would mean the migrate-out never reached the data plane
+   — the mirror-image trap of README §trap 14.
+
+The script preflights that the layer is actually on the Simple Domain and that
+assertion #3 is still green before mutating anything, stops at the first FAIL
+leaving the topology for inspection, and restores the value plane (live release
+back to the original version) at the end. The extra config version it publishes
+is append-only history and stays behind — harmless: no group holds it and
+nothing releases it. Run:
+
+```sh
+ADMIN_SESSION=<devtoken 100001> AB_CONFIG_TOKEN=<service token> \
+bash server/runtime_migration.sh \
+  --anchor server/anchor.tsv --combo-id <c2mig id> --layer-id <L_mig id> \
+  --emig <E_mig id> --ho-exp <c2mig holdout-opt exp id> --workdir /tmp/rtmig_out
+```
+
+Caveats of this evidence, so it is not over-trusted: the migrate-out **key
+re-judgment** path is exercised only in its green direction (E_mig's `exp_key`
+has no conflicting holder outside the combo, so the re-judgment passes; the 409
+rollback direction has unit coverage in the platform repo but no SDK-level
+run). And the `was`-column limitation of #3 applies here in mirror: it was
+recorded *after* c2mig was created, so "entered the `was` group" pins the
+post-out state to a real pre-slicing observation, not to an independently
+derived truth.
 
 ## Tolerance for #1 (derived, not guessed)
 
