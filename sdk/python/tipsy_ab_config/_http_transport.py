@@ -19,7 +19,7 @@ dependency — zero new deps):
 Auth: ``Authorization: Bearer <token>`` where the token is read synchronously
 from :meth:`_TokenCache.current` (design Important Details — the Python path
 uses the cached value and never awaits the provider per request, matching the
-existing gRPC ``_AuthInterceptor``).
+existing gRPC bearer auth interceptors).
 
 These classes are internal implementation detail; only :func:`init` constructs
 them and only the gRPC/HTTP-uniform transport interface is used at the call

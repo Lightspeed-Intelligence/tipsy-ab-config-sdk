@@ -44,6 +44,13 @@ class FakeConfigServicer(config_pb2_grpc.ConfigServiceServicer):
 
         self.subscribe_calls: int = 0
         self.subscribe_reqs: List[config_pb2.SubscribeRequest] = []
+
+        # Per-method request metadata as the SERVER received it, one entry per
+        # call. This is what proves the bearer interceptor actually reached the
+        # wire for a given RPC kind (issue #8: Subscribe was going out with no
+        # authorization header while unary calls were fine).
+        self.pull_metadata: List[Dict[str, str]] = []
+        self.subscribe_metadata: List[Dict[str, str]] = []
         # Lazily-built; created inside the first running event loop so it
         # binds to the correct loop on every Python version.
         self._push_q: Optional[
@@ -52,6 +59,11 @@ class FakeConfigServicer(config_pb2_grpc.ConfigServiceServicer):
         # When True, Subscribe raises after the first push and resets.
         self.fail_after_first_push: bool = False
         self._fail_counter: int = 0
+
+    @staticmethod
+    def _md(context: grpc.aio.ServicerContext) -> Dict[str, str]:
+        """Flatten invocation metadata to a lower-cased key→value dict."""
+        return {k.lower(): v for k, v in (context.invocation_metadata() or ())}
 
     def _ensure_queue(self) -> "asyncio.Queue[Optional[config_pb2.NamespaceSnapshot]]":
         if self._push_q is None:
@@ -70,6 +82,7 @@ class FakeConfigServicer(config_pb2_grpc.ConfigServiceServicer):
         context: grpc.aio.ServicerContext,
     ) -> config_pb2.PullAllResponse:
         self.pull_calls += 1
+        self.pull_metadata.append(self._md(context))
         if self.pull_error is not None:
             await context.abort(self.pull_error, "fake pull error")
         out = config_pb2.PullAllResponse()
@@ -85,6 +98,7 @@ class FakeConfigServicer(config_pb2_grpc.ConfigServiceServicer):
     ) -> AsyncIterator[config_pb2.ConfigUpdateEvent]:
         self.subscribe_calls += 1
         self.subscribe_reqs.append(request)
+        self.subscribe_metadata.append(self._md(context))
         q = self._ensure_queue()
         while True:
             try:
