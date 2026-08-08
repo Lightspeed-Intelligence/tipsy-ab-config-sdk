@@ -8,6 +8,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`ConfigService.Subscribe` was sent with no `authorization` header, so every
+  subscribe attempt was rejected with `Unauthenticated: missing authorization
+  metadata`** ([#8](https://github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk/issues/8)).
+  The bearer interceptor was a single class inheriting both
+  `grpc.aio.UnaryUnaryClientInterceptor` and
+  `grpc.aio.UnaryStreamClientInterceptor`; grpcio sorts interceptors into
+  per-method-kind lists with an if/elif chain, so the one instance was only ever
+  registered as unary-unary and the unary-stream list stayed empty. Unary calls
+  (`PullAll`, `GetExperimentResult`) authenticated normally, which is why this
+  was not an outage: change detection silently degraded from Subscribe push to
+  `pull_interval` polling (default 10s staleness) while the log filled with one
+  `Subscribe stream error; reconnecting` ERROR per reconnect, indefinitely. Fixed
+  by splitting into two single-purpose interceptors registered separately.
+  Affects the plaintext and TLS paths equally. Go and Java are unaffected — they
+  use `PerRPCCredentials` / `CallCredentials`, which apply to all RPC kinds.
+
 ## [0.14.0] - 2026-07-28
 
 ### Added

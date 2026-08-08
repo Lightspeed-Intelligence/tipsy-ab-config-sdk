@@ -143,7 +143,7 @@ class Config:
     # e.g. a Cloudflare Origin CA, a private/self-signed CA. Only takes effect
     # on ``grpcs://`` targets; ignored on the plaintext path. Unlike
     # ``channel_factory`` (which bypasses the SDK entirely and therefore does NOT
-    # attach the bearer ``_AuthInterceptor``), this knob keeps the SDK's own
+    # attach the bearer auth interceptors), this knob keeps the SDK's own
     # secure-channel build, so the token is still auto-attached on every RPC.
     # This is the recommended Python path for Dev direct-IP + Origin Cert: pair
     # it with ``grpcs://...?authority=<gRPC domain>`` so SNI / cert-name match.
@@ -167,8 +167,9 @@ class Config:
 class _TokenCache:
     """Holds the current bearer token + an optional async refresh provider.
 
-    Used by ``_AuthInterceptor`` to inject ``Authorization: Bearer <token>``
-    on every outgoing RPC.  For static-token deployments the cached value
+    Used by the bearer auth interceptors to inject
+    ``Authorization: Bearer <token>`` on every outgoing RPC (both unary and
+    server-streaming).  For static-token deployments the cached value
     never changes; for dynamic tokens the host periodically calls
     :meth:`refresh` to update the cache (the interceptor never blocks).
     """
@@ -1810,7 +1811,20 @@ def _build_channel(
 
     interceptors: List = []
     if auth_plugin is not None:
-        interceptors.append(_AuthInterceptor(auth_plugin))
+        # One instance PER method kind, never a single multi-inheritance object:
+        # grpcio sorts interceptors with an if/elif chain
+        # (``grpc/aio/_channel.py``, ``Channel.__init__``), so a class deriving
+        # from both UnaryUnary- and UnaryStreamClientInterceptor matches the
+        # first branch only and lands in the unary-unary list ALONE. That left
+        # the unary-stream list empty and shipped ConfigService.Subscribe with
+        # no ``authorization`` header (server: "missing authorization
+        # metadata"), silently degrading push to pull-only polling.
+        interceptors.extend(
+            [
+                _AuthUnaryUnaryInterceptor(auth_plugin),
+                _AuthUnaryStreamInterceptor(auth_plugin),
+            ]
+        )
 
     if not target.use_tls:
         # Plaintext h2c — the unchanged legacy path (bare host:port, grpc://, or
@@ -1829,12 +1843,12 @@ def _build_channel(
     # authority override" will fail verification against such a server. Two
     # injection seams exist, in order of preference for the Origin-Cert case:
     #   1. ``Config.tls_root_certificates`` (PEM bytes): the SDK still builds its
-    #      OWN secure channel and still attaches ``_AuthInterceptor`` (token
-    #      auto-on-the-wire). This is the recommended Python path — it is the
+    #      OWN secure channel and still attaches the bearer auth interceptors
+    #      (token auto-on-the-wire). This is the recommended Python path — the
     #      only way to get BOTH a custom trust anchor AND automatic bearer auth.
     #   2. ``Config.channel_factory``: full custom channel (handled by the
     #      short-circuit above). NOTE: the factory bypasses the SDK entirely, so
-    #      it does NOT attach ``_AuthInterceptor`` — the caller must wire auth
+    #      it does NOT attach the auth interceptors — the caller must wire auth
     #      itself. Kept as a generic escape hatch, no longer the Origin-Cert
     #      recommendation.
     root = cfg.tls_root_certificates  # PEM bytes or None (None → system roots).
@@ -1870,13 +1884,12 @@ def _build_channel(
     )
 
 
-class _AuthInterceptor(
-    grpc.aio.UnaryUnaryClientInterceptor,
-    grpc.aio.UnaryStreamClientInterceptor,
-):
-    """Fallback bearer interceptor used when secure_channel can't be built.
+class _AuthInterceptorBase:
+    """Shared token/metadata logic for the bearer interceptors.
 
-    Attaches ``authorization: Bearer <token>`` to every outgoing RPC.
+    NOT a grpc interceptor subclass on purpose — see
+    ``_AuthUnaryUnaryInterceptor`` / ``_AuthUnaryStreamInterceptor`` below for
+    why each method kind needs its own class.
     """
 
     def __init__(self, cache: _TokenCache) -> None:
@@ -1885,9 +1898,34 @@ class _AuthInterceptor(
     def _token(self) -> str:
         return self._cache.current()
 
+
+class _AuthUnaryUnaryInterceptor(
+    _AuthInterceptorBase,
+    grpc.aio.UnaryUnaryClientInterceptor,
+):
+    """Bearer interceptor for unary-unary RPCs (PullAll, GetExperimentResult...).
+
+    Attaches ``authorization: Bearer <token>`` to every outgoing unary call.
+    """
+
     async def intercept_unary_unary(self, continuation, client_call_details, request):
         new_details = _append_auth(client_call_details, self._token())
         return await continuation(new_details, request)
+
+
+class _AuthUnaryStreamInterceptor(
+    _AuthInterceptorBase,
+    grpc.aio.UnaryStreamClientInterceptor,
+):
+    """Bearer interceptor for server-streaming RPCs (ConfigService.Subscribe).
+
+    Split from the unary-unary interceptor because grpcio registers
+    interceptors through an if/elif chain over the four method kinds, so a
+    single object inheriting several interceptor ABCs is only ever registered
+    under the FIRST kind that matches. Both classes must be instantiated and
+    passed separately (see ``_build_channel``) for auth to reach both unary and
+    streaming calls.
+    """
 
     async def intercept_unary_stream(self, continuation, client_call_details, request):
         new_details = _append_auth(client_call_details, self._token())

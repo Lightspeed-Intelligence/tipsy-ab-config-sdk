@@ -30,7 +30,8 @@ grpc = pytest.importorskip("grpc", reason="grpcio required to import tipsy_ab_co
 
 from tipsy_ab_config.client import (  # noqa: E402  (after importorskip)
     Config,
-    _AuthInterceptor,
+    _AuthUnaryStreamInterceptor,
+    _AuthUnaryUnaryInterceptor,
     _build_channel,
     _GrpcTarget,
     _parse_grpc_target,
@@ -344,10 +345,10 @@ def test_build_channel_grpcs_default_verify_uses_system_roots(monkeypatch):
 # 6. _build_channel — tls_root_certificates injection (Dev Origin-Cert path)
 #
 # Background: injecting a custom TLS root via channel_factory bypasses the SDK
-# entirely and therefore drops the bearer _AuthInterceptor (token lost on the
+# entirely and therefore drops the bearer auth interceptors (token lost on the
 # wire). Config.tls_root_certificates fixes that: the SDK still builds its OWN
-# secure_channel with the injected root_certificates AND still attaches
-# _AuthInterceptor, so the token is auto-on-the-wire. These tests lock in that
+# secure_channel with the injected root_certificates AND still attaches the auth
+# interceptors, so the token is auto-on-the-wire. These tests lock in that
 # contract (esp. the "token not lost" assertion — the whole point of the field).
 # ===========================================================================
 
@@ -359,18 +360,25 @@ _FAKE_ROOT_PEM = b"-----BEGIN CERTIFICATE-----\nMIIB-fake-origin-ca\n-----END CE
 
 
 def _auth_interceptor_present(interceptors) -> bool:
-    """True if the SDK's bearer _AuthInterceptor is in the interceptor chain.
+    """True if the SDK's bearer interceptors are in the interceptor chain.
 
-    This is the "token is auto-attached / not lost" assertion: _AuthInterceptor
-    is what stamps ``authorization: Bearer <token>`` on every outgoing RPC.
+    This is the "token is auto-attached / not lost" assertion: these are what
+    stamp ``authorization: Bearer <token>`` on every outgoing RPC.
+
+    BOTH kinds are required, not just one: grpcio sorts interceptors into
+    per-method-kind lists with an if/elif chain, so a chain carrying only a
+    unary-unary interceptor leaves server-streaming Subscribe unauthenticated
+    (issue #8). Checking for one kind would pass while that bug is live.
     """
-    return any(isinstance(i, _AuthInterceptor) for i in interceptors)
+    return any(
+        isinstance(i, _AuthUnaryUnaryInterceptor) for i in interceptors
+    ) and any(isinstance(i, _AuthUnaryStreamInterceptor) for i in interceptors)
 
 
 def test_build_channel_grpcs_injected_root_threads_through_and_keeps_auth(monkeypatch):
     """grpcs:// + tls_root_certificates: the injected PEM bytes reach
-    ssl_channel_credentials as root_certificates, AND the bearer _AuthInterceptor
-    is still attached to secure_channel (token NOT lost — the core advantage of
+    ssl_channel_credentials as root_certificates, AND the bearer auth interceptors
+    are still attached to secure_channel (token NOT lost — the core advantage of
     this field over channel_factory)."""
     calls = _patch_channel_builders(monkeypatch)
     addr = "grpcs://47.253.175.59:443?authority=dev-ab-config-grpc.infra.fantacy.live"
@@ -379,7 +387,7 @@ def test_build_channel_grpcs_injected_root_threads_through_and_keeps_auth(monkey
         config_service_addr=addr,
         tls_root_certificates=_FAKE_ROOT_PEM,
     )
-    # A real token cache so _AuthInterceptor is constructed and attached.
+    # A real token cache so the auth interceptors are constructed and attached.
     auth = _TokenCache("dev-bearer-token", None)
 
     _build_channel(cfg, addr, auth_plugin=auth)
@@ -393,9 +401,10 @@ def test_build_channel_grpcs_injected_root_threads_through_and_keeps_auth(monkey
     assert root_certificates == _FAKE_ROOT_PEM, (
         "Config.tls_root_certificates must be passed as root_certificates"
     )
-    # Token-not-lost: _AuthInterceptor is on the channel (unlike channel_factory).
+    # Token-not-lost: both auth interceptors are on the channel (unlike
+    # channel_factory).
     assert _auth_interceptor_present(calls["secure"]["interceptors"]), (
-        "tls_root_certificates path must keep _AuthInterceptor so the bearer "
+        "tls_root_certificates path must keep both auth interceptors so the bearer "
         "token is auto-attached on every RPC"
     )
 
