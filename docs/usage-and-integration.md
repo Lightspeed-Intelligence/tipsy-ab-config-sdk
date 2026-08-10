@@ -834,6 +834,45 @@ trace_id 为可选字符串。未传或空串时由 SDK / 服务端自动填充 
 
 包名：`tipsy_ab_config`
 
+#### 4.2.0 安装、依赖要求与升级
+
+本仓是 GitHub public repo，安装无需任何凭据。拉最新版见 §4.0，pin 具体 tag：
+
+```bash
+pip install "git+https://github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk.git@python-sdk/v0.14.1#subdirectory=sdk/python"
+```
+
+**依赖下限（`python-sdk/v0.14.1` 起）**：
+
+| 依赖 | 要求 | 说明 |
+| --- | --- | --- |
+| Python | 3.10 / 3.11 / 3.12 / 3.13 | CI 全矩阵覆盖 |
+| `grpcio` | `>=1.66.2,<2` | 由随包发布的 proto 生成码决定：生成码自带 `GRPC_GENERATED_VERSION = '1.66.2'` 校验，装低于此版本会在 `import tipsy_ab_config` 时直接抛 `RuntimeError` |
+| `protobuf` | `>=5.29.1,<7` | 生成码本身只要求 5.27.2；下限取到 `5.29.1` 是 SDK 侧的保守选择，且必须带 `.1` —— 5.29.0 已被上游 yank |
+
+> **v0.14.1 微调了上述两个下限，两者原因不同，别混为一谈**：
+>
+> - **`grpcio>=1.60` → `>=1.66.2`：修正一个错误的声明。** 随包发布的生成码自带 `GRPC_GENERATED_VERSION = '1.66.2'` 校验，旧声明与它矛盾，**按旧声明的下限安装会直接 import 失败**。新下限才是生成码一直以来的真实要求。
+> - **`protobuf>=5.29` → `>=5.29.1`：只是避开一个被 yank 的版本。** 5.29.0 已被上游 yank，精确 pin 到它属于装不到/不该装的版本；此处并非生成码硬性要求（生成码只要求 5.27.2，`>=5.29` 本就高于它）。
+>
+> **如果你的项目把 `grpcio` pin 在 1.66.2 以下、或把 `protobuf` pin 在 5.29.1 以下，升级 SDK 时需同步抬 pin**（含 lockfile：`poetry.lock` / `uv.lock` / `requirements.txt` 里的钉死版本）。不 pin 这两个包的项目无需任何改动。
+
+**建议升级到 `python-sdk/v0.14.1`（gRPC 模式用户）**：v0.14.1 修了一个**只影响 gRPC 模式配置推送**的鉴权缺陷。症状是日志里反复出现
+
+```text
+ERROR tipsy_ab_config: Subscribe stream error; reconnecting
+```
+
+退避饱和后约每 30s 一条、不会自愈。原因是 SDK 发起 `Subscribe` 长连接时漏带 `authorization` 头，服务端一律以 `Unauthenticated: missing authorization metadata` 拒绝。
+
+影响面需要说清楚——**这不是功能中断，所以很容易被当成噪音忽略**：
+
+- 配置**仍然是对的**。启动时的 `PullAll` 和周期 `PullAll` 轮询都是 unary 调用、鉴权正常，配置照常拉取；受影响的只有 server-streaming 的 `Subscribe`。
+- 但**配置变更感知只剩轮询这一条路**：Subscribe 推送本应做近实时下发，缺陷下它从未连上，变更生效延迟退化为最长 `pull_interval`（默认 10s）。对秒级下发有要求的场景（如线上紧急调参、灰度开关）会明显感知到滞后。
+- 日志被无限刷 ERROR，容易淹没真实告警、并在按量计费的日志系统里产生成本。
+
+升级即修复，业务侧无需改任何代码或配置。HTTP 传输模式（`transport="http"`）本就不建 Subscribe 流，不受此缺陷影响；Go / Java SDK 也不受影响（两者用 `PerRPCCredentials` / `CallCredentials`，对所有 RPC 类型统一生效）。
+
 初始化：
 
 ```python
@@ -1419,6 +1458,8 @@ AI agent 或脚本执行接入时，按以下不变式检查：
 | `ErrNamespaceRequired` / `NamespaceRequired` | 未传 namespace，且未配置 `PROJECT_DEFAULT_NAMESPACE` |
 | `ErrNamespaceNotSubscribed` / `NamespaceNotSubscribed` | namespace 不在 SDK 初始化订阅列表里 |
 | 动态配置总是 default | key 是否有 full release；实验是否 started；group params 是否覆盖该 key；用户是否满足 admission |
+| Python 日志反复刷 `Subscribe stream error; reconnecting` | Python SDK 是否低于 `python-sdk/v0.14.1`。低于该版本存在 Subscribe 漏带 `authorization` 头的缺陷，配置仍正确但变更感知退化为 `pull_interval` 轮询，升级即修复（见 §4.2.0） |
+| Python `import tipsy_ab_config` 抛 `RuntimeError: ... depends on grpcio>=1.66.2` | 项目把 `grpcio` pin 在 1.66.2 以下（常见于旧 lockfile）。随包生成码硬性要求该下限，抬 pin 即可（见 §4.2.0） |
 | 命中了实验但值仍回退 full | SDK 本地缓存里没有该 version，检查 `PullAll/Subscribe` 和发布顺序 |
 | 裸 HTTP 401 | 是否用 `Authorization: Bearer <service-token>`，不要用 Console 会话 token |
 | Admin API 401/403 | Admin API 需要人类会话 token + admin 白名单，不接受服务 token |
