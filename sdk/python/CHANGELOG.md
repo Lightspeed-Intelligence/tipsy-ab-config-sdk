@@ -10,6 +10,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Declared dependency floors were not installable.** `grpcio>=1.60` disagreed
+  with the checked-in generated stubs, which carry
+  `GRPC_GENERATED_VERSION = '1.66.2'` and raise `RuntimeError` at import on
+  anything lower — so a consumer resolving to the declared floor (an explicit
+  pin, an old lockfile, a conservative resolver) crashed on
+  `import tipsy_ab_config`. Raised to `grpcio>=1.66.2,<2`, which is the floor the
+  stubs actually enforce; wheels exist for every supported Python (3.10–3.13), so
+  no platform support is lost. Separately, `protobuf>=5.29` named a floor that
+  resolves to the **yanked** 5.29.0 when pinned exactly
+  ([protocolbuffers/protobuf#19430](https://github.com/protocolbuffers/protobuf/issues/19430));
+  raised to `>=5.29.1,<7`. No runtime behaviour change — this only corrects
+  metadata that was wrong, plus the matching README compatibility table.
+  A new `min-deps` CI job installs the declared floors and runs the full suite
+  against them (the existing matrix always resolves to the newest release, which
+  is why this escaped), and `tests/test_version_sync.py` now derives the expected
+  `grpcio` floor from the stubs so the two cannot silently diverge again.
+
 - **`ConfigService.Subscribe` was sent with no `authorization` header, so every
   subscribe attempt was rejected with `Unauthenticated: missing authorization
   metadata`** ([#8](https://github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk/issues/8)).

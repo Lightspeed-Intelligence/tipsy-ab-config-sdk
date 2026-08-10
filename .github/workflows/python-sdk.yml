@@ -26,6 +26,51 @@ jobs:
       - run: pip install -e 'sdk/python[dev,fastapi,http]'
       - run: cd sdk/python && pytest -q   # 默认 addopts 排除 packaging marker
 
+  # Consumer-path floor check (same class of escape as go-test.yml's
+  # `consumer-path` job): the `test` matrix above always resolves to the NEWEST
+  # grpcio/protobuf, so a declared floor that is too low never gets exercised —
+  # exactly how `grpcio>=1.60` shipped while the vendored stubs raised
+  # RuntimeError below 1.66.2. Here we install the declared floors themselves and
+  # import + test against them, so a floor nobody can actually install fails red.
+  min-deps:
+    if: github.event_name == 'pull_request' || (github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/'))
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.10' }   # oldest supported → oldest wheels
+      - name: install at the declared dependency floors
+        run: |
+          set -euo pipefail
+          pip install -e 'sdk/python[dev,fastapi,http]'
+          # Downgrade the runtime deps to the exact floors declared in
+          # pyproject.toml. Parsed from the file rather than hardcoded so this
+          # job cannot drift away from the pins it is meant to police.
+          python - <<'PY' > /tmp/floors.txt
+          import pathlib, re, sys
+          if sys.version_info >= (3, 11):
+              import tomllib
+          else:
+              import tomli as tomllib
+          deps = tomllib.loads(
+              pathlib.Path("sdk/python/pyproject.toml").read_text()
+          )["project"]["dependencies"]
+          for d in deps:
+              name = re.match(r"[A-Za-z0-9_.-]+", d).group(0)
+              floor = re.search(r">=\s*([0-9][0-9.]*)", d)
+              if floor:
+                  print(f"{name}=={floor.group(1)}")
+          PY
+          cat /tmp/floors.txt
+          pip install --no-deps -r /tmp/floors.txt
+      - name: import + full suite at the floors
+        run: |
+          set -euo pipefail
+          python -c "import grpc, google.protobuf, tipsy_ab_config as p; \
+            print('grpcio', grpc.__version__, '| protobuf', google.protobuf.__version__, \
+            '| sdk', p.__version__)"
+          cd sdk/python && pytest -q
+
   proto-drift:
     # R2-S1: drift check is single-version (3.13) because grpcio-tools output
     # is Python-runtime-independent; a matrix would burn cycles for no signal.

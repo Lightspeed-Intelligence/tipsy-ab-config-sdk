@@ -23,8 +23,19 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
-    "grpcio>=1.60,<2",
-    "protobuf>=5.29,<7",
+    # The floor is dictated by the checked-in generated stubs, NOT by what the
+    # SDK's own code needs: every ``_proto/**/*_pb2_grpc.py`` carries
+    # ``GRPC_GENERATED_VERSION = '1.66.2'`` and raises RuntimeError at import on
+    # anything lower. Declaring a lower floor here made the two disagree — a
+    # consumer resolving to the declared floor failed on ``import
+    # tipsy_ab_config``. ``tests/test_version_sync.py`` keeps the two in lockstep;
+    # regenerating the stubs with a newer grpcio-tools requires bumping this pin.
+    "grpcio>=1.66.2,<2",
+    # 5.29.1 rather than 5.29: protobuf 5.29.0 was YANKED upstream
+    # (protocolbuffers/protobuf#19430), so ``>=5.29`` named a floor that resolves
+    # to a yanked artifact when pinned exactly. Range installs already skip it;
+    # this makes the declared floor one that can actually be installed.
+    "protobuf>=5.29.1,<7",
 ]
 
 [project.urls]
