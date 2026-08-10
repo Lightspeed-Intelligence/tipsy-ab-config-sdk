@@ -848,9 +848,14 @@ pip install "git+https://github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk.
 | --- | --- | --- |
 | Python | 3.10 / 3.11 / 3.12 / 3.13 | CI 全矩阵覆盖 |
 | `grpcio` | `>=1.66.2,<2` | 由随包发布的 proto 生成码决定：生成码自带 `GRPC_GENERATED_VERSION = '1.66.2'` 校验，装低于此版本会在 `import tipsy_ab_config` 时直接抛 `RuntimeError` |
-| `protobuf` | `>=5.29.1,<7` | 5.29.0 已被上游 yank，故下限取 `.1` |
+| `protobuf` | `>=5.29.1,<7` | 生成码本身只要求 5.27.2；下限取到 `5.29.1` 是 SDK 侧的保守选择，且必须带 `.1` —— 5.29.0 已被上游 yank |
 
-> **v0.14.1 抬高了上述两个下限**。这不是新增约束，而是修正——旧版元数据里写的是 `grpcio>=1.60` / `protobuf>=5.29`，与随包发布的生成码实际要求不符，按声明下限安装会直接 import 失败。**如果你的项目把 `grpcio` pin 在 1.66.2 以下、或把 `protobuf` pin 在 5.29.1 以下，升级 SDK 时需同步抬 pin**（含 lockfile：`poetry.lock` / `uv.lock` / `requirements.txt` 里的钉死版本）。不 pin 这两个包的项目无需任何改动。
+> **v0.14.1 微调了上述两个下限，两者原因不同，别混为一谈**：
+>
+> - **`grpcio>=1.60` → `>=1.66.2`：修正一个错误的声明。** 随包发布的生成码自带 `GRPC_GENERATED_VERSION = '1.66.2'` 校验，旧声明与它矛盾，**按旧声明的下限安装会直接 import 失败**。新下限才是生成码一直以来的真实要求。
+> - **`protobuf>=5.29` → `>=5.29.1`：只是避开一个被 yank 的版本。** 5.29.0 已被上游 yank，精确 pin 到它属于装不到/不该装的版本；此处并非生成码硬性要求（生成码只要求 5.27.2，`>=5.29` 本就高于它）。
+>
+> **如果你的项目把 `grpcio` pin 在 1.66.2 以下、或把 `protobuf` pin 在 5.29.1 以下，升级 SDK 时需同步抬 pin**（含 lockfile：`poetry.lock` / `uv.lock` / `requirements.txt` 里的钉死版本）。不 pin 这两个包的项目无需任何改动。
 
 **建议升级到 `python-sdk/v0.14.1`（gRPC 模式用户）**：v0.14.1 修了一个**只影响 gRPC 模式配置推送**的鉴权缺陷。症状是日志里反复出现
 
