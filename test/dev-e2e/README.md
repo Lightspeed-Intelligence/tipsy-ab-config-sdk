@@ -1,231 +1,180 @@
-# dev e2e test harness
+# DEV end-to-end harness
 
-End-to-end tests against the **DEV** environment of the tipsy-ab-config platform
-(Go AB/config service: gRPC + HTTP, plus Go/Python SDKs). This directory holds
-**test-harness artifacts only** — it never modifies product code under
-`sdk/`, `api/`.
+This directory validates the platform's public HTTP/gRPC data plane and the Go,
+Python and Java SDKs against the same seeded expectations. It contains test
+drivers and fixtures only; it does not modify SDK or proto implementation.
 
-The original design source is `.zyz-worker/tasks/e2e-dev-tests/design/design-doc.md`
-in the upstream platform repo (`Lightspeed-Intelligence/tipsy-ab-config`). The
-public SDK repo carries this suite as the downstream-consumer-side evidence that
-the released SDK modules (`sdk/go/tipsyabconfig`, `sdk/go/tipsyauth`, the Python
-`tipsy-ab-config` package) drive the same platform correctly.
+The normal target is a deployment supplied by the platform owner. The endpoint,
+token and database seed state are external inputs; this repository does not
+claim that any particular DEV deployment is currently online.
 
-## Layout
+## Suites
 
-- `tools/bucketfind/main.go` — reverse-solves deterministic UIDs for each
-  experiment-group target by replicating the platform bucket formula
-  `bucket = xxhash64(uid + "-" + salt) % traffic_total` at BOTH the layer level
-  and the experiment level, then emits the golden expectations fixture.
-- `fixtures/expectations.json` — generated golden expectations (one row per
-  `(ns, user_id, key)`); the test drivers assert against these.
-- `sql/seed.sql` — idempotent, transaction-wrapped seed for the `demo-test` and
-  `for_dev_agent_test` namespaces (config + gray + two experiment types).
-- `sql/teardown.sql` — idempotent FK-safe cleanup of this batch's rows.
-- `platform/` — ST3 platform-correctness driver: raw HTTP (Go, stdlib only) +
-  `grpc_smoke.sh` (raw gRPC via grpcurl).
-- `clients/go/` — ST4 Go SDK client-correctness driver (gRPC + HTTP transports).
-- `clients/py/` — ST4 Python SDK client-correctness driver (gRPC + HTTP) plus
-  `setup_venv.sh` venv bootstrap.
-- `clients/java/` — Java SDK client-correctness driver (gRPC + HTTP); a
-  standalone Maven project (NOT in the `sdk/java` reactor) depending on the
-  locally-installed `io.github.lightspeed-intelligence:tipsy-abconfig` artifact. Build a fat-jar with
-  `mvn -q -DskipTests package`; see `clients/java/README.md`.
-- `load/` — ST5 medium-load driver (Go, stdlib only); writes `load/last-run.json`.
+| Path | Purpose |
+|---|---|
+| `sql/` | Idempotent seed and teardown SQL for `demo-test` and `for_dev_agent_test`. |
+| `fixtures/expectations.json` | Golden `(namespace, user, key)` expectations shared by all drivers. |
+| `tools/bucketfind/` | Regenerates deterministic fixture users with the platform bucket formula. |
+| `platform/` | Raw HTTP assertions and a grpcurl smoke test. |
+| `clients/go/` | Go SDK over HTTP and gRPC. |
+| `clients/py/` | Python SDK over HTTP and gRPC, with editable and released-baseline setup modes. |
+| `clients/java/` | Standalone Maven consumer over HTTP and gRPC. |
+| `load/` | Medium HTTP load driver; writes `last-run.json`. |
+| `headless/` | Local three-backend `dns:///` and `round_robin` verification. |
+| `combo/` | Local combo/holdout data-plane fixture and SDK assertions. |
 
-## Environment variables (all access info; no secrets hard-coded)
+The harness is intentionally outside normal `go test`, Python and Maven unit
+test suites because it needs a real service and seeded database.
 
-Every driver reads access info from env vars (matching `docs/dev-http-token.md`):
+## Connection contract
 
-| var | default | used by |
+All drivers take access data from environment variables:
+
+| Variable | Default | Use |
 |---|---|---|
-| `AB_CONFIG_HTTP_BASE` | `https://dev-ab-config.infra.fantacy.live` | all HTTP paths |
-| `AB_CONFIG_GRPC_ADDR` | `dev-ab-config-grpc.infra.fantacy.live:443` | gRPC paths (standard TLS via Cloudflare-proxied DNS) |
-| `AB_CONFIG_TOKEN` | _(REQUIRED, no default)_ | all paths |
-| `AB_CONFIG_GRPC_AUTHORITY` | _(unset)_ | **legacy opt-in**: if set, switches gRPC to the deprecated IP-direct form (`-authority` override + `-insecure`) for origin-path debugging |
-| `AB_CONFIG_GRPC_CA_PEM` | _(unset)_ | **legacy opt-in**: Origin CA PEM for the IP-direct Python path |
+| `AB_CONFIG_HTTP_BASE` | `https://dev-ab-config.infra.fantacy.live` | HTTP base URL. Override with the endpoint supplied for the run. |
+| `AB_CONFIG_GRPC_ADDR` | `dev-ab-config-grpc.infra.fantacy.live:443` | gRPC TLS address. Override with the endpoint supplied for the run. |
+| `AB_CONFIG_TOKEN` | none, required | HS256 service token authorized for the fixture namespaces. |
+| `AB_CONFIG_GRPC_AUTHORITY` | unset | Origin-debugging override for the legacy direct-IP form. |
+| `AB_CONFIG_GRPC_CA_PEM` | unset | Private CA PEM used by the Python direct-IP path. |
 
-The dev token (and its expiry) are in `docs/dev-http-token.md`. Export them
-before running any driver, e.g.:
+Obtain current endpoints and a short-lived token from the deployment owner; see
+[DEV connection template](../../docs/dev-http-token.md). Never commit a token.
 
-```sh
-export AB_CONFIG_TOKEN='<dev service token from docs/dev-http-token.md>'
+```bash
+export AB_CONFIG_HTTP_BASE='<current HTTP base URL>'
+export AB_CONFIG_GRPC_ADDR='<current gRPC host:port>'
+export AB_CONFIG_TOKEN='<short-lived service token>'
 ```
 
-## Prerequisites (one-time, per host)
+The default gRPC form is standard TLS through the configured DNS name. Set the
+authority/private-CA variables only when an operator explicitly asks for
+origin-path diagnosis. A gRPC initialization failure is reported as degraded
+and makes an SDK-driver run non-successful even if HTTP assertions continue.
 
-To install the **released** SDKs the way `tipsy-backend` does (private GitHub repo
-+ tagged module), the Agent's host needs SSH access to the repo and `git` set
-up to use it for HTTPS module fetches:
+## Prerequisites
 
-```sh
-# 1. Agent's SSH key must already work for: git clone git@github.com:Lightspeed-Intelligence/tipsy-ab-config-sdk.git
-# 2. Redirect github HTTPS → SSH so `go get` and pip git+https flows authenticate too:
-git config --global url."ssh://git@github.com/".insteadOf "https://github.com/"
-# 3. Tell Go this org is private (skip proxy/sumdb):
-export GOPRIVATE='github.com/Lightspeed-Intelligence/*'
-# 4. Tools the drivers need:
-go install github.com/fullstorydev/grpcurl/cmd/grpcurl@latest   # raw-gRPC smoke
-# Python 3.12 must be available; the venv bootstrap uses /usr/bin/python3.12.
-# (System python 3.14 lacks grpcio wheels; override with PYTHON312=<path> if needed.)
-```
+- Go matching the repository `go.work` version.
+- Python 3.10–3.13; set `PYTHON312=/path/to/python` if the bootstrap cannot find
+  its default Python 3.12 executable.
+- JDK 21 and Maven for the Java driver.
+- `grpcurl` for the raw gRPC smoke test.
+- Database access for the operator running `sql/seed.sql` and
+  `sql/teardown.sql`.
 
-## Bucketfind tool
+The SDK repository is public. Released Go modules can be fetched through the
+public Go proxy, Python releases through public Git tags over HTTPS, and Java
+releases through Maven Central. No `GOPRIVATE` or GitHub credential is required
+for those public release paths. The checked-in Python `SDK_MODE=backend`
+bootstrap is a legacy exception: it installs its pinned tag through
+`git+ssh://` and therefore requires working GitHub SSH access.
 
-Regenerate the expectations fixture (deterministic; safe to re-run):
+## Run against a deployment
 
-```
-(cd test/dev-e2e/tools/bucketfind && go run .)
-```
+From the SDK repository root:
 
-It prints a summary table of the reverse-solved UIDs and writes
-`test/dev-e2e/fixtures/expectations.json`. The tool is module-local — it imports
-`github.com/cespare/xxhash/v2` (already in go.sum) and depends on no product code.
+1. Have the database operator apply the fixture:
 
-## Run order (against DEV)
-
-The dev abtest cache does an **unconditional full reload every 5 seconds**
-(upstream platform `internal/abtest/cache/refresher.go`), so directly-inserted
-DB rows are picked up by the running dev server within <=5s — no restart, no
-admin write call. The Agent has **no DB access**; the user runs the SQL.
-
-1. **Seed** the dev database (user runs):
-
-   ```
+   ```bash
    psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f test/dev-e2e/sql/seed.sql
    ```
 
-   `seed.sql` COMMITs the data and then runs two SELF-CHECK SELECTs that must
-   return **zero rows** (derived `experiment_config_param` matches
-   `experiment_group.params`, and `experiment_status='running'`).
+   The script is transaction-wrapped and finishes with self-check queries. Wait
+   at least one platform cache-refresh interval before running clients.
 
-   Skip this step if a prior seed is still in place (`seed.sql` is idempotent;
-   re-running is cheap but unnecessary).
+2. Run raw protocol checks:
 
-2. **Wait >= 5 seconds** for the dev cache to reload.
-
-3. **Run the test drivers** (in this order):
-
-   **ST3 — platform correctness (raw wire):**
-
-   ```sh
-   # raw HTTP (config/static + config/dynamic + abtest/experiment_result)
+   ```bash
    (cd test/dev-e2e/platform && go run .)
-
-   # raw gRPC (grpcurl; install: go install github.com/fullstorydev/grpcurl/cmd/grpcurl@latest)
    bash test/dev-e2e/platform/grpc_smoke.sh
    ```
 
-   **ST4 — client correctness (SDKs, both transports):**
+3. Run SDK consumers:
 
-   The SDKs are released as standalone Go modules and a published-tag Python
-   package on this public repo (see `docs/usage-and-integration.md §4.1.0` and
-   `sdk/python/README.md §Consumer onboarding`). The drivers support two
-   install modes — pick one per SDK:
-
-   - **workspace / editable** (default; fast in-repo iteration): Go uses the
-     repo `go.work` (which lists every dev-e2e driver module), Python uses
-     `pip install -e sdk/python[http]`.
-   - **backend / released** (mirrors `tipsy-backend`'s real integration): Go
-     does `GOWORK=off go run .` against the `v0.4.0` tag pulled via the public
-     module proxy; Python uses
-     `pip install ... @ git+ssh://...@python-sdk/v0.5.0#subdirectory=sdk/python`.
-     This is the authoritative "consumer onboarding works" evidence.
-
-   ```sh
-   # ----- Go SDK (workspace mode; quick) -----
+   ```bash
+   # Go: repository workspace implementation, both transports.
    (cd test/dev-e2e/clients/go && go run .)
-   # or a single transport:
-   (cd test/dev-e2e/clients/go && go run . -transport http)
 
-   # ----- Go SDK (backend mode; released v0.4.0 via public proxy) -----
-   # No GOPRIVATE needed — the SDK repo is public.
-   ( cd test/dev-e2e/clients/go && \
-     GOWORK=off go run . -fixtures ../../fixtures/expectations.json )
+   # Go: isolated released-consumer baseline.
+   (cd test/dev-e2e/clients/go && GOWORK=off go run . \
+     -fixtures ../../fixtures/expectations.json)
 
-   # ----- Python SDK (editable; quick) -----
-   bash test/dev-e2e/clients/py/setup_venv.sh                    # creates .venv/
-   test/dev-e2e/clients/py/.venv/bin/python test/dev-e2e/clients/py/run.py
+   # Python: repository implementation.
+   bash test/dev-e2e/clients/py/setup_venv.sh
+   test/dev-e2e/clients/py/.venv/bin/python \
+     test/dev-e2e/clients/py/run.py
 
-   # ----- Python SDK (backend mode; released v0.5.0 via git+ssh) -----
-   SDK_MODE=backend bash test/dev-e2e/clients/py/setup_venv.sh   # creates .venv-backend/
-   test/dev-e2e/clients/py/.venv-backend/bin/python test/dev-e2e/clients/py/run.py
+   # Python: isolated released-consumer baseline.
+   SDK_MODE=backend bash test/dev-e2e/clients/py/setup_venv.sh
+   test/dev-e2e/clients/py/.venv-backend/bin/python \
+     test/dev-e2e/clients/py/run.py
 
-   # ----- Java SDK (locally-installed io.github.lightspeed-intelligence:tipsy-abconfig) -----
-   (cd sdk/java && mvn -q -DskipTests install)                   # one-time: SDK → ~/.m2
-   (cd test/dev-e2e/clients/java && mvn -q -DskipTests package)  # build fat-jar
-   AB_CONFIG_TOKEN=... java -jar test/dev-e2e/clients/java/target/tipsy-dev-e2e-java.jar
-   # or a single transport:
-   AB_CONFIG_TOKEN=... java -jar test/dev-e2e/clients/java/target/tipsy-dev-e2e-java.jar --transport http
+   # Java: current repository implementation installed to the local Maven repo.
+   JAVA_SDK_VERSION="$(cd sdk/java && \
+     mvn -q help:evaluate -Dexpression=project.version -DforceStdout)"
+   (cd sdk/java && mvn -q -DskipTests install)
+   (cd test/dev-e2e/clients/java && mvn -q -DskipTests \
+     -Dtipsy-abconfig.version="$JAVA_SDK_VERSION" package)
+   java -jar test/dev-e2e/clients/java/target/tipsy-dev-e2e-java.jar
    ```
 
-   **ST5 — medium load test:**
+   Add `-transport http|grpc` to the Go driver or `--transport http|grpc` to
+   Python and Java to run one transport.
 
-   ```sh
-   # defaults: 150 concurrency, 150s, experiment_result endpoint, for_dev_agent_test ns
-   (cd test/dev-e2e/load && go run .)
-   # rate-limited (recommended to stay "medium"):
-   (cd test/dev-e2e/load && go run . -target-qps 2000 -duration 120s)
-   # writes summary metrics → test/dev-e2e/load/last-run.json (auto)
+   The isolated Go/Python modes are deliberately pinned by their executable
+   dependency files: Go `clients/go/go.mod` uses SDK v0.4.0 and Python
+   `clients/py/setup_venv.sh` uses `python-sdk/v0.5.0`. They are compatibility
+   baselines, not recommended current versions. The Java standalone harness is
+   similarly pinned by `clients/java/pom.xml`; update a pin and its lock/build
+   metadata together when changing the baseline.
+
+4. Optionally run medium HTTP load:
+
+   ```bash
+   (cd test/dev-e2e/load && go run . \
+     -target-qps 2000 -duration 120s)
    ```
 
-   Each Go driver prints `PASS`/`FAIL` per case and a summary, and exits
-   non-zero on any failure. The load driver exits non-zero if the error rate
-   exceeds the 1% acceptance target.
+   Defaults are 150 workers, 150 seconds, 2000 target QPS and
+   `experiment_result`. The driver fails above a 1% error rate and writes a
+   JSON result to `test/dev-e2e/load/last-run.json`.
 
-4. **Teardown** when finished (user runs):
+5. Have the database operator remove the fixture:
 
-   ```
+   ```bash
    psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f test/dev-e2e/sql/teardown.sql
    ```
 
-   Then wait >= 5s again; the trailing regression SELECT should report no
-   leftover keys/experiments/layers in the two namespaces.
+## Expected observation counts
 
-## Transport notes (gRPC on dev)
+With the checked-in 38-row fixture and both transports enabled:
 
-- **Default path** (since `docs: update dev grpc access guidance`): dev has a
-  dedicated Cloudflare-proxied gRPC DNS record
-  `dev-ab-config-grpc.infra.fantacy.live:443` with standard TLS. All three
-  drivers default to this address — **no `:authority` override, no
-  skip-verify, no Origin CA PEM needed**. The Go SDK addr is just
-  `grpcs://dev-ab-config-grpc.infra.fantacy.live:443`; grpcurl needs only
-  `-H "authorization: Bearer ..."`.
-- **Legacy IP-direct path** (deprecated; only for origin-path debugging):
-  setting `AB_CONFIG_GRPC_AUTHORITY` (any non-empty value) flips all three
-  drivers back to the old form (`-authority` override + `-insecure` /
-  `grpcs://IP:443?authority=...&insecure=true`). The Python driver then also
-  honors `AB_CONFIG_GRPC_CA_PEM` for grpcio (no native skip-verify). Default
-  is empty → standard TLS via domain.
-- Each SDK driver tolerates a gRPC connect failure: it WARNs, marks gRPC
-  **degraded** in the summary (a visible non-success), and still runs HTTP mode.
+| Driver | Expected observations |
+|---|---:|
+| raw HTTP platform driver | 75 |
+| grpcurl smoke | 5 |
+| each Go/Python/Java SDK driver | 76 |
 
+Treat a different total as an incomplete run, not merely a failed assertion.
+This is currently an operator gate: the Go, Python and Java drivers print their
+totals but do not compare them with 76. They exit non-zero for assertion
+failures or a degraded gRPC transport, so an exit status of zero must still be
+paired with the expected-count check above.
+Historical result snapshots are intentionally not maintained in the current
+documentation; rerun the harness against the target deployment.
 
-## Notes
+## Fixture maintenance
 
-- Both SQL scripts are idempotent (`ON CONFLICT ... DO UPDATE/DO NOTHING` on
-  seed; namespace + fixed-id-band scoped DELETEs on teardown) and safe to re-run.
-- Teardown deliberately **keeps** the `namespace_registry` rows and the
-  auto-created root domain (`root:<ns>`), leaving the namespaces usable.
-- Schema columns are verified against migrations `0001`, `0005`, `0006`;
-  `experiment_group` has **no `is_control`** column (dropped by `0006`).
-- Bare HTTP/gRPC `user_attrs` must use the typed Value envelope, e.g.
-  `{"country":{"s":"US"}}` (not `{"country":"US"}`) — the SDKs encode this
-  automatically; only the raw-interface drivers write it by hand. The
-  expectations fixture already stores attrs in this envelope form.
-- This directory is **not** part of `make test` / `go test ./...` (the tests hit
-  a live dev environment); the bucketfind tool is a standalone `package main`.
+Regenerate deterministic expectations with:
 
-## Expected results
+```bash
+(cd test/dev-e2e/tools/bucketfind && go run .)
+```
 
-Reference numbers from the last green run (see `RESULTS.md` for the full
-report; if any number is off, that's the failure signal):
+Raw HTTP/gRPC attributes use the typed `Value` envelope, for example
+`{"country":{"s":"US"}}`. SDK callers pass native values such as
+`{"country":"US"}` because each language performs the wire conversion.
 
-| driver | what it asserts | expected |
-|---|---|---|
-| `platform/` (raw HTTP) | 38 fixture rows × {dynamic, exp_result} + static + sticky | **75/75 PASS** |
-| `platform/grpc_smoke.sh` | reflection + 4 RPCs (ConfigService + AbtestService) | **5/5 PASS** |
-| `clients/go/` | 38 rows × {http, grpc} = 76 | **76/76 PASS** (both modes) |
-| `clients/py/` | 38 rows × {http, grpc} = 76 | **76/76 PASS** (both modes) |
-| `clients/java/` | 38 rows × {http, grpc} = 76 | **76/76 PASS** (driver ready; awaits a valid `AB_CONFIG_TOKEN` + seeded DEV to run) |
-| `load/` (medium) | 90–150s @ 150 workers, error-rate < 1% | 0 errors, p50 ≈ 220ms, p99 ≈ 340ms |
+The SQL is idempotent and scoped to the fixture namespaces and fixed id band.
+Teardown deliberately retains namespace-registry rows and the generated root
+domain so the namespaces remain usable.

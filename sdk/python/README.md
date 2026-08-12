@@ -1,396 +1,227 @@
-# tipsy-ab-config (Python SDK)
+# tipsy-ab-config Python SDK
 
-Tipsy AB-config Python SDK: local config cache + abtest Compute client for the
-Tipsy AB-config server.
+The Python SDK keeps a process-local configuration cache and resolves dynamic
+configuration through the Tipsy AB-config service. It supports gRPC and HTTP,
+uses Bearer authentication, and never connects directly to platform storage.
 
-## What it is
-
-`tipsy-ab-config` is the Python client SDK for the Tipsy AB-config server.
-It maintains a process-local config cache (populated by a startup `PullAll`
-and a long-lived server-streaming `Subscribe`) and resolves abtest hits via
-the server's `AbtestService.GetExperimentResult`. All gRPC traffic is JWT
-authenticated.
-
-This package mirrors the Go SDK 1:1. The SDK never talks to the database —
-everything goes through `ConfigService.PullAll`/`Subscribe` plus
-`AbtestService.GetExperimentResult`.
+The package is asynchronous and requires Python 3.10 or newer.
 
 ## Install
 
-> **Releases:** browse all published versions, changelog entries, and
-> downloadable wheel/sdist assets at
-> https://github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk/releases
-> (look for tags prefixed `python-sdk/v`).
-
-The SDK is distributed from the **public** `tipsy-ab-config-sdk` repository
-— `pip install` does not require any credential.
-
-### Find the latest version
-
-The snippets below use the placeholder `python-sdk/vX.Y.Z` — substitute
-the latest stable tag at install time. The canonical lookups are:
-
-- **GitHub Releases page** (browser):
-  <https://github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk/releases>
-  — top-most non-prerelease entry whose tag begins with `python-sdk/v`.
-- **CHANGELOG**: [`sdk/python/CHANGELOG.md`](./CHANGELOG.md) — top
-  `[X.Y.Z] - <date>` section.
-- **Shell one-liner** (needs `jq`; no auth required):
-
-  ```bash
-  LATEST_TAG=$(curl -s \
-    https://api.github.com/repos/Lightspeed-Intelligence/tipsy-ab-config-sdk/releases \
-    | jq -r '[.[] | select(.prerelease == false) | select(.tag_name | startswith("python-sdk/v")) | .tag_name] | first')
-  echo "${LATEST_TAG}"   # e.g. python-sdk/v0.3.0
-  ```
-
-  Use `${LATEST_TAG}` inline in the `pip install` commands shown below.
-  In CI, exporting a `GITHUB_TOKEN` (or any GitHub PAT) bumps the
-  unauthenticated 60-req/hr rate limit to 5000 req/hr — useful but **not
-  required** for installation itself.
-
-> Pin the resolved tag in your `requirements.txt` / `pyproject.toml` —
-> do **not** ship `python-sdk/vX.Y.Z` literally, and do **not** rely on a
-> floating ref (`main`, `HEAD`) in production.
-
-### Consumer onboarding (end-to-end)
-
-If you are a downstream service (e.g. `tipsy-studio`) integrating this SDK
-for the first time, follow these steps.
-
-**1. Wire the SDK into your project's dependency list.**
-
-Pick whichever file your project uses. The line is the same in all of
-them — install via `git+https` against a published tag:
+Published versions are tagged `python-sdk/vX.Y.Z` in
+[GitHub Releases](https://github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk/releases).
+Choose a released tag and pin it; do not deploy from `main` or a floating ref.
 
 ```text
 tipsy-ab-config @ git+https://github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk.git@python-sdk/vX.Y.Z#subdirectory=sdk/python
 ```
 
-No credential, no env-var substitution: the repo is public, so both
-`pip`/`requirements.txt` and lockfile-style resolvers (`uv`, `poetry`)
-fetch the tag directly.
+Optional extras:
 
-**2. Verify the install.**
+- `http`: installs `httpx`, required when `Config.transport="http"`.
+- `fastapi`: installs Starlette for the ASGI middleware.
 
-```bash
-# In your project's venv:
-pip install -r requirements.txt
-python -c "import tipsy_ab_config as p; print('SDK version:', p.__version__)"
-# Expected: SDK version: <the X.Y.Z you pinned in requirements.txt>
-```
-
-If this fails, see `## Troubleshooting` below.
-
-**3. Wire the SDK into your application code.**
-
-See `## Quickstart` and `## FastAPI integration` below. The SDK is
-fully async; do not call it from sync code paths without first wrapping
-in a runtime.
-
-**4. (Recommended) Pin the tag in CI.**
-
-Pin your CI matrix to the exact tag you've validated (e.g.
-`python-sdk/v0.3.0`). When a new SDK version ships, review its
-`CHANGELOG.md`, then update the tag in `requirements.txt` and re-run
-your test suite — do not let the tag drift silently.
-
-### 1) Primary — `git+https` one-liner
+For example:
 
 ```text
-tipsy-ab-config @ git+https://github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk.git@python-sdk/vX.Y.Z#subdirectory=sdk/python
+tipsy-ab-config[http,fastapi] @ git+https://github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk.git@python-sdk/vX.Y.Z#subdirectory=sdk/python
 ```
 
-Or in `requirements.txt`:
+The repository is public, so installation does not require a GitHub token. The
+current package version is declared in `pyproject.toml` and
+`tipsy_ab_config.__version__`; release changes are recorded in
+[CHANGELOG.md](./CHANGELOG.md).
 
-```text
-tipsy-ab-config @ git+https://github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk.git@python-sdk/vX.Y.Z#subdirectory=sdk/python
-```
+For an internal artifact mirror, download the wheel or sdist attached to the
+matching GitHub Release and install that immutable artifact.
 
-Or in `pyproject.toml`:
+### Deprecated private-repository install
 
-```toml
-[project]
-dependencies = [
-    "tipsy-ab-config @ git+https://github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk.git@python-sdk/vX.Y.Z#subdirectory=sdk/python",
-]
-```
+Consumers still pinned to a pre-0.3.0 tag in the former private
+`tipsy-ab-config` monorepo must migrate to the public URL above when upgrading.
+The old credential-bearing URL is a compatibility path, not an installation
+method for current releases.
 
-Tags use the scheme `python-sdk/v<semver>` (e.g. `python-sdk/vX.Y.Z`).
-
-> **Prerelease tags** (`python-sdk/vX.Y.Zrc1`, `…alpha1`, `…beta1`,
-> `…-suffix`) exist on GitHub Releases too and are marked as prereleases.
-> Do not pin production code to them — they are dry-runs for validating
-> the release pipeline.
-
-### 2) Alternative — Release asset download
-
-For air-gapped / vendoring scenarios where you want to mirror the wheel
-into an internal artifact store:
-
-```bash
-# 0. Resolve the latest tag (see "Find the latest version" above) and
-#    URL-encode it (the slash becomes %2F):
-LATEST_TAG=$(curl -s \
-  https://api.github.com/repos/Lightspeed-Intelligence/tipsy-ab-config-sdk/releases \
-  | jq -r '[.[] | select(.prerelease == false) | select(.tag_name | startswith("python-sdk/v")) | .tag_name] | first')
-TAG_PATH="${LATEST_TAG/\//%2F}"   # e.g. python-sdk%2Fv0.3.0
-
-# 1. Download the wheel directly from the public Release page:
-WHEEL_URL=$(curl -s \
-  "https://api.github.com/repos/Lightspeed-Intelligence/tipsy-ab-config-sdk/releases/tags/${TAG_PATH}" \
-  | jq -r '.assets[] | select(.name | endswith(".whl")) | .browser_download_url')
-curl -L -o tipsy_ab_config.whl "${WHEEL_URL}"
-
-# 2. Install:
-pip install tipsy_ab_config.whl
-```
-
-Pin `python-sdk/vX.Y.Z` in the URL (replace with the latest tag from
-"Find the latest version" above); bump it when you upgrade.
-
-### Extras
-
-```text
-tipsy-ab-config[fastapi] @ git+https://github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk.git@python-sdk/vX.Y.Z#subdirectory=sdk/python
-```
-
-Available extras:
-- `fastapi` — pulls `starlette` for the FastAPI middleware.
-- `http` — pulls `httpx` for the HTTP transport (use when gRPC is impractical).
-
-### tipsy-studio sample (`requirements.txt`)
-
-```text
-# Pin the SDK to a published tag; bump the tag to upgrade.
-tipsy-ab-config @ git+https://github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk.git@python-sdk/vX.Y.Z#subdirectory=sdk/python
-```
-
-### Legacy install (deprecated, for back-compat)
-
-Pre-v0.3.0 consumers installed from the private `tipsy-ab-config` monorepo:
-
-```text
-tipsy-ab-config @ git+https://${GH_PAT}@github.com/Lightspeed-Intelligence/tipsy-ab-config.git@python-sdk/v0.2.0#subdirectory=sdk/python
-```
-
-That URL continues to resolve via the preserved `python-sdk/v0.2.0` tag,
-but new releases (v0.3.0+) ship from `tipsy-ab-config-sdk` with no PAT —
-migrate to the public install form above at your next SDK bump.
-
-## Quickstart
+## Quick start
 
 ```python
 import asyncio
-from tipsy_ab_config import init
+import os
 
-async def main():
-    client = await init(
-        endpoint="abconfig.internal:8443",
-        project="my-project",
-        token="<bearer-jwt>",
-    )
+from tipsy_ab_config import Config, init
 
-    # Pure cache read — no abtest call.
-    cfg = client.get_config_static("feature.flags")
 
-    # AbtestContext-aware lookup (resolves abtest hits via the server).
-    # `new_abtest_context` is a PURE create: it issues NO RPC at construction.
-    # The first `get_config` for a namespace lazily fetches + memoises that
-    # namespace's result (at most one GetExperimentResult per namespace per
-    # request). Pass `trace_id=` to reuse an upstream trace; omit or pass an
-    # empty string to have the SDK auto-generate a UUID v4 for this request.
-    ctx = client.new_abtest_context(
-        user_id="u-123",
-        user_attrs={"country": "US"},
-        trace_id="abc-trace-from-upstream",
-    )
-    value = await client.get_config(ctx, "feature.flags", "key")
+async def main() -> None:
+    async with await init(Config(
+        namespaces=["my-project"],
+        config_service_addr="grpcs://config.example.com:443",
+        abtest_service_addr="grpcs://abtest.example.com:443",
+        token=os.environ["TIPSY_TOKEN"],
+        default_namespace="my-project",
+    )) as client:
+        # Synchronous cache read; no experiment RPC.
+        static_value = client.get_config_static(
+            "my-project", "feature.enabled", "false"
+        )
 
-    # Resolve EVERY dynamic config under (namespace, user) at once. Same
-    # resolution as get_config (abtest hit > full release), returned as a fresh
-    # dict[str, str] you may mutate freely. A key with no abtest hit and no
-    # full-release value is omitted; an empty-string value is kept. Reuses the
-    # same at-most-once per-ns abtest fetch as get_config.
-    all_flags = await client.get_all_configs(ctx, "feature.flags")
-    # ns-optional form resolves the project default namespace.
-    all_default = await client.get_all_configs_default(ctx)
+        # Create one context per logical request and reuse it. Construction
+        # performs no RPC; the first dynamic lookup fetches the namespace result.
+        ctx = client.new_abtest_context(
+            "user-123",
+            {"country": "US"},
+            trace_id="upstream-request-id",
+        )
+        value = await client.get_config(
+            ctx, "my-project", "feature.enabled", "false"
+        )
+        all_values = await client.get_all_configs(ctx, "my-project")
 
-    # Optional: warm a namespace up front (e.g. so it overlaps other I/O).
-    # Idempotent + non-blocking; a later get_config reuses the same fetch.
-    ctx.prefetch_config_version_flat_kv_for_namespace("feature.flags")
+        print(static_value, value, all_values)
 
-    # `get_experiment_result` accepts the same optional kwarg.
-    resp = await client.get_experiment_result(
-        namespace="my-project",
-        user_info=...,
-        trace_id="abc-trace-from-upstream",
-    )
+
+asyncio.run(main())
 ```
 
-The `trace_id=` kwarg is accepted by `new_abtest_context`,
-`abtest_scope`, and `get_experiment_result`. Empty / `None` means
-"SDK generates a fresh UUID v4". The id is propagated end-to-end:
-into the proto `trace_id` field and the server-side computation logs.
-The server enforces a 128-char soft cap (oversize input is truncated with
-a one-shot WARN).
+`new_abtest_context` is synchronous and side-effect free. Within one context,
+the SDK memoizes at most one `GetExperimentResult` call per namespace. Call
+`ctx.prefetch_config_version_flat_kv_for_namespace(ns)` when selected entry
+points should start that request early; it is non-blocking and idempotent.
 
-> **About the trace_id semantics.** `trace_id` is a correlation token
-> — it ties one logical request together across SDK logs, server-side
-> experiment-result logs, and upcoming experiment-result reporting. The
-> platform does **not** prescribe any particular ID format; pass
-> whatever ID already identifies "one logical request" in your system.
-> Examples: a search/recommendation service can pass its own
-> `request_id`; an OpenTelemetry-enabled service can pass its OTel
-> trace id; a service with its own internal tracing system can pass
-> that system's trace id. Pass `None` / omit the kwarg when there is
-> no upstream id — the SDK / server will fill a UUID v4.
+Call `await client.aclose()` when not using `async with`.
 
-> **No-user uid (`""` / `"0"`).** An `AbtestContext` whose `user_id` is the
-> empty string `""` or `"0"` carries no real user identity, so both
-> `get_config` and `get_all_configs` skip the abtest experiment / whitelist
-> logic entirely — no `GetExperimentResult` RPC is issued — and resolve straight
-> to the static full-release value (`get_config` returns the supplied default
-> when a key has no full release; `get_all_configs` omits it). A `user_id` of
-> `None` is normalised to `""` and behaves the same. Any other uid takes the
-> normal abtest path. Use this on non-user paths instead of paying for an
-> experiment lookup that could never bucket meaningfully.
+## Configuration
 
-See `example/` for a fully runnable script.
+`init` accepts one `Config` object. Important fields are:
 
-## FastAPI integration
+| Field | Default | Meaning |
+|---|---:|---|
+| `namespaces` | required | Namespaces loaded into the local cache. |
+| `config_service_addr` | required | gRPC target or HTTP base URL. |
+| `abtest_service_addr` | empty | Abtest endpoint; empty disables experiment RPCs and uses full-release values. |
+| `token` / `token_provider` | required | Static Bearer token or async provider. The provider takes precedence. See the implementation note below before relying on rotation. |
+| `transport` | env or `grpc` | `grpc` or `http`; an empty value reads `TIPSY_SDK_TRANSPORT`. |
+| `pull_interval` | 10s | Fallback polling interval. It is the only update path in HTTP mode. |
+| `pull_timeout` / `pull_retries` | 5s / 3 | Startup and periodic pull controls. |
+| `abtest_timeout` | 1.5s | Per-compute timeout; failure falls back to the full release. |
+| `startup_fail_open` | `False` | Continue with an empty cache when startup PullAll fails. |
+| `default_namespace` | env | Empty reads `PROJECT_DEFAULT_NAMESPACE`. |
+| `tls_root_certificates` | unset | PEM trust roots for a private CA on `grpcs://`. |
+| `channel_options` / `channel_factory` | unset | gRPC customization and test injection. |
+| `http_client` | unset | Caller-owned `httpx.AsyncClient` for HTTP mode. |
+
+A static token and an async `token_provider` are both accepted. Do not embed
+tokens in source or documentation; obtain their value and lifetime from the
+deployment owner.
+
+> **Pending human verification — dynamic token rotation.** The intended
+> cross-language contract is that a provider can supply rotated tokens during
+> the client lifetime. The current Python implementation calls
+> `token_provider` while initializing `_TokenCache`, while RPC interceptors and
+> HTTP requests subsequently read the cached value; `Client` exposes no public
+> refresh operation. Until this is adjudicated or corrected, treat the Python
+> provider as initialization-time token acquisition and recreate the client
+> before that token expires. Evidence: `tipsy_ab_config/client.py`,
+> `_TokenCache.refresh`, `_init_grpc`, `_init_http`, and the auth interceptors.
+
+## Transports and addresses
+
+gRPC is the default transport. It performs startup `PullAll`, maintains a
+server-streaming `Subscribe`, and retains periodic PullAll as a safety net.
+HTTP posts protojson to `/api/v1/config/pull_all` and
+`/api/v1/abtest/experiment_result`; it does not open Subscribe, so update
+latency is bounded by `pull_interval`.
+
+In gRPC mode:
+
+| Address | Behavior |
+|---|---|
+| `host:port`, `grpc://host:port` | Plaintext h2c. |
+| `grpcs://host:port` | TLS using normal certificate verification. |
+| `dns:///service.namespace.svc.cluster.local:50051` | Native DNS resolver and automatic `round_robin`; intended for a Headless Service returning pod IPs. |
+| `unix:`, `passthrough:///`, `xds:///` | Passed to gRPC as native targets. |
+| `http://` or `https://` | Rejected; select HTTP transport instead. |
+
+`grpcs://` also supports `authority` and private trust roots for controlled
+development environments. Certificate-verification bypasses are not production
+settings.
+
+## Resolution semantics
+
+- `get_config_static(ns, key, default)` is a local full-release cache read.
+- `get_config(ctx, ns, key, default)` resolves experiment/gray hit, then full
+  release, then the caller default.
+- `get_all_configs(ctx, ns)` applies the same rules to one immutable namespace
+  snapshot and returns a new mutable `dict`; keys with no resolved value are
+  omitted and an empty string remains a valid value.
+- `get_config_default` and `get_all_configs_default` use the configured project
+  default namespace.
+- An empty user id, `None`, or `"0"` represents no user identity and bypasses
+  experiment lookup, returning full-release values only.
+- A context reuses one experiment result per namespace across all lookups.
+
+When the server explicitly reports `has_dynamic_resolution=false`, a single
+key—or all keys in a namespace for `get_all_configs`—can use the pure-full fast
+path without waiting for an experiment RPC. If the field is absent, the SDK
+safely follows the dynamic path. Servers must use `api/gen/go` v0.3.0 or newer
+to emit the field; older servers remain functionally correct but do not provide
+the optimization.
+
+`trace_id` is an opaque correlation identifier. An omitted or empty value is
+replaced with a UUID v4. Reuse an upstream request or trace id when available;
+the SDK forwards it to the service.
+
+`get_experiment_result(...)` exposes the raw service response for custom
+parameters and group inspection. Values in `config_flat_kv`,
+`groups[].params_versions`, and `gray_hits[].key_versions` are global
+`config_version` primary-key ids, not per-key `version_no` values.
+
+## FastAPI and ASGI
 
 ```python
 from fastapi import FastAPI
 from tipsy_ab_config.fastapi_middleware import AbtestMiddleware
 
 app = FastAPI()
-app.add_middleware(AbtestMiddleware, client=client, default_user_extractor=...)
-```
 
-The middleware binds an `AbtestContext` into `contextvars` per request, so
-deep call sites can call `client.get_config(...)` without threading the
-context through.
 
-The middleware never auto-prefetches: building the context issues no RPC, and
-the first `get_config` for a namespace pays the lazy-fetch latency. To warm the
-default namespace for selected entry-point routes, opt in with an exact-match
-URL whitelist (`prefetch_paths`); requests whose path is not in the whitelist
-(or any path when the list is empty) are never prefetched, so handlers that
-never call `get_config` do not fire wasted experiment RPCs:
+async def user_provider(request):
+    return request.headers.get("X-User-Id", ""), {"country": "US"}
 
-```python
+
 app.add_middleware(
-    AbtestMiddleware, sdk=client, user_provider=...,
+    AbtestMiddleware,
+    sdk=client,
+    user_provider=user_provider,
     prefetch_paths=["/feed", "/recommend"],
 )
 ```
 
-Trace propagation is built in: the middleware reads the inbound
-`X-Trace-Id` header first, falling back to `X-Request-Id`, and finally
-generates a fresh UUID v4 when both are absent. The chosen id is attached
-to the request-scoped `AbtestContext` so all `get_config` /
-`get_experiment_result` calls inside the request share the same trace.
+The middleware stores an `AbtestContext` in a request-scoped `ContextVar`.
+Prefetching is opt-in and exact-path matched. Trace selection is
+`X-Trace-Id`, then `X-Request-Id`, then a generated UUID.
 
-## Compatibility
+## Compatibility and limitations
 
-- Python: 3.10, 3.11, 3.12, 3.13 (CI-tested matrix). 3.13 is the primary
-  target (matches the main downstream, tipsy-studio).
-- gRPC: `grpcio>=1.66.2,<2`. The floor is set by the shipped stubs, which are
-  generated by `grpcio-tools==1.66.2` and raise `RuntimeError` at import on any
-  older `grpcio`.
-- Protobuf runtime: `protobuf>=5.29.1,<7` — shipped stubs are 5.x major
-  (5.29.0 itself is yanked upstream, hence the `.1`).
-- Server: see release notes for compatible server tags.
-
-> **Server compatibility (v0.7.0+): upgrade the server first.** Starting with
-> `python-sdk/v0.7.0`, `get_config` takes a fast path that skips the abtest
-> `GetExperimentResult` wait for keys the server reports as pure full-release
-> (the new `has_dynamic_resolution` field on `KeyState`). This requires a
-> server built against **`api/gen/go` v0.3.0 or newer**, which emits that
-> field. **Upgrade the server before this SDK.** If this SDK runs against an
-> older server that does not emit the field, it safely falls back to ALWAYS
-> waiting on abtest — results stay correct and gray release / experiments keep
-> working; you just do not get the fast-path benefit. The fast path triggers
-> only when the field is explicitly `False`, never when it is absent, so a new
-> SDK on an old server never wrongly skips abtest.
-
-## Versioning and stability
-
-The SDK follows SemVer:
-
-- `0.x` — minor versions may contain breaking changes; patch versions are
-  bug-fix-only. Pin a tag.
-- `1.0.0+` — backwards-compatible within a major.
-
-`CHANGELOG.md` records every release.
-
-## Known limitations
-
-- Distributed via public Git installation; **not** yet on PyPI.
-- No `setuptools-scm`/dynamic version — `pyproject.toml` and
-  `__init__.__version__` are the single source of truth.
-- No `.pyi` stubs in the current 0.x line (deferred to a future release).
+- Python 3.10–3.13.
+- `grpcio>=1.66.2,<2`.
+- `protobuf>=5.29.1,<7`.
+- Distribution is currently through public Git tags and GitHub Release assets,
+  not PyPI.
+- The package ships `py.typed` but no separate `.pyi` stubs.
 
 ## Troubleshooting
 
-Symptoms and their fixes, in order of how commonly they show up during
-first integration.
+- Installation cannot find a version: confirm that the `python-sdk/vX.Y.Z` tag
+  exists and that the consumer can reach GitHub. Mirror a release asset where
+  direct access is unavailable.
+- `No module named 'tipsy'`: remove the stale installation and reinstall from a
+  current public tag.
+- Protobuf runtime mismatch: remove an incompatible application pin and resolve
+  `protobuf>=5.29.1,<7`.
+- Generated gRPC code requires a newer runtime: resolve
+  `grpcio>=1.66.2,<2` and rebuild the lockfile.
+- A minor `0.x` upgrade breaks a caller: review [CHANGELOG.md](./CHANGELOG.md).
+  The SDK follows SemVer; pin an exact tag and validate upgrades.
 
-### `pip install` fails with `Could not find a version that satisfies the requirement tipsy-ab-config`
-
-`pip` couldn't reach the tag URL. Usually:
-
-- The tag (`python-sdk/vX.Y.Z`) does not yet exist (e.g. you pinned a
-  prerelease that was deleted, or pinned a tag that's not published yet).
-  Check
-  `https://github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk/releases`.
-- Corporate proxy blocking `github.com`. Use the two-step Release-asset
-  download (`Install § 2`) into an internal artifact store.
-- Transient GitHub outage or network failure; retry.
-
-### `pip install` succeeds but `import tipsy_ab_config` raises `ModuleNotFoundError: No module named 'tipsy'`
-
-You have a stale build of the SDK (probably from before the proto stubs
-were rewritten with proper imports). Force a clean reinstall:
-`pip install --force-reinstall --no-deps 'tipsy-ab-config @ git+https://github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk.git@python-sdk/vX.Y.Z#subdirectory=sdk/python'`.
-
-### `RuntimeError: Detected mismatch between protobuf gencode and runtime versions`
-
-Your project pins `protobuf<5.29`. The SDK requires `protobuf>=5.29.1,<7`
-because the shipped stubs were generated by `grpcio-tools==1.66.2`
-(protobuf 5.27 generator family). Two options:
-
-- Upgrade your project's `protobuf` pin to `>=5.29.1,<7`. Recommended.
-- If you can't, pin to a future SDK release rebuilt against an older
-  generator — file an issue.
-
-### `RuntimeError: The grpc package installed is at version X, but the generated code ... depends on grpcio>=1.66.2`
-
-Your project resolved `grpcio` below `1.66.2` — usually an explicit pin or a
-lockfile that predates this SDK. The shipped `*_pb2_grpc.py` stubs enforce that
-floor themselves at import time, so this is not something the SDK can work
-around. Raise your `grpcio` pin to `>=1.66.2,<2`.
-
-### `grpcio` wheel missing on macOS arm64 + Python 3.13
-
-Occasionally `grpcio` lags on a new Python release. Fallback to Python
-3.12 locally; CI runs on `ubuntu-latest` where this is rarely an issue.
-
-### My CI suddenly broke on a tag bump
-
-The SDK is `0.x`; minor bumps may include breaking changes per SemVer's
-0.y semantics. Read `CHANGELOG.md` for the bumped version, then either
-update your call sites or pin back to the previous tag.
-
-## License
-
-MIT. See `LICENSE`.
-
-## Contact
-
-- Releases (wheels + sdists + changelog):
-  https://github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk/releases
-- Issues:
-  https://github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk/issues
-- Or contact the Tipsy AB-config team directly.
+For SDK development and publishing, see [RELEASING.md](./RELEASING.md).
+The repository is licensed under [MIT](../../LICENSE).

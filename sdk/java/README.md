@@ -1,239 +1,191 @@
 # Tipsy AB-config Java SDK
 
-Tipsy 配置中心 / A/B 实验平台对外公开 SDK 的 **Java** 实现，与 Go / Python SDK
-**全量对齐**。语言基线 **Java 21**，Maven groupId `io.github.lightspeed-intelligence`。
+Java 21 client for the Tipsy configuration and A/B experimentation platform.
+It maintains an in-process configuration cache, supports gRPC and HTTP, and
+asks the server—not the SDK—to perform experiment bucketing. The client never
+connects directly to platform storage.
 
-SDK 是纯 gRPC / HTTP 下游客户端：进程内维护配置缓存（启动 `PullAll` + 长连
-`Subscribe` 推送 + 周期兜底轮询），并通过 `AbtestService.GetExperimentResult`
-解析实验命中。所有流量用 JWT Bearer 鉴权。**SDK 从不直连数据库，也不在客户端做分桶**
-（哈希 / 分桶是服务端 `AbtestService` 的职责，SDK 只读结果）。
+## Modules
 
-## 模块结构
+`sdk/java` is a Maven reactor:
 
-`sdk/java` 是一个 Maven 多模块 reactor：
-
-| 模块 | artifact | 说明 |
+| Module | Artifact | Purpose |
 |---|---|---|
-| `tipsy-abconfig-proto` | `io.github.lightspeed-intelligence:tipsy-abconfig-proto` | 由 `protobuf-maven-plugin` 从 `api/proto` 生成的 protobuf message + gRPC stub（构建期生成，不入库）。 |
-| `tipsy-auth` | `io.github.lightspeed-intelligence:tipsy-auth` | HS256 JWT 签名小工具，完全独立（仅依赖 jjwt），不依赖主 SDK / proto / gRPC。 |
-| `tipsy-abconfig` | `io.github.lightspeed-intelligence:tipsy-abconfig` | 主 SDK：配置缓存、gRPC / HTTP 传输、abtest 解析、公共客户端句柄，含可选的 `io.github.lightspeedintelligence.abconfig.web` web 集成子包。 |
-| `example` | （不发布） | 基于 JDK 内置 `com.sun.net.httpserver` 的可运行示例。 |
+| `tipsy-abconfig-proto` | `io.github.lightspeed-intelligence:tipsy-abconfig-proto` | Protobuf messages and gRPC stubs generated from `api/proto` during the build. |
+| `tipsy-auth` | `io.github.lightspeed-intelligence:tipsy-auth` | Standalone HS256 service-token signer. |
+| `tipsy-abconfig` | `io.github.lightspeed-intelligence:tipsy-abconfig` | Cache, transports, experiment resolution and optional web helpers. |
+| `example` | not published | Runnable JDK HTTP-server example. |
 
-包根：主 SDK `io.github.lightspeedintelligence.abconfig`（web 子包 `io.github.lightspeedintelligence.abconfig.web`）、签名 `io.github.lightspeedintelligence.auth`。
+The main package is `io.github.lightspeedintelligence.abconfig`; web helpers
+are under `.web`, and signing helpers are under
+`io.github.lightspeedintelligence.auth`.
 
-## 安装
+## Install
 
-### Maven Central（推荐）
-
-正式版本发布在 **Maven Central**（通过 Sonatype Central Publisher Portal，与
-`page.liam:pine` 同一发布方式），下游无需任何凭据即可拉取：
+Releases are published to Maven Central. Select the latest stable
+`java-sdk/vX.Y.Z` entry from
+[GitHub Releases](https://github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk/releases)
+or [CHANGELOG.md](tipsy-abconfig/CHANGELOG.md), then pin that version:
 
 ```xml
 <dependency>
   <groupId>io.github.lightspeed-intelligence</groupId>
   <artifactId>tipsy-abconfig</artifactId>
-  <version>0.1.0</version>
-</dependency>
-<!-- 可选：需要本地签发服务 token 时 -->
-<dependency>
-  <groupId>io.github.lightspeed-intelligence</groupId>
-  <artifactId>tipsy-auth</artifactId>
-  <version>0.1.0</version>
+  <version>RELEASED_VERSION</version>
 </dependency>
 ```
 
-> `tipsy-abconfig` 已 compile-scope 依赖 `tipsy-auth` 与 `tipsy-abconfig-proto`，
-> 引入主 SDK 即可传递获得；显式声明 `tipsy-auth` 仅在你单独使用签名工具时需要。
+The main artifact already depends on `tipsy-auth` and
+`tipsy-abconfig-proto`. Declare `tipsy-auth` separately only when using the
+signer without the main SDK.
 
-最新版本号见
-[GitHub Releases](https://github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk/releases)
-（tag 前缀 `java-sdk/v`）或各模块 `CHANGELOG.md`。
-
-### 本地构建 / 安装到 `.m2`（开发期）
-
-发布前或本地联调时，可直接安装到本地仓库：
+For local development:
 
 ```bash
 cd sdk/java
 mvn -q -DskipTests install
 ```
 
-> **发布流程**：见 [`RELEASING.md`](./RELEASING.md)。打 `java-sdk/vX.Y.Z` tag 后由
-> `.github/workflows/java-sdk.yml` 的 release job 自动 `mvn deploy -Prelease`
-> 发布到 Maven Central（需 `CENTRAL_USERNAME`/`CENTRAL_TOKEN` + GPG key 的 repo secrets）。
+Publishing instructions are in [RELEASING.md](./RELEASING.md).
 
-## 快速开始
+## Quick start
 
 ```java
 import io.github.lightspeedintelligence.abconfig.AbtestContext;
 import io.github.lightspeedintelligence.abconfig.Config;
 import io.github.lightspeedintelligence.abconfig.TipsyAbConfigClient;
-import java.util.List;
 import java.util.Map;
 
-// create() 会跑启动 PullAll、起后台循环；try-with-resources 在退出时 close()。
 try (TipsyAbConfigClient client = TipsyAbConfigClient.create(Config.builder()
-        .namespaces(List.of("tipsy-chat"))
+        .namespaces("my-project")
         .configServiceAddr("grpcs://config.example.com:443")
         .abtestServiceAddr("grpcs://abtest.example.com:443")
         .token(System.getenv("TIPSY_TOKEN"))
+        .defaultNamespace("my-project")
         .build())) {
 
-    // 每个请求构造一个 AbtestContext（uid + 属性），并显式传给每次 getConfig。
-    AbtestContext abctx = client.newAbtestContext("user-123", Map.of("country", "JP"));
+    // Create once per logical request. Construction performs no RPC.
+    AbtestContext ctx = client.newAbtestContext(
+            "user-123", Map.of("country", "US"), "upstream-request-id");
 
-    // 动态解析：abtest 命中（白名单 > 实验）> 全量发布 > 默认值。
-    String threshold = client.getConfig(abctx, "tipsy-chat", "rerank.threshold", "0.5");
+    String value = client.getConfig(
+            ctx, "my-project", "feature.enabled", "false");
+    Map<String, String> all = client.getAllConfigs(ctx, "my-project");
 
-    // 一次拿该 ns 下全部动态 config（key → value）：逐 key 解析同 getConfig，
-    // 无 abtest 命中且无全量的 key 会被剔除。返回的是可变 HashMap。
-    Map<String, String> all = client.getAllConfigs(abctx, "tipsy-chat");
+    // Local full-release cache read; Optional.empty() means no value.
+    String staticValue = client.getConfigStatic(
+            "my-project", "feature.enabled").orElse("false");
 
-    // 纯缓存静态读：getConfigStatic 返回 Optional（空串是合法值）。
-    String staticVal = client.getConfigStatic("tipsy-chat", "rerank.threshold").orElse("0.5");
-
-    System.out.println(threshold + " / " + staticVal + " / " + all.size());
+    System.out.println(value + " / " + staticValue + " / " + all.size());
 }
 ```
 
-完整可运行示例参见 [`example/src/main/java/io/github/lightspeedintelligence/abconfig/example/Main.java`](example/src/main/java/io/github/lightspeedintelligence/abconfig/example/Main.java)：
-基于 JDK 内置 HTTP server，演示 `/static`（`getConfigStatic`）与 `/user`
-（web helper 构造上下文 + `getConfig`），以及用 `tipsy-auth` 本地签发 token。运行：
+The runnable example is
+[example/Main.java](example/src/main/java/io/github/lightspeedintelligence/abconfig/example/Main.java).
 
-```bash
-TIPSY_TOKEN=... CONFIG_ADDR=grpcs://config.example.com:443 \
-  ABTEST_ADDR=grpcs://abtest.example.com:443 NAMESPACES=tipsy-chat \
-  mvn -q -pl example exec:java
-```
+## Resolution API
 
-## 配置解析 API
-
-| 方法 | 说明 |
+| Method | Current behavior |
 |---|---|
-| `getConfigStatic(ns, key) → Optional<String>` | 纯全量缓存读，**不**做 ns 解析、不抛 ns 异常；空串是合法命中值，未命中返回 `Optional.empty()`。 |
-| `getConfig(abctx, ns, key, default)` | 按用户解析动态配置；优先级 abtest 命中 > 全量 > 默认；单 ns abtest 失败静默降级到全量。 |
-| `getConfigDefault(abctx, key, default)` | `getConfig` 的 ns-可省形式（ns 取项目默认）。 |
-| `getAllConfigs(abctx, ns) → Map<String,String>` | 一次解析该 ns 下**全部**动态 config，返回全新可变 `HashMap`（`key → value`）；逐 key 解析与 `getConfig` 一致（abtest 命中 > 全量），无 abtest 命中且无全量的 key 从 map 中**剔除**（get-all 无逐 key 默认值概念，空串是合法值）；不新增 RPC（复用同一 ns 的 memoized 结果，全量快路径时零 RPC）。无快照（已订阅但尚未拉到）返回空 map、零 RPC。 |
-| `getAllConfigsDefault(abctx) → Map<String,String>` | `getAllConfigs` 的 ns-可省形式（ns 取项目默认）。 |
-| `getExperimentResult(ExperimentResultRequest)` | 直通 `AbtestService.GetExperimentResult`，返回原始 proto 响应（读 `config_flat_kv` / `custom_flat_kv` / `groups` / `gray_hits`）。**破坏性变更**：`gray_hits` 已从平铺的 `{release_id, key, version_id}`（每个 `(release, key)` 一条）改为按 release 分组的 `{release_id, key_versions}`（每个命中 release 一条，`key_versions` 为 `config_key.key 名 → versionId` 的 map），对齐 `groups[].params_versions`；读某 key 用 `getKeyVersionsMap().get(keyName)`。所有 int64 版本值为 versionId（主键 id 全局唯一），非语义 version_no。 |
+| `getConfigStatic(ns, key)` | Local full-release cache read; returns `Optional<String>` and performs no experiment RPC. |
+| `getConfig(ctx, ns, key, default)` | Experiment or gray hit, then full release, then caller default. A compute failure falls back to full release. |
+| `getConfigDefault(ctx, key, default)` | Uses the configured default namespace. |
+| `getAllConfigs(ctx, ns)` | Resolves all keys against one cache snapshot and returns a new mutable map. Keys without values are omitted; an empty string is valid. |
+| `getAllConfigsDefault(ctx)` | `getAllConfigs` using the default namespace. |
+| typed getters | Boolean, long, double, string and JSON accessors over the same static/dynamic semantics. |
+| `getExperimentResult(request)` | Exposes the raw proto response for custom parameters and group inspection. |
 
-`AbtestContext` 工厂：`newAbtestContext(uid, attrs)` / `(…, traceId)` /
-`emptyAbtestContext()`（无用户身份的路径，永不发 RPC）。读访问器 `userId()` /
-`userInfo()` / `traceId()`。
+Create one `AbtestContext` for each logical request and reuse it. The first
+dynamic lookup fetches and memoizes at most one experiment result per namespace.
+`prefetchConfigVersionFlatKvForNamespace(ns)` starts that fetch early without
+blocking and is idempotent.
 
-**构造不发 RPC（纯创建）**：`newAbtestContext(...)` 只创建上下文，**不**做任何
-`GetExperimentResult` 预请求。每个 ns 在首次对该 ns 调 `getConfig` 时惰性拉取并
-memoize（首次 `getConfig` 因此承担 RPC 延迟），每个请求链路每 ns 至多一次 RPC。
-**正确用法是一次业务服务调用创建一个 `AbtestContext`,并在该次调用内对所有
-`getConfig` 复用同一个 ctx**(不要每次 `getConfig` 都新建)。
+An empty or `"0"` user id represents no real user and bypasses experiment
+lookup. `emptyAbtestContext()` is the explicit form for non-user paths.
 
-**可选显式预热**：若想在 `getConfig` 之前预热某 ns,调
-`abctx.prefetchConfigVersionFlatKvForNamespace(ns)`——非阻塞、幂等、at-most-once,
-随后对同一 ns 的 `getConfig` 直接复用预热结果;空/mock ctx 或未订阅 ns 走短路、不发
-RPC。Java 无网络中间件;若自建 thread-per-request 入口想在入口层预热,**应自行用
-URL 白名单 gate 后再调用 `prefetchConfigVersionFlatKvForNamespace`**,否则会对每个
-穿过入口的请求产生大量用不上的空实验请求。
+Namespace resolution is explicit namespace, then `Config.defaultNamespace`,
+then `PROJECT_DEFAULT_NAMESPACE`. A missing default raises
+`NamespaceRequiredException`; a namespace not included in `Config.namespaces`
+raises `NamespaceNotSubscribedException`.
 
-**`getConfig` 快路径（`has_dynamic_resolution`,0.3.0 起）**：当服务端**显式**标记某
-key 为纯全量（`has_dynamic_resolution == false`,即该 key 未挂任何灰度/实验）时,
-`getConfig` 跳过 abtest 等待(`resultFor` 及其可能的 `GetExperimentResult` RPC),
-直接返回全量值——兜底/默认语义不变,只省掉这次必然退回全量的浪费等待。仅在**显式
-false** 时跳等;字段缺省(旧服务端)或 `true` 一律走现有等待路径,不退化。
+When the service explicitly reports `has_dynamic_resolution=false`, the SDK
+skips an unnecessary experiment wait for the pure-full key. Missing fields
+follow the safe dynamic path, so an older server stays functionally correct but
+does not provide the optimization. Servers need `api/gen/go` v0.3.0 or newer
+to emit this field.
 
-> **版本耦合(必须服务端先升级,SDK 后升级)**:本版本(0.3.0)依赖服务端已发布带
-> `has_dynamic_resolution` 字段的版本(`api/gen/go` v0.3.0+)。**先升级服务端,再升级
-> 业务侧 SDK**。若误连旧服务端(字段缺省),SDK 安全回退到「总是等 abtest」的现有
-> 行为——功能正确,仅无快路径收益。不做版本协商,字段缺省即唯一兼容信号。
+`traceId` is an opaque correlation identifier. An empty value is replaced with
+a UUID v4; pass an existing request/trace id when one is available.
 
-**无用户 uid 静态直返（`""` / `"0"`）**：当 `AbtestContext` 的 uid 为空串
-（`null` 归一为 `""`）或字符串零 `"0"` 时，视为无真实用户身份——`getConfig` 与
-`getAllConfigs` 跳过 abtest 分桶/白名单逻辑，**不发** `GetExperimentResult` RPC，
-直接按全量解析（`getConfig` 无全量时返回默认值，`getAllConfigs` 剔除该 key）。短路
-落在共享的惰性拉取层，故 `prefetchConfigVersionFlatKvForNamespace` 同样不发 RPC；
-`emptyAbtestContext()` / `mockAbtestContext(...)` 语义不变（预置的 mock 结果仍生效）。
-此短路不计 fallback 指标（是主动跳过，非降级）。
+The raw response's `config_flat_kv`, `groups[].params_versions`, and
+`gray_hits[].key_versions` values are global `config_version` primary-key ids,
+not the per-key `version_no`.
 
-**命名空间解析**：显式 ns > 项目默认 ns（`Config.defaultNamespace` 覆盖环境变量
-`PROJECT_DEFAULT_NAMESPACE`）> `NamespaceRequiredException`；解析出的 ns 未订阅 →
-`NamespaceNotSubscribedException`。
+## Transports
 
-## 两种传输
+`Config.transport` selects `Transport.GRPC` or `Transport.HTTP`. A null value
+reads `TIPSY_SDK_TRANSPORT`, then defaults to gRPC.
 
-`Config.transport`（`Transport.GRPC` / `Transport.HTTP`）选择传输；为 `null` 时
-依次回退到环境变量 `TIPSY_SDK_TRANSPORT`、再到 gRPC 默认。
+- gRPC performs startup `PullAll`, maintains a streaming `Subscribe`, and keeps
+  periodic PullAll as a safety net.
+- HTTP posts protojson to `/api/v1/config/pull_all` and
+  `/api/v1/abtest/experiment_result`. It does not establish Subscribe; update
+  latency is bounded by `pullInterval`.
 
-- **gRPC（默认）**：`PullAll` / `Subscribe`（服务端流）/ `GetExperimentResult`；
-  keepalive 30s/5s/permit-without-stream；per-RPC Bearer 凭证；512MB 收发上限
-  （channel `maxInboundMessageSize` + per-stub `withMaxOutboundMessageSize`）。
-- **HTTP**：protojson over POST（`/api/v1/config/pull_all`、
-  `/api/v1/abtest/experiment_result`），**仅轮询、无 Subscribe**；配置变更传播
-  延迟受 `pullInterval` 约束。
+gRPC target forms:
 
-### 地址 scheme（方案 Y）
-
-`ConfigServiceAddr` / `AbtestServiceAddr` 在 gRPC 模式按方案 Y 解析：
-
-| 形式 | 行为 |
+| Target | Behavior |
 |---|---|
-| `host:port`、`grpc://host:port` | 明文 h2c |
-| `grpcs://host:port[?authority=&insecure=]` | TLS；可选自定义 authority；`insecure=true/1` 关闭证书校验（仅 Dev / 直连 IP，生产禁用，会 WARN） |
-| `dns:///service.ns.svc.cluster.local:port` | DNS name resolver，**自动开启客户端 `round_robin`**（K8s Headless Service 场景） |
-| `passthrough:///`、`unix:`、`xds:///` | 原生透传 |
-| `http(s)://…` | 在 gRPC 模式下报参数错误（请改用 HTTP 传输） |
+| `host:port`, `grpc://host:port` | Plaintext h2c. |
+| `grpcs://host:port` | TLS with certificate verification. |
+| `dns:///service.namespace.svc.cluster.local:50051` | Native DNS resolver and automatic `round_robin`, intended for a Headless Service. |
+| `passthrough:///`, `unix:`, `xds:///` | Native gRPC target passthrough. |
+| `http://`, `https://` | Rejected in gRPC mode; select HTTP transport. |
 
-HTTP 模式下地址按 `http(s)://` base URL 解释（非 `http(s)` 报参数错误）。
+`authority` and the development-only `insecure` query option are available on
+`grpcs://`. Do not disable certificate verification in production.
 
-### 常用 Config 旋钮与环境变量
+## Configuration
 
-| Config | 默认 | 说明 |
-|---|---|---|
-| `namespaces` | 必填 | 订阅的业务命名空间 |
-| `configServiceAddr` | 必填 | ConfigService 地址（gRPC target 或 HTTP base URL） |
-| `abtestServiceAddr` | 可空 | AbtestService 地址；空 → 降级（不发实验 RPC，全走全量） |
-| `token` / `tokenProvider` | 至少一项 | 静态 Bearer token / 动态 token 供应（provider 优先，逐 RPC 取） |
-| `pullInterval` / `pullTimeout` / `pullRetries` | 10s / 5s / 3 | 兜底轮询周期 / 单 ns 拉取超时 / 启动重试次数 |
-| `abtestTimeout` | 1500ms | 单次 `GetExperimentResult` 超时 |
-| `startupFailOpen` | false | 启动 PullAll 失败是否吞掉（空缓存继续）而非抛 `StartupPullFailedException` |
-| `maxRecvMessageSize` / `maxSendMessageSize` | 512MB / 512MB | gRPC 收 / 发上限 |
-| `defaultNamespace` | "" → env | 项目默认 ns；空则取 `PROJECT_DEFAULT_NAMESPACE` |
-| `transport` | null → env → grpc | 传输选择；空则取 `TIPSY_SDK_TRANSPORT` |
-| `channelConfigurator` | null | `UnaryOperator<ManagedChannelBuilder<?>>` 注入缝（替代 Go 的 `DialOptions`） |
-| `httpClient` | null | 注入 HTTP 模式的 `java.net.http.HttpClient`（不传则 SDK 自建并负责关闭） |
-| `onBackgroundError` | null | 后台错误回调，phase 为 `startup_pull` / `periodic_pull` / `subscribe`，同步、recover 包裹 |
+| Setting | Default | Meaning |
+|---|---:|---|
+| `namespaces` | required | Namespaces held in the local cache. |
+| `configServiceAddr` | required | gRPC target or HTTP base URL. |
+| `abtestServiceAddr` | empty | Empty disables experiment RPCs and uses full-release values. |
+| `token` / `tokenProvider` | required | Static or dynamic Bearer credentials; provider takes precedence. |
+| `pullInterval` | 10s | Fallback polling interval and HTTP update interval. |
+| `pullTimeout` / `pullRetries` | 5s / 3 | Pull deadline and startup retries. |
+| `abtestTimeout` | 1500ms | Per-compute deadline. |
+| `startupFailOpen` | false | Continue with an empty cache if startup PullAll fails. |
+| `defaultNamespace` | env | Empty reads `PROJECT_DEFAULT_NAMESPACE`. |
+| `transport` | env or gRPC | Empty reads `TIPSY_SDK_TRANSPORT`. |
+| `maxRecvMessageSize` / `maxSendMessageSize` | 512 MB | gRPC message limits. |
+| `channelConfigurator` | null | Customizes the gRPC channel builder. |
+| `httpClient` | null | Injected caller-owned JDK `HttpClient`. |
+| `onBackgroundError` | null | Callback for startup pull, periodic pull and Subscribe errors. |
 
-可观测：`client.health()`（`Health` 快照）、`client.metrics()`（`Metrics` 计数器）。
+Use `client.health()` for a current health snapshot and `client.metrics()` for
+SDK counters. Keep service tokens outside code and documentation.
 
-## Web 集成（框架无关）
+## Web integration
 
-基于消费方调研（pine-java：非 Spring、无 servlet、无 gRPC server，运行于 JDK 内置
-`com.sun.net.httpserver`，`user_id` 在 JSON body，单请求跨虚拟线程 fan-out），
-Java SDK 的 web 集成是**框架无关的显式上下文对象**：
+The public API favors explicit `AbtestContext` parameters. This remains correct
+when one request fans out across virtual threads.
 
-1. **首选、唯一保证正确**：每个请求构造一个 `AbtestContext`（从你自己的请求体 / header
-   取 `uid` 与属性），并**显式作为参数**传给每次 `getConfig`。这是跨虚拟线程 fan-out
-   安全的唯一方式。
+The optional `.web` package provides:
 
-2. **可选便捷件**（`io.github.lightspeedintelligence.abconfig.web` 子包，纯 JDK、零额外依赖）：
-   - `AbtestContextHolder`：`ThreadLocal` 持有器（`set` / `get` / `clear` /
-     `runWith`）。**警示：不会跨 `newVirtualThreadPerTaskExecutor()` 等 fan-out 传播**，
-     仅适用 thread-per-request 边缘；fan-out 场景必须显式传参。
-   - `HttpServerSupport`：针对 JDK 内置 `com.sun.net.httpserver` 的薄 helper —
-     `extractTraceId(HttpExchange)`（`X-Trace-Id` → `X-Request-Id` → 新 UUID）、
-     `AbtestUserProvider` 函数式接口（返回 `UserInfo`，用 `UserInfo.of(uid, attrs)`
-     构造）、`wrap(client, provider, next)` 适配器（在边缘构造上下文并经
-     `AbtestContextHolder` 暴露给 `next`，异常 / 空 provider 降级为空上下文 + WARN）。
-     `com.sun.*` 为 JDK 自带内部 API（pine 同源），不引入任何外部 web 依赖；同样带
-     fan-out 警示。
+- `AbtestContextHolder`, a `ThreadLocal` convenience for a strict
+  thread-per-request boundary. It does not propagate across executor fan-out.
+- `HttpServerSupport`, helpers for JDK `com.sun.net.httpserver`, including trace
+  extraction and a wrapper that creates and clears the request context.
 
-> 推荐 fan-out-safe 写法：在 handler 顶部 `AbtestContextHolder.get()` 读出一次
-> `AbtestContext`，随后**显式**传给所有下游调用，不再依赖 ThreadLocal。
+Read a holder value once at the boundary and explicitly pass it to fan-out
+work. The SDK does not provide Servlet filters, Spring auto-configuration, or a
+gRPC server interceptor.
 
-**不提供**：servlet `Filter`、Spring 自动配置、gRPC `ServerInterceptor`。
+## Service-token signer
 
-## 鉴权工具 `tipsy-auth`
-
-HS256 JWT 签名，claims `{roles, namespaces, sub, iat, exp}`，与服务端验签契约一致
-（仅签名，不实现验证）：
+`tipsy-auth` issues HS256 JWTs compatible with the service verifier:
 
 ```java
 import io.github.lightspeedintelligence.auth.IssueOptions;
@@ -245,46 +197,42 @@ JwtSigner signer = JwtSigner.create(System.getenv("TIPSY_SERVICE_SECRET"));
 String token = signer.issue(IssueOptions.builder()
         .subject("my-service")
         .roles(List.of("business_sdk"))
-        .namespaces(List.of("*"))
+        .namespaces(List.of("my-project"))
         .ttl(Duration.ofHours(2))
         .build());
 ```
 
-`iat` / `exp` 为 unix 秒，无 `nbf` / `iss` / `aud`；`roles` / `namespaces` 即使为空
-也输出 JSON 空数组 `[]`。接受任意长度 HMAC 密钥（与 Go / golang-jwt 一致）。
+The signer only creates tokens; it does not verify them. The deployment owner
+defines the accepted secret, claims, namespace scope and lifetime.
 
-## 与 Go / Python SDK 的有意对外差异
+## Intentional Java API mappings
 
-均为语言映射 / 取舍，核心能力等价保留（详见设计 01 差异表）：
+- Java passes `AbtestContext` explicitly; Go can also carry it in
+  `context.Context`, while Python can use a `ContextVar`.
+- `getConfigStatic` uses `Optional<String>` so a missing value is distinct from
+  a valid empty string.
+- Java does not expose Go's low-level `waitForAbtest` entry point.
+- `create(Config)` has no whole-startup context deadline; individual pulls use
+  `pullTimeout` and `pullRetries`.
+- Logging uses SLF4J, and channel customization uses
+  `UnaryOperator<ManagedChannelBuilder<?>>`.
 
-1. **上下文携带**：Go 用 `context.Context` 隐式携带（`WithAbtestContext` /
-   `AbtestContextFromContext`）。Java **不提供**等价 API，改为**显式传参 `AbtestContext`**
-   （首选）+ 可选 `AbtestContextHolder`（带 fan-out 警示）。理由：消费方单请求跨虚拟线程
-   fan-out，隐式携带不安全。
-2. **`getConfigStatic` 签名**：Go `(ns,key,default)→(string,bool)` → Java
-   `(ns,key)→Optional<String>`（有意 Optional 化，杜绝空串误判；用 `.orElse(default)`）。
-3. **`waitForAbtest`**：Go 导出该低层入口；Java **不在公共 API 暴露**（其触发 lazy
-   记忆化的价值已被 `getConfig` 覆盖）。
-4. **整体 startup deadline**：Go `Init(ctx, cfg)` 经 ctx 提供整体墙钟上界；Java
-   `create(Config)` 不引入 ctx，单 ns 单次仍受 `pullTimeout` / `pullRetries` 约束。
-5. **Logger**：Go `Config.Logger (*slog.Logger)` → Java 用 SLF4J 门面，不进 `Config`
-   （宿主自选后端）。
-6. **`DialOptions`**：Go `[]grpc.DialOption` → Java
-   `channelConfigurator(UnaryOperator<ManagedChannelBuilder<?>>)` 注入缝。
-7. **web 集成**：**不提供** servlet filter / Spring 自动配置 / gRPC ServerInterceptor。
+These are language mappings; gRPC/HTTP, Subscribe behavior, resolution
+precedence and the pure-full fast path remain aligned. Token-provider timing is
+an implementation difference: Java's `TokenSource` invokes the provider for
+each HTTP request and gRPC RPC, matching Go, while the current Python client
+only acquires its provider token during initialization and advises client
+recreation before expiry; see the pending-verification note in the
+[Python README](../python/README.md#configuration).
 
-## 开发
+## Development
 
 ```bash
 cd sdk/java
-mvn -q -DskipTests package   # proto 生成 + 编译 + 打包
-mvn -q test                  # 全部单元 / 集成测试
-mvn -q -DskipTests install   # 安装到本地 .m2
+mvn -q -DskipTests package
+mvn -q test
+mvn -q -DskipTests install
 ```
 
-> proto 由 `protobuf-maven-plugin` 在构建期从 `api/proto` 生成（自动下载 protoc 与
-> grpc-java 插件二进制），生成代码不入库。
-
-## 许可证
-
-[MIT](../../LICENSE)
+Java protobuf sources are generated from `api/proto` during the Maven build and
+are not checked in. The repository is licensed under [MIT](../../LICENSE).

@@ -1,179 +1,133 @@
-# DEV 临时接入信息（HTTP + gRPC）
+# DEV 环境联调模板
 
-本文记录当前 DEV 环境的临时 HTTP 与 gRPC 接入信息，供本地开发和联调使用。
+本文提供不含固定 endpoint 和凭证的 HTTP/gRPC 联调步骤。开始前从目标环境部署方取得：
 
-> Go SDK 现为独立 Go module（`go 1.25.0`），与主仓 `go 1.25.7` 解耦。Module 路径、`go get` / tag 规则详见 [usage-and-integration.md](usage-and-integration.md#41-go-sdk-接入)。
+- HTTP base URL（若环境开放 HTTP public-read）；
+- gRPC endpoint（若环境开放 gRPC）；
+- 有效的 HS256 service token，且其 `namespaces` claim 包含测试 namespace；
+- TLS、私有 CA、SNI/authority、代理和 gRPC reflection 等环境特有要求。
 
-> 最近一次验证：2026-06-16，HTTP 与 gRPCs 均已打通，下方命令使用当前 DEV 临时 token 实测通过。
+仓库不保存远端 token，也不声明某个 DEV 地址当前在线。不要把导出的 token、命令历史或
+验证响应提交到 Git。
 
-## HTTP Base URL
+## 1. 环境变量
 
-```text
-https://dev-ab-config.infra.fantacy.live
+```bash
+export AB_CONFIG_HTTP_BASE='https://<http-host>'
+export AB_CONFIG_GRPC_ADDR='<grpc-host>:443'
+export AB_CONFIG_GRPC_TARGET='grpcs://<grpc-host>:443'
+export AB_CONFIG_TOKEN='<service-jwt-from-deployer>'
+export AB_CONFIG_NAMESPACE='<authorized-namespace>'
 ```
 
-走 CloudFlare，证书可正常校验（无需 `-k`）。已验证：
+若 gRPC endpoint 是内网明文地址，target 可写 `host:port` 或 `grpc://host:port`；若部署方
+提供 Headless Service，通常写
+`dns:///<service>.<namespace>.svc.cluster.local:<port>`。TLS endpoint 使用 `grpcs://`。
 
-- `GET /healthz` 返回 `200 {"status":"ok"}`。
-- `POST /api/v1/config/static` 返回 `200`。
-- `POST /api/v1/config/dynamic` 返回 `200`。
-- `POST /api/v1/abtest/experiment_result` 返回 `200`。
+## 2. HTTP 验证
 
-## gRPC 接入
+健康检查通常不需要 service token，但是否暴露由部署方决定：
 
-当前 DEV 已为 gRPC 配置独立 DNS 记录，走 Cloudflare 橙云普通代理，不再命中
-`*.infra.fantacy.live` 的 Cloudflare Tunnel wildcard。SDK 和 grpcurl 应直接使用
-gRPC 专用域名：
-
-```text
-dev-ab-config-grpc.infra.fantacy.live:443
+```bash
+curl --fail-with-body --show-error \
+  "$AB_CONFIG_HTTP_BASE/healthz"
 ```
 
-注意事项：
+SDK HTTP transport 实际依赖以下两个 protojson 路径，可用它们做最小联调：
 
-- 该地址是 gRPC target，不带 `https://` 前缀。
-- 当前链路为 `client -> Cloudflare Proxied -> origin 443 -> Traefik -> app:50051`。
-- Cloudflare zone 必须保持 `Network -> gRPC = On`。
-- Traefik gRPC upstream 必须保持 `server.scheme=h2c`，且 gRPC router 不要挂 gzip middleware。
-- gRPC 反射已开启，可直接 `list` / `describe`。
-- 鉴权 header 为 `authorization: Bearer <token>`，与 HTTP 同一个 token。
-
-已验证：
-
-- 反射 `list` 返回全部 service（ConfigService / AbtestService / AuditService 等）。
-- `ConfigService/GetStaticConfig` 返回 `{}`。
-- `AbtestService/GetExperimentResult` 正常返回 `computedAt`。
-
-### SDK 怎么填这条 gRPC（方案 Y 地址语法）
-
-当前 DEV 推荐使用标准 TLS 域名地址：
-
-```text
-grpcs://dev-ab-config-grpc.infra.fantacy.live:443
-```
-
-- **Go SDK**：填入 `Config.ConfigServiceAddr` / `AbtestServiceAddr`。
-- **Python SDK**：填入 `config_service_addr` / `abtest_service_addr`。
-
-如果 SDK 兼容裸 gRPC target，也可以使用：
-
-```text
-dev-ab-config-grpc.infra.fantacy.live:443
-```
-
-不要再使用早期临时方案：
-
-```text
-grpcs://47.253.175.59:443?authority=dev-ab-config-grpc.infra.fantacy.live&insecure=true
-```
-
-该 IP 直连方案只用于 Cloudflare Tunnel 排查期间；当前独立橙云 DNS 已验证可用。
-
-## 临时 Service Token
-
-```text
-eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlcyI6WyJidXNpbmVzc19zZGsiXSwibmFtZXNwYWNlcyI6WyIqIl0sInN1YiI6InlvdXItc2VydmljZS1uYW1lIiwiZXhwIjoxNzgxOTg5MjE3LCJpYXQiOjE3ODEyNTQ4MTd9.P0QEZGRh2msXsEnShXGH3nbNbC-R-fpDP7XkJUkL4fM
-```
-
-说明：
-
-- 这是 DEV 环境临时 token。
-- `roles=["business_sdk"]`，`namespaces=["*"]`，可访问所有 namespace。
-- `sub="your-service-name"`，当前只作为服务标识，不参与 namespace 权限校验。
-- `exp=1781989217`，即 **2026-06-21 05:00 CST 过期**（`iat=1781254817`）。
-- HTTP 与 gRPC 共用这一个 token。
-
-## 验证命令
-
-```sh
-export AB_CONFIG_HTTP_BASE='https://dev-ab-config.infra.fantacy.live'
-export AB_CONFIG_GRPC_ADDR='dev-ab-config-grpc.infra.fantacy.live:443'
-export AB_CONFIG_TOKEN='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlcyI6WyJidXNpbmVzc19zZGsiXSwibmFtZXNwYWNlcyI6WyIqIl0sInN1YiI6InlvdXItc2VydmljZS1uYW1lIiwiZXhwIjoxNzgxOTg5MjE3LCJpYXQiOjE3ODEyNTQ4MTd9.P0QEZGRh2msXsEnShXGH3nbNbC-R-fpDP7XkJUkL4fM'
-```
-
-Health check:
-
-```sh
-curl -sS -i "$AB_CONFIG_HTTP_BASE/healthz"
-```
-
-Static config:
-
-```sh
-curl -sS -i \
+```bash
+curl --fail-with-body --show-error \
   -H "Authorization: Bearer $AB_CONFIG_TOKEN" \
   -H 'Content-Type: application/json' \
-  "$AB_CONFIG_HTTP_BASE/api/v1/config/static" \
-  -d '{"namespace":"tipsy-chat","keys":[]}'
-```
+  "$AB_CONFIG_HTTP_BASE/api/v1/config/pull_all" \
+  -d "{\"namespaces\":[\"$AB_CONFIG_NAMESPACE\"],\"traceId\":\"dev-pull-all\"}"
 
-Dynamic config:
-
-```sh
-curl -sS -i \
-  -H "Authorization: Bearer $AB_CONFIG_TOKEN" \
-  -H 'Content-Type: application/json' \
-  "$AB_CONFIG_HTTP_BASE/api/v1/config/dynamic" \
-  -d '{"namespace":"tipsy-chat","userId":"test-user","keys":[]}'
-```
-
-Experiment result:
-
-```sh
-curl -sS -i \
+curl --fail-with-body --show-error \
   -H "Authorization: Bearer $AB_CONFIG_TOKEN" \
   -H 'Content-Type: application/json' \
   "$AB_CONFIG_HTTP_BASE/api/v1/abtest/experiment_result" \
-  -d '{"namespace":"tipsy-chat","userId":"test-user","experimentType":"EXPERIMENT_TYPE_CONFIG_VERSION","displayType":"RESULT_DISPLAY_TYPE_FLAT_KV"}'
+  -d "{\"namespace\":\"$AB_CONFIG_NAMESPACE\",\"userId\":\"dev-user\",\"experimentType\":\"EXPERIMENT_TYPE_CONFIG_VERSION\",\"displayType\":\"RESULT_DISPLAY_TYPE_FLAT_KV\",\"traceId\":\"dev-experiment-result\"}"
 ```
 
-### gRPC 验证命令
+服务端还可能开放 `/api/v1/config/static` 与 `/api/v1/config/dynamic` 供无本地缓存客户端
+使用；它们不是 SDK HTTP transport 的 PullAll 实现。具体开放范围以目标部署为准。
 
-需要 `grpcurl`（`go install github.com/fullstorydev/grpcurl/cmd/grpcurl@latest`，
-国内可加 `GOPROXY=https://goproxy.cn,direct`）。下列命令直接使用 gRPC 专用域名。
+## 3. gRPC 验证
 
-公共参数：
+以下命令需要 `grpcurl`，并假定 endpoint 使用系统信任的 TLS 证书且开启 reflection：
 
-```sh
-GRPC_FLAGS=(-H "authorization: Bearer $AB_CONFIG_TOKEN")
-```
+```bash
+grpcurl \
+  -H "authorization: Bearer $AB_CONFIG_TOKEN" \
+  "$AB_CONFIG_GRPC_ADDR" list
 
-List services（反射）:
-
-```sh
-grpcurl "${GRPC_FLAGS[@]}" "$AB_CONFIG_GRPC_ADDR" list
-```
-
-ListNamespacesByKind:
-
-```sh
-grpcurl "${GRPC_FLAGS[@]}" \
-  -d '{"kind":"NAMESPACE_KIND_BUSINESS"}' \
-  "$AB_CONFIG_GRPC_ADDR" tipsy.config.v1.ConfigService/ListNamespacesByKind
-```
-
-GetStaticConfig / GetDynamicConfig / PullAll:
-
-```sh
-grpcurl "${GRPC_FLAGS[@]}" \
-  -d '{"namespace":"tipsy-chat","keys":[],"trace_id":"demo-trace-id"}' \
-  "$AB_CONFIG_GRPC_ADDR" tipsy.config.v1.ConfigService/GetStaticConfig
-
-grpcurl "${GRPC_FLAGS[@]}" \
-  -d '{"namespace":"tipsy-chat","userId":"test-user","keys":[],"trace_id":"demo-trace-id"}' \
-  "$AB_CONFIG_GRPC_ADDR" tipsy.config.v1.ConfigService/GetDynamicConfig
-
-grpcurl "${GRPC_FLAGS[@]}" \
-  -d '{"namespaces":["tipsy-chat"],"trace_id":"demo-trace-id"}' \
+grpcurl \
+  -H "authorization: Bearer $AB_CONFIG_TOKEN" \
+  -d "{\"namespaces\":[\"$AB_CONFIG_NAMESPACE\"],\"traceId\":\"dev-pull-all\"}" \
   "$AB_CONFIG_GRPC_ADDR" tipsy.config.v1.ConfigService/PullAll
-```
 
-GetExperimentResult:
-
-```sh
-grpcurl "${GRPC_FLAGS[@]}" \
-  -d '{"namespace":"tipsy-chat","userId":"test-user","experimentType":"EXPERIMENT_TYPE_CONFIG_VERSION","displayType":"RESULT_DISPLAY_TYPE_FLAT_KV","trace_id":"demo-trace-id"}' \
+grpcurl \
+  -H "authorization: Bearer $AB_CONFIG_TOKEN" \
+  -d "{\"namespace\":\"$AB_CONFIG_NAMESPACE\",\"userId\":\"dev-user\",\"experimentType\":\"EXPERIMENT_TYPE_CONFIG_VERSION\",\"displayType\":\"RESULT_DISPLAY_TYPE_FLAT_KV\",\"traceId\":\"dev-experiment-result\"}" \
   "$AB_CONFIG_GRPC_ADDR" tipsy.abtest.v1.AbtestService/GetExperimentResult
 ```
 
-> `trace_id` 字段为可选：留空或省略时由服务端自动填充 UUID v4；外部传入任意非空字符串原样保留（不做格式校验、不重写）；最大 128 字符，超出会被服务端截断并打 WARN。
+reflection 未开放时，使用本仓 [`api/proto`](../api/proto) 的 proto 文件或部署方提供的
+descriptor。私有 CA、明文 h2c 或 authority override 应按部署方要求设置 grpcurl 参数；不要
+用跳过 TLS 校验作为长期配置。
+
+## 4. SDK 配置
+
+三语言均把同一 endpoint 分别传给 ConfigService 和 AbtestService（部署拆分两者时使用各自
+地址），并把 token 作为静态值或动态 provider 注入。
+
+Go：
+
+```go
+client, err := tipsyabconfig.Init(ctx, tipsyabconfig.Config{
+	Namespaces:        []string{os.Getenv("AB_CONFIG_NAMESPACE")},
+	ConfigServiceAddr: os.Getenv("AB_CONFIG_GRPC_TARGET"),
+	AbtestServiceAddr: os.Getenv("AB_CONFIG_GRPC_TARGET"),
+	Token:             os.Getenv("AB_CONFIG_TOKEN"),
+})
+```
+
+Python：
+
+```python
+client = await init(Config(
+    namespaces=[os.environ["AB_CONFIG_NAMESPACE"]],
+    config_service_addr=os.environ["AB_CONFIG_GRPC_TARGET"],
+    abtest_service_addr=os.environ["AB_CONFIG_GRPC_TARGET"],
+    token=os.environ["AB_CONFIG_TOKEN"],
+))
+```
+
+Java：
+
+```java
+TipsyAbConfigClient client = TipsyAbConfigClient.create(Config.builder()
+        .namespaces(System.getenv("AB_CONFIG_NAMESPACE"))
+        .configServiceAddr(System.getenv("AB_CONFIG_GRPC_TARGET"))
+        .abtestServiceAddr(System.getenv("AB_CONFIG_GRPC_TARGET"))
+        .token(System.getenv("AB_CONFIG_TOKEN"))
+        .build());
+```
+
+HTTP transport 时将两个 service address 改为 `AB_CONFIG_HTTP_BASE`，并显式选择 HTTP；
+Python 还需安装 `http` extra。地址语法、Subscribe 差异和 TokenProvider 见
+[集成手册](usage-and-integration.md)。
+
+## 5. 失败定位
+
+| 现象 | 核对 |
+|---|---|
+| 401/Unauthenticated | token 是否过期、是否误用 Console token、Authorization header 是否为 Bearer |
+| PermissionDenied/403 | token 的 namespaces 是否包含测试 namespace |
+| TLS/证书错误 | endpoint、系统/私有 CA、SNI/authority 是否与部署方配置一致 |
+| gRPC `list` 失败 | reflection 是否开放；不要据此直接判断业务 RPC 不可用 |
+| PullAll 返回空快照或缺 key | namespace 拼写、发布状态和 token 授权；再向平台方确认环境数据 |
+| HTTP 可用但 SDK 不推送 | HTTP transport 本来不 Subscribe，等待 PullInterval 或改用 gRPC |
+
+联调结束后从 shell 和 secret store 的临时作用域清除 token。若 token 曾出现在日志、聊天或
+Git 变更中，应按平台流程立即轮换，而不是仅删除文本。
