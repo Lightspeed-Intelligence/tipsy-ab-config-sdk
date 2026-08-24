@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.2] - 2026-08-24
+
 ### Changed
 - `get_config` / `get_config_default` / `get_config_static` 命中日志从 `DEBUG` 提升到 `INFO`
   （字段 `ns`/`key`/`version`，动态路径另带 `uid`）。目的：在默认 `INFO` 级别下即可

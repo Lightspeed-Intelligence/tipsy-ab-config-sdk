@@ -35,7 +35,7 @@ from .exceptions import (
 from .abtest_context import AbtestContext, UserInfo, abtest_ctx_var
 from .client import Client, init, Config
 
-__version__ = "0.14.1"
+__version__ = "0.14.2"
 
 __all__ = [
     "AbtestContext",
