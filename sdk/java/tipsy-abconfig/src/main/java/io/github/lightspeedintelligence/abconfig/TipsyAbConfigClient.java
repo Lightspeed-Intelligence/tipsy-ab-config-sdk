@@ -398,7 +398,12 @@ public final class TipsyAbConfigClient implements AutoCloseable {
         if (frv.isEmpty()) {
             return Optional.empty();
         }
-        return cache.valueOf(ns, key, frv.getAsLong());
+        long version = frv.getAsLong();
+        Optional<String> value = cache.valueOf(ns, key, version);
+        value.ifPresent(v -> LOG.info("tipsyabconfig: get_config_static hit "
+                + "(ns={}, key={}, version={}, source=full_static)",
+                ns, key, version));
+        return value;
     }
 
     // ------------------------------------------------------------------
@@ -546,12 +551,12 @@ public final class TipsyAbConfigClient implements AutoCloseable {
         KeyResolution r = resolveKeyFromSnapshot(snap, resolvedNs, key, abresult, abctx.traceId());
         switch (r.source) {
             case ABTEST:
-                LOG.debug("tipsyabconfig: get_config hit (abtest) "
+                LOG.info("tipsyabconfig: get_config hit (abtest) "
                         + "(ns={}, key={}, version={}, uid={}, trace_id={})",
                         resolvedNs, key, r.version, abctx.userId(), abctx.traceId());
                 return r.value;
             case FULL:
-                LOG.debug("tipsyabconfig: get_config hit (full) "
+                LOG.info("tipsyabconfig: get_config hit (full) "
                         + "(ns={}, key={}, version={}, uid={}, trace_id={})",
                         resolvedNs, key, r.version, abctx.userId(), abctx.traceId());
                 return r.value;

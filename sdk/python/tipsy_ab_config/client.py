@@ -426,7 +426,7 @@ class Client:
                 extra={"ns": namespace, "key": key, "version": v},
             )
             return default
-        logger.debug(
+        logger.info(
             "get_config_static hit",
             extra={
                 "ns": namespace,
@@ -540,7 +540,7 @@ class Client:
         if ab_version is not None and ab_version != 0:
             value = ks.versions.get(ab_version) if ks is not None else None
             if value is not None:
-                logger.debug(
+                logger.info(
                     "get_config hit (abtest)",
                     extra={
                         "ns": resolved_ns,
@@ -561,7 +561,7 @@ class Client:
         if ks is not None and ks.full_release_version is not None:
             value = ks.versions.get(ks.full_release_version)
             if value is not None:
-                logger.debug(
+                logger.info(
                     "get_config hit (full)",
                     extra={
                         "ns": resolved_ns,

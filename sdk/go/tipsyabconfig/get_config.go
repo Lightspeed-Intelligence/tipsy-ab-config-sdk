@@ -21,7 +21,7 @@ func (c *Client) GetConfigStatic(ns, key, defaultValue string) (string, bool) {
 	if !ok {
 		return defaultValue, false
 	}
-	c.logger.Debug("tipsyabconfig: get_config_static hit",
+	c.logger.Info("tipsyabconfig: get_config_static hit",
 		"ns", ns, "key", key, "version", versionID, "source", "full_static")
 	return val, true
 }
@@ -103,7 +103,7 @@ func (c *Client) getConfigResolved(ctx context.Context, abctx *AbtestContext, ns
 	if res.source == keySourceAbtest {
 		msg = "tipsyabconfig: get_config hit (abtest)"
 	}
-	c.logger.Debug(msg,
+	c.logger.Info(msg,
 		"ns", resolvedNs, "key", key, "version", res.version, "uid", abctx.userID, "trace_id", abctx.traceID)
 	return res.value, nil
 }
