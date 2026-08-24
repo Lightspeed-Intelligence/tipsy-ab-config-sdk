@@ -20,6 +20,8 @@ bump first, then an SDK tag bump.
 
 ## [Unreleased]
 
+## [0.13.2] - 2026-08-24
+
 ### Changed
 - `GetConfig` / `GetConfigDefault` / `GetConfigStatic` 命中日志从 `Debug` 提升到 `Info`
   （字段 `ns`/`key`/`version`，动态路径另带 `uid`/`trace_id`）。目的：在默认 `Info`

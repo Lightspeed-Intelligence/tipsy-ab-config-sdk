@@ -7,7 +7,7 @@
   <parent>
     <groupId>io.github.lightspeed-intelligence</groupId>
     <artifactId>tipsy-ab-config-parent</artifactId>
-    <version>0.10.0</version>
+    <version>0.10.1</version>
   </parent>
 
   <artifactId>tipsy-abconfig-example</artifactId>
