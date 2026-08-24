@@ -21,10 +21,10 @@ bump first, then an SDK tag bump.
 ## [Unreleased]
 
 ### Changed
-- `GetConfig` / `GetConfigDefault` / `GetConfigStatic` 命中日志从 `Debug` 提升到 `Info`，
-  并新增 `value` 字段（原本只有 `ns`/`key`/`version`）。目的：在默认 `Info` 级别下即可
-  从调用方日志观测业务实际请求的 config key、命中版本与取值，无需临时开 Debug。
-  注意：config value 会进入日志，敏感值请勿存入受此路径读取的 key。
+- `GetConfig` / `GetConfigDefault` / `GetConfigStatic` 命中日志从 `Debug` 提升到 `Info`
+  （字段 `ns`/`key`/`version`，动态路径另带 `uid`/`trace_id`）。目的：在默认 `Info`
+  级别下即可从调用方日志观测业务实际请求的 config key 与命中版本，无需临时开 Debug。
+  出于泄漏风险，命中日志**不记录 config value**。
 
 ## [0.13.1] - 2026-07-28
 

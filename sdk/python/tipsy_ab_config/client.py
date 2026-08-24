@@ -432,7 +432,6 @@ class Client:
                 "ns": namespace,
                 "key": key,
                 "version": v,
-                "value": value,
                 "source": "full_static",
             },
         )
@@ -547,7 +546,6 @@ class Client:
                         "ns": resolved_ns,
                         "key": key,
                         "version": ab_version,
-                        "value": value,
                         "uid": uid,
                     },
                 )
@@ -569,7 +567,6 @@ class Client:
                         "ns": resolved_ns,
                         "key": key,
                         "version": ks.full_release_version,
-                        "value": value,
                         "uid": uid,
                     },
                 )

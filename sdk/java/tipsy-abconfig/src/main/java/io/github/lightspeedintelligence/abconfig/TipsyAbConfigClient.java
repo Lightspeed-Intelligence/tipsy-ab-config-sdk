@@ -401,8 +401,8 @@ public final class TipsyAbConfigClient implements AutoCloseable {
         long version = frv.getAsLong();
         Optional<String> value = cache.valueOf(ns, key, version);
         value.ifPresent(v -> LOG.info("tipsyabconfig: get_config_static hit "
-                + "(ns={}, key={}, version={}, value={}, source=full_static)",
-                ns, key, version, v));
+                + "(ns={}, key={}, version={}, source=full_static)",
+                ns, key, version));
         return value;
     }
 
@@ -552,13 +552,13 @@ public final class TipsyAbConfigClient implements AutoCloseable {
         switch (r.source) {
             case ABTEST:
                 LOG.info("tipsyabconfig: get_config hit (abtest) "
-                        + "(ns={}, key={}, version={}, value={}, uid={}, trace_id={})",
-                        resolvedNs, key, r.version, r.value, abctx.userId(), abctx.traceId());
+                        + "(ns={}, key={}, version={}, uid={}, trace_id={})",
+                        resolvedNs, key, r.version, abctx.userId(), abctx.traceId());
                 return r.value;
             case FULL:
                 LOG.info("tipsyabconfig: get_config hit (full) "
-                        + "(ns={}, key={}, version={}, value={}, uid={}, trace_id={})",
-                        resolvedNs, key, r.version, r.value, abctx.userId(), abctx.traceId());
+                        + "(ns={}, key={}, version={}, uid={}, trace_id={})",
+                        resolvedNs, key, r.version, abctx.userId(), abctx.traceId());
                 return r.value;
             default:
                 return defaultValue;

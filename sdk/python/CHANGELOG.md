@@ -9,10 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
-- `get_config` / `get_config_default` / `get_config_static` 命中日志从 `DEBUG` 提升到 `INFO`，
-  并新增 `value` 字段（原本只有 `ns`/`key`/`version`）。目的：在默认 `INFO` 级别下即可
-  从调用方日志观测业务实际请求的 config key、命中版本与取值，无需临时开 DEBUG。
-  注意：config value 会进入日志，敏感值请勿存入经此路径读取的 key。
+- `get_config` / `get_config_default` / `get_config_static` 命中日志从 `DEBUG` 提升到 `INFO`
+  （字段 `ns`/`key`/`version`，动态路径另带 `uid`）。目的：在默认 `INFO` 级别下即可
+  从调用方日志观测业务实际请求的 config key 与命中版本，无需临时开 DEBUG。
+  出于泄漏风险，命中日志**不记录 config value**。
 
 ## [0.14.1] - 2026-08-10
 
