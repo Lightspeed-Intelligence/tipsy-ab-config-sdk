@@ -20,6 +20,8 @@ bump first, then an SDK tag bump.
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-08-27
+
 ### Added
 - 新增 per-ns 计数器 `sdk_abtest_canceled_total`（`Metrics.AbtestCanceledTotal(ns)`）：
   记录因 ctx 取消而降级到全量发布的 GetExperimentResult 次数（与
