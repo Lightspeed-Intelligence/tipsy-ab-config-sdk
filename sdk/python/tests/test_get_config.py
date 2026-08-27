@@ -13,7 +13,7 @@ from .conftest import (
     FakeAbtestServicer,
     FakeConfigServicer,
     issue_test_token,
-    make_exp_result,
+    make_per_group_result,
     make_snapshot,
 )
 
@@ -58,8 +58,9 @@ async def test_get_config_abtest_hit(cfg_servicer, ab_servicer, running_servers)
     # D3: SDK no longer emits ExposureEvent; we only check that the
     # abtest-resolved version reaches GetConfig. The deprecated `exposures`
     # field is retained on the wire (D1) but server永不再填充, so the
-    # response carries config_flat_kv only.
-    resp = make_exp_result({"k": 2})
+    # response carries one attributed experiment group (per-group shape;
+    # the internal fetch merges groups/gray_hits locally).
+    resp = make_per_group_result({"k": 2})
     ab_servicer.set_response("ns1", resp)
 
     cli = await init(
@@ -117,7 +118,7 @@ async def test_get_config_ab_version_missing_in_cache_falls_back(
         make_snapshot("ns1", 1, 1, {"k": (1, {1: "full-only"})})
     )
     # GetExperimentResult says version 99 but the cache doesn't have it.
-    ab_servicer.set_response("ns1", make_exp_result({"k": 99}))
+    ab_servicer.set_response("ns1", make_per_group_result({"k": 99}))
 
     cli = await init(
         Config(
@@ -217,7 +218,7 @@ async def test_get_config_fast_path_false_skips_abtest_rpc(
     )
     # Arm a response so that IF the SDK wrongly issued the RPC and somehow hit,
     # the value would differ from the full release — making a regression loud.
-    ab_servicer.set_response("ns1", make_exp_result({"pure": 10}))
+    ab_servicer.set_response("ns1", make_per_group_result({"pure": 10}))
     cli = await init(
         Config(
             namespaces=["ns1"],
@@ -284,7 +285,7 @@ async def test_get_config_true_flag_still_awaits_abtest(
             has_dynamic_resolution={"k": True},
         )
     )
-    ab_servicer.set_response("ns1", make_exp_result({"k": 2}))
+    ab_servicer.set_response("ns1", make_per_group_result({"k": 2}))
     cli = await init(
         Config(
             namespaces=["ns1"],
@@ -315,7 +316,7 @@ async def test_get_config_absent_flag_still_awaits_abtest(
     cfg_servicer.set_pull_snapshot(
         make_snapshot("ns1", 1, 1, {"k": (1, {1: "full", 2: "ab-v2"})})
     )
-    ab_servicer.set_response("ns1", make_exp_result({"k": 2}))
+    ab_servicer.set_response("ns1", make_per_group_result({"k": 2}))
     cli = await init(
         Config(
             namespaces=["ns1"],

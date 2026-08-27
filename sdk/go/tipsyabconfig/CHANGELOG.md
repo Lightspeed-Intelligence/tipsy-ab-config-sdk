@@ -20,6 +20,55 @@ bump first, then an SDK tag bump.
 
 ## [Unreleased]
 
+### Added
+- 新增 per-ns 计数器 `sdk_abtest_canceled_total`（`Metrics.AbtestCanceledTotal(ns)`）：
+  记录因 ctx 取消而降级到全量发布的 GetExperimentResult 次数（与
+  `abtest_fallback_total` 互斥，后者保持纯故障信号）。（#15）
+- `Config.SecretKey`（issue #16）：仅配置 secretKey（即平台 `TIPSY_SERVICE_SECRET`
+  本身）即可完成鉴权，免走可信 issuer 签发 JWT。凭据优先级
+  `SecretKey > TokenProvider > Token`（逐请求求值）；传输形态为
+  `Authorization: SecretKey <secret>`，gRPC metadata 与 HTTP header 一致。
+  Init 校验放宽为三者至少其一（错误文案改为
+  `SecretKey, Token or TokenProvider must be set`，三语言对齐）。SDK 不从
+  环境变量读取 secretKey。注意：secretKey 校验通过＝平台侧全量访问（任意
+  namespace），且需平台先升级支持 `SecretKey` scheme（部署顺序详见
+  docs/usage-and-integration.md §3.1）。
+- `GetConfig` / `GetConfigDefault` 命中日志（Info）新增结构化字段 `reason`
+  （4 值枚举：`full_release` / `experiment` / `gray_whitelist` / `abtest_unattributed`），
+  并按 reason 条件输出归因字段：`reason=experiment` 时带 `experiment_id` + `group_id`，
+  `reason=gray_whitelist` 时带 `release_id`；缺席字段整键省略（omit 语义，非空串占位）。
+  msg 文本（`get_config hit (full)` / `get_config hit (abtest)`）与既有字段
+  （`ns`/`key`/`version`/`uid`/`trace_id`）不变。`GetConfigStatic` 日志行不变
+  （无 reason，不属入组事件契约）。
+
+### Fixed
+- ctx 取消不再被当作故障处理（#15）：grpc-go 把 `context.Canceled` 转成
+  **不 wrap 哨兵值**的 status error（`codes.Canceled`），SDK 原有的
+  `errors.Is(err, context.Canceled)` 判定对真实 gRPC 取消错误全部失效，导致
+  每次正常关停 / 上游断连都产生假 ERROR 日志 + 失败指标 + BackgroundErrorEvent。
+  现新增 `isContextCanceled`（哨兵 || `status.Code==codes.Canceled`）统一判定：
+  - Subscribe 流 / 周期 PullAll 命中 ⇒ 静默退出：不打 ERROR、不计
+    `subscribe_disconnect_total` / `pull_failure_total`、**不发** BackgroundErrorEvent
+    （避免把 `Health.SubscribeConnected` 误翻 false）；保留 rootCtx 兜底。
+  - abtest per-ns 拉取命中 ⇒ 降为 Info 日志（含 ns/trace_id）+ 计
+    `abtest_canceled_total`，不计 `abtest_fallback_total`、不打 WARN；
+    返回语义不变（getConfig 仍降级 full/default）。
+  - `DeadlineExceeded`（真超时）不在范围内，继续按错误处理。
+  - **Python SDK 不改**（issue #15 已实测论证）：grpcio 取消场景抛
+    `asyncio.CancelledError`（`BaseException`，不被 `except Exception` 捕获），
+    且现有代码已显式拦截——机制不同、行为已正确，属三语言对齐规则的合理例外，
+    非漏改。
+
+### Changed
+- 内部 per-ns abtest fetch 的请求 display_type 从 `FLAT_KV` 切换为
+  `EACH_EXPERIMENT_GROUP`（experiment_type 仍为 `CONFIG_VERSION`），SDK 本地把
+  groups + gray_hits 合并为同一 key→versionId 扁平 map（逐行复刻平台 flat 合并
+  语义：灰度无条件优先于实验；实验组间后写覆盖；灰度间 first-writer-wins），
+  值解析结果与原 FLAT_KV 消费语义等价，同时保留每-key 归因供命中日志使用。
+  公共 API 签名与语义零改动（`GetExperimentResult` /
+  `PrefetchConfigVersionFlatKvForNamespace` 等均不变；后者 docstring 更新说明
+  内部已切 per-group）。
+
 ## [0.13.2] - 2026-08-24
 
 ### Changed

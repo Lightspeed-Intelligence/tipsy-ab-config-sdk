@@ -65,10 +65,42 @@ Python 和 Java 的安装源与完整依赖要求分别见
 
 ## 3. 鉴权
 
-SDK、gRPC 与 public-read HTTP 使用 HS256 service JWT，通过
-`Authorization: Bearer <token>` 传递。它不同于 Console/Admin 使用的人类会话 token。
+SDK 支持两种凭据，gRPC 与 public-read HTTP 两条 transport 行为一致：
 
-service JWT 的授权信息为：
+| 模式 | 配置 | 传输形态 | 权限 |
+|---|---|---|---|
+| secretKey | Go `SecretKey` / Python `secret_key` / Java `Builder.secretKey(...)` | `Authorization: SecretKey <secret>` | 全量（任意 namespace） |
+| service JWT | `Token` 或 `TokenProvider` | `Authorization: Bearer <token>` | 按 token claims 细粒度授权 |
+
+两者均不同于 Console/Admin 使用的人类会话 token。初始化要求
+secretKey / Token / TokenProvider 至少配置其一。
+
+### 3.1 secretKey 模式（免签发 token）
+
+secretKey 就是平台的 `TIPSY_SERVICE_SECRET` 本身，由部署方直接分发给业务服务，
+业务方无需再经可信 issuer 签发 JWT。信任模型如实描述如下，部署方自行评估是否可接受：
+
+- **持有 secretKey 即拥有全量访问权限**：校验通过等效于 `internal_service` role +
+  `"*"` namespace，可请求任何 namespace 的配置与实验；role/namespace 细粒度授权在
+  该模式下不生效。持有者也能用同一 secret 自行签发任意权限的 JWT——这是该模式
+  有意的取舍，不是缺陷。
+- **secret 随每个请求明文上线**（gRPC metadata / HTTP header）。建议仅在可信内网
+  使用，或走 TLS（`grpcs://` / `https://`）入口。
+- 需要按服务、按 namespace 收敛权限或做短 TTL 轮换时，仍应使用 JWT 模式。
+
+行为约定：
+
+- **优先级：`SecretKey > TokenProvider > Token`**（三端一致，逐请求求值）。同时配置
+  时发送的是 `SecretKey <secret>`，token 形态的凭据不参与该请求。
+- 平台侧校验 fail-closed：secretKey 无效时请求直接失败（Unauthenticated / 401），
+  **不回退**到 Bearer token 校验。
+- SDK 不从环境变量读取 secretKey，由业务方显式传入 Config。
+- **部署顺序**：平台（verifier）先升级，SDK 侧后启用 secretKey。顺序颠倒时
+  平台不认识 `SecretKey` scheme，请求会以 401 失败。
+
+### 3.2 service JWT 模式
+
+service JWT 为 HS256 签名，授权信息为：
 
 ```json
 {
@@ -82,12 +114,12 @@ service JWT 的授权信息为：
 
 - 普通业务 SDK 使用 `business_sdk` role，并只授予业务需要的 namespace。平台进程间调用
   使用的 `internal_service` role 与 `"*"` namespace 属于内部服务身份，不应用于普通业务 SDK。
-- 签发 secret 是平台安全边界，不应下发给普通业务服务。持有 secret 的主体可以自行扩大
-  namespace 和 role 权限。
+- 需要细粒度授权（限定 namespace/role）时使用本模式：token 的权限范围在签发时收敛，
+  业务服务只持有 token 而非 secret。
 - SDK 接受静态 token，也接受 `TokenProvider`。Go/Java 在每次请求取当前 token，适合由
   部署方的可信 issuer 做短 TTL 轮换。Python 的当前限制见下方“待人工核实”。
 - 本 SDK 仓库不提供在线 token 申请服务。endpoint、token 和签发方式均由目标环境的
-  部署方提供；不要把真实 token 提交进仓库。
+  部署方提供；不要把真实 token 或 secret 提交进仓库。
 
 可信 issuer 可使用 Go `tipsyauth` 或 Java `tipsy-auth`。Go 示例：
 
@@ -145,7 +177,8 @@ HTTP transport 使用 protojson POST，并追加以下固定路径：
 - `POST {config-base}/api/v1/config/pull_all`
 - `POST {abtest-base}/api/v1/abtest/experiment_result`
 
-请求包含 `Content-Type: application/json` 和 bearer token。HTTP 模式不调用 Subscribe；
+请求包含 `Content-Type: application/json` 和 `Authorization` 凭据（§3 的两种模式
+均适用）。HTTP 模式不调用 Subscribe；
 它不是对任意 gRPC 方法的通用转码层。
 
 ## 5. Go 接入
@@ -322,7 +355,7 @@ JavaScript/JSON 消费者不能安全地把任意 int64 当作 Number。管理�
 
 | 现象 | 检查项 |
 |---|---|
-| 初始化参数错误 | namespaces、ConfigService 地址、Token/TokenProvider、transport 与 URL scheme |
+| 初始化参数错误 | namespaces、ConfigService 地址、secretKey/Token/TokenProvider、transport 与 URL scheme |
 | 启动 PullAll 失败 | service token 签名/有效期/namespace 权限、DNS/TLS、服务端可达性 |
 | NamespaceRequired | 未传 ns，且未配置 `PROJECT_DEFAULT_NAMESPACE` 或语言对应 override |
 | NamespaceNotSubscribed | ns 不在初始化订阅列表 |
@@ -330,7 +363,7 @@ JavaScript/JSON 消费者不能安全地把任意 int64 当作 Number。管理�
 | gRPC Subscribe 不连接 | token、DNS、TLS/SNI、L7 proxy 是否支持长流；同时查看周期 PullAll 是否健康 |
 | HTTP 变更不立即生效 | HTTP 不 Subscribe；检查 PullInterval 和周期 PullAll 健康状态 |
 | Python import 报 grpc 版本错误 | 安装 `grpcio>=1.66.2,<2` 并更新旧 lockfile |
-| 401/403 | 是否误用了 Console 会话 token；JWT namespace 是否包含目标 ns；token 是否过期 |
+| 401/403 | 是否误用了 Console 会话 token；JWT namespace 是否包含目标 ns；token 是否过期；secretKey 模式：值是否与平台 `TIPSY_SERVICE_SECRET` 一致、平台是否已升级支持 `SecretKey` scheme（部署顺序，§3.1） |
 | 值对应到错误版本 | wire 值是 `config_version.id`，不要当作 `version_no` |
 
 DEV 环境联调见[无凭证联调模板](dev-http-token.md)。远端 endpoint 和 token 均由该环境部署方

@@ -106,16 +106,42 @@ final class AbtestTestSupport implements AutoCloseable {
      * Call-counting, request-capturing fake {@code AbtestService}. The unary
      * {@code getExperimentResult} handler increments a per-ns counter, records
      * the full request, then either throws (per-ns error) or returns the per-ns
-     * canned {@code config_flat_kv} response.
+     * canned steering map — served in the shape the REQUEST asks for, exactly
+     * like the real server:
+     * <ul>
+     *   <li>{@code display_type == EACH_EXPERIMENT_GROUP}: one
+     *       {@code ExperimentGroupResult} ({@link #FIXTURE_EXPERIMENT_ID} /
+     *       {@link #FIXTURE_GROUP_ID}, {@code experiment_type=CONFIG_VERSION})
+     *       carrying the whole map as {@code params_versions}. This is the F2
+     *       fixture migration point (design "actual-enrollment-log"): the SDK's
+     *       internal per-ns fetch now requests EACH_EXPERIMENT_GROUP, so every
+     *       legacy flat fixture is served per-group here with the SAME
+     *       key&rarr;versionId content — expected resolution results are
+     *       byte-for-byte unchanged.</li>
+     *   <li>any other display_type (FLAT_KV / UNSPECIFIED, i.e. public-API
+     *       passthrough callers): the legacy {@code config_flat_kv} shape.</li>
+     * </ul>
+     * A response seeded via {@link #setFullResponse} is returned verbatim
+     * regardless of display_type (tests that need richer shapes — multiple
+     * groups, gray_hits, empty-id groups — build it themselves).
      */
     static final class FakeAbtestService extends AbtestServiceGrpc.AbtestServiceImplBase {
+        /**
+         * The experiment/group identity every migrated flat fixture is served
+         * under in per-group mode. Non-empty so the merged attribution for these
+         * fixtures is {@code source=experiment} (a realistic steering shape);
+         * tests that need unattributed / gray shapes use {@link #setFullResponse}.
+         */
+        static final String FIXTURE_EXPERIMENT_ID = "exp-fixture";
+        static final String FIXTURE_GROUP_ID = "grp-fixture";
+
         /** ns -> number of GetExperimentResult RPCs observed for that ns. */
         final ConcurrentHashMap<String, AtomicInteger> callsByNs = new ConcurrentHashMap<>();
         /** Total GetExperimentResult RPCs observed (any ns). */
         final AtomicInteger totalCalls = new AtomicInteger();
         /** Every request the server received, in arrival order. */
         final ConcurrentLinkedQueue<GetExperimentResultRequest> requests = new ConcurrentLinkedQueue<>();
-        /** ns -> config_flat_kv map to return on success. */
+        /** ns -> steering map (key -> versionId) to serve on success (shape by request display_type). */
         final ConcurrentHashMap<String, Map<String, Long>> configFlatKvByNs = new ConcurrentHashMap<>();
         /**
          * ns -> a full canned response to return verbatim (overrides
@@ -125,6 +151,12 @@ final class AbtestTestSupport implements AutoCloseable {
         final ConcurrentHashMap<String, GetExperimentResultResponse> fullResponseByNs = new ConcurrentHashMap<>();
         /** ns -> if true, the handler fails the call with INTERNAL. */
         final ConcurrentHashMap<String, Boolean> failNs = new ConcurrentHashMap<>();
+        /**
+         * ns -> a specific {@link io.grpc.Status} to fail the call with
+         * (overrides {@link #failNs}). Lets tests inject e.g. CANCELLED for the
+         * #15 ctx-cancel handling instead of the generic INTERNAL failure.
+         */
+        final ConcurrentHashMap<String, io.grpc.Status> failStatusNs = new ConcurrentHashMap<>();
         /**
          * Optional barrier: when set, the handler blocks on this latch before
          * responding, letting a test force concurrent first-accessors to pile up
@@ -142,6 +174,11 @@ final class AbtestTestSupport implements AutoCloseable {
 
         void failFor(String ns) {
             failNs.put(ns, Boolean.TRUE);
+        }
+
+        /** Fails GetExperimentResult for {@code ns} with the given status (e.g. CANCELLED). */
+        void failWithStatus(String ns, io.grpc.Status status) {
+            failStatusNs.put(ns, status);
         }
 
         int callsFor(String ns) {
@@ -165,6 +202,11 @@ final class AbtestTestSupport implements AutoCloseable {
                     Thread.currentThread().interrupt();
                 }
             }
+            io.grpc.Status failStatus = failStatusNs.get(ns);
+            if (failStatus != null) {
+                responseObserver.onError(failStatus.asRuntimeException());
+                return;
+            }
             if (Boolean.TRUE.equals(failNs.get(ns))) {
                 responseObserver.onError(io.grpc.Status.INTERNAL
                         .withDescription("fake abtest failure for ns=" + ns).asRuntimeException());
@@ -178,8 +220,28 @@ final class AbtestTestSupport implements AutoCloseable {
             }
             GetExperimentResultResponse.Builder resp = GetExperimentResultResponse.newBuilder();
             Map<String, Long> kv = configFlatKvByNs.get(ns);
-            if (kv != null) {
-                resp.putAllConfigFlatKv(kv);
+            if (kv != null && !kv.isEmpty()) {
+                if (request.getDisplayType()
+                        == io.github.lightspeedintelligence.abconfig.proto.abtest.v1.ResultDisplayType
+                                .RESULT_DISPLAY_TYPE_EACH_EXPERIMENT_GROUP) {
+                    // Per-group shape (the SDK's internal fetch): the whole
+                    // steering map as ONE CONFIG_VERSION experiment group. Same
+                    // key->versionId content as the flat shape below, so every
+                    // migrated fixture keeps its resolution expectations
+                    // byte-for-byte (F2(c): one-to-one per-key transcription; the
+                    // legacy fixtures carry no conflicting keys by construction).
+                    resp.addGroups(io.github.lightspeedintelligence.abconfig.proto.abtest.v1
+                            .ExperimentGroupResult.newBuilder()
+                            .setExperimentId(FIXTURE_EXPERIMENT_ID)
+                            .setGroupId(FIXTURE_GROUP_ID)
+                            .setExperimentType(io.github.lightspeedintelligence.abconfig.proto
+                                    .abtest.v1.ExperimentType.EXPERIMENT_TYPE_CONFIG_VERSION)
+                            .putAllParamsVersions(kv));
+                } else {
+                    // Legacy flat shape for FLAT_KV / UNSPECIFIED requests
+                    // (public-API passthrough tests).
+                    resp.putAllConfigFlatKv(kv);
+                }
             }
             responseObserver.onNext(resp.build());
             responseObserver.onCompleted();
@@ -331,7 +393,14 @@ final class AbtestTestSupport implements AutoCloseable {
             return this;
         }
 
-        /** Pre-seeds the fake AbtestService's config_flat_kv for a namespace. */
+        /**
+         * Seeds the per-ns steering map (config-key name &rarr; versionId). The
+         * name keeps its historical "ConfigFlatKv" wording (mirroring the
+         * production {@code prefetchConfigVersionFlatKvForNamespace} naming
+         * decision): the CONTENT is the flat steering map; the wire SHAPE it is
+         * served in follows the request's display_type (see
+         * {@link FakeAbtestService}).
+         */
         Builder abtestConfigFlatKv(String ns, Map<String, Long> kv) {
             abtestKv.put(ns, kv);
             return this;

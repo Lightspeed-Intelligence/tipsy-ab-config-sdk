@@ -8,6 +8,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `Config.secret_key`：仅配置 secretKey（即 `TIPSY_SERVICE_SECRET` 本身）即可完成鉴权（issue #16，
+  需平台侧配套 verifier）。凭据优先级 **SecretKey > token_provider > token**（每请求求值）；
+  发送形态为 `Authorization: SecretKey <secret>`（gRPC metadata 与 HTTP header 双路径一致，
+  SDK 恒发精确字面量，服务端按 RFC 7235 对 scheme 大小写不敏感匹配）。Init 校验放宽为
+  `secret_key / token / token_provider` 至少其一（`channel_factory` 豁免语义不变：工厂通道
+  绕开 SDK auth 插桩，secret_key 同样不附着，无需凭据）。SDK 不读任何环境变量，secretKey 由
+  业务方显式传入。secretKey 校验通过 = 全量访问（等效 `internal_service` + `"*"`），信任边界
+  见 `docs/usage-and-integration.md` §3。
+- `get_config` / `get_config_default` 命中日志（`get_config hit (abtest)` / `(full)`，msg 文本不变）
+  新增结构化归因字段：恒定输出 `reason`（枚举 4 值：`full_release` / `experiment` /
+  `gray_whitelist` / `abtest_unattributed`）与 `trace_id`（Python 端本次补齐，取自
+  AbtestContext，对齐 Go/Java）；`reason=experiment` 时另输出 `experiment_id` / `group_id`，
+  `reason=gray_whitelist` 时另输出 `release_id`（条件字段缺席即 omit，不输出键）。既有字段
+  `ns` / `key` / `version` / `uid` 不变。`get_all_configs` 不打每-key 命中日志（其聚合 Debug
+  日志不变）；`get_config_static` 行为与日志不变（无 reason，不属于入组事件）。
+
+### Changed
+- 内部 per-ns 取数（`_fetch_config_version_flat_kv_for_ns`）请求的 display_type 由
+  `FLAT_KV` 切换为 `EACH_EXPERIMENT_GROUP`（experiment_type 仍为 `CONFIG_VERSION`），
+  SDK 按平台 flat 合并规则本地重建 key→versionId map（灰度无条件优先于实验；实验组间
+  后写覆盖；灰度间 first-writer-wins），值解析结果与原 FLAT_KV 语义等价，同时保留服务端
+  折叠前的归因信息供命中日志使用。公共 API（`get_experiment_result` 及含 "flat_kv" 的
+  方法名）签名与语义不变。
+- ab→full fallback 的 WARN 日志（`ab version missing in local cache`）补上 `trace_id`。
+
 ## [0.14.2] - 2026-08-24
 
 ### Changed

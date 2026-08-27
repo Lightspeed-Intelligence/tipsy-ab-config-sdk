@@ -48,9 +48,7 @@ func TestDefaultNamespace_FromConfig(t *testing.T) {
 		full     int64
 		versions map[int64]string
 	}{"k": {full: 1, versions: map[int64]string{1: "full-v1", 2: "ab-v2"}}}))
-	h.abServer.SetResponse("ns1", &abtestv1.GetExperimentResultResponse{
-		ConfigFlatKv: map[string]int64{"k": 2},
-	})
+	h.abServer.SetResponse("ns1", perGroupResponse(map[string]int64{"k": 2}))
 	cfg := h.baseConfig([]string{"ns1"})
 	cfg.DefaultNamespace = "ns1"
 	cli, err := Init(context.Background(), cfg)
@@ -145,8 +143,13 @@ func TestPrefetchAPI_Shape(t *testing.T) {
 	if req.GetExperimentType() != abtestv1.ExperimentType_EXPERIMENT_TYPE_CONFIG_VERSION {
 		t.Fatalf("prefetch type = %v, want CONFIG_VERSION", req.GetExperimentType())
 	}
-	if req.GetDisplayType() != abtestv1.ResultDisplayType_RESULT_DISPLAY_TYPE_FLAT_KV {
-		t.Fatalf("prefetch display = %v, want FLAT_KV", req.GetDisplayType())
+	// Reversed by actual-enrollment-log design §1: the internal fetch (prefetch
+	// included) now requests EACH_EXPERIMENT_GROUP. This is the internal
+	// request-shape assertion — the PUBLIC GetExperimentResult passthrough
+	// assertion in TestGetExperimentResult_Client below is a distinct contract
+	// and must NOT be edited alongside this one.
+	if req.GetDisplayType() != abtestv1.ResultDisplayType_RESULT_DISPLAY_TYPE_EACH_EXPERIMENT_GROUP {
+		t.Fatalf("prefetch display = %v, want EACH_EXPERIMENT_GROUP", req.GetDisplayType())
 	}
 }
 
@@ -187,9 +190,7 @@ func TestResultFor_ConcurrentAtMostOnce(t *testing.T) {
 	}{"k": {full: 1, versions: map[int64]string{1: "full", 2: "ab"}}}))
 	// Add latency so concurrent first-accessors genuinely race in-flight.
 	h.abServer.SetDelay(80 * time.Millisecond)
-	h.abServer.SetResponse("ns1", &abtestv1.GetExperimentResultResponse{
-		ConfigFlatKv: map[string]int64{"k": 2},
-	})
+	h.abServer.SetResponse("ns1", perGroupResponse(map[string]int64{"k": 2}))
 	cfg := h.baseConfig([]string{"ns1"})
 	cfg.AbtestTimeout = 2 * time.Second
 	cli, err := Init(context.Background(), cfg)
@@ -242,9 +243,7 @@ func TestGetConfig_FullFallbackPreservedForUnhitKey(t *testing.T) {
 		"unhit": {full: 5, versions: map[int64]string{5: "full-unhit"}},
 	}))
 	// Experiment only hits "hit"; "unhit" is absent from config_flat_kv.
-	h.abServer.SetResponse("ns1", &abtestv1.GetExperimentResultResponse{
-		ConfigFlatKv: map[string]int64{"hit": 2},
-	})
+	h.abServer.SetResponse("ns1", perGroupResponse(map[string]int64{"hit": 2}))
 	cfg := h.baseConfig([]string{"ns1"})
 	cli, err := Init(context.Background(), cfg)
 	if err != nil {

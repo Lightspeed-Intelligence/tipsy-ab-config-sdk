@@ -34,6 +34,7 @@ from .conftest import (
     FakeConfigServicer,
     issue_test_token,
     make_exp_result,
+    make_per_group_result,
     make_snapshot,
 )
 
@@ -161,7 +162,8 @@ async def test_lazy_fetch_path_emits_timing_debug(
     cfg_servicer.set_pull_snapshot(
         make_snapshot("ns1", 1, 1, {"k": (1, {1: "full", 2: "ab-v2"})})
     )
-    ab_servicer.set_response("ns1", make_exp_result({"k": 2}))
+    # Internal fetch (per-group shape): one attributed group, same key→version.
+    ab_servicer.set_response("ns1", make_per_group_result({"k": 2}))
 
     cli = await _make_client(cfg_addr, ab_addr)
     try:

@@ -56,15 +56,55 @@ abtest_ctx_var: contextvars.ContextVar[Optional["AbtestContext"]] = (
 )
 
 
+# Attribution source values (design §2). Internal — they surface only through
+# the get_config hit log's ``reason`` field (client.py maps them to the SLS
+# reason enum: experiment / gray_whitelist / abtest_unattributed).
+_ATTR_SOURCE_EXPERIMENT = "experiment"
+_ATTR_SOURCE_GRAY_WHITELIST = "gray_whitelist"
+_ATTR_SOURCE_UNATTRIBUTED = "unattributed"
+
+
+@dataclass(frozen=True)
+class _KeyAttribution:
+    """Attribution for one merged ``key_versions`` entry (design §2).
+
+    - ``source == "experiment"``     ⇒ ``experiment_id`` / ``group_id`` non-empty.
+    - ``source == "gray_whitelist"`` ⇒ ``release_id`` non-zero.
+    - ``source == "unattributed"``   ⇒ the value is valid but its origin is
+      unknown (empty-id group, ``release_id == 0``, mock seeds).
+
+    Attribution is a second, independent track from value resolution (design
+    §3 core invariant F3): a missing / unattributed entry only degrades the
+    hit log's ``reason`` — it never changes which versionId wins.
+    """
+
+    source: str
+    experiment_id: str = ""
+    group_id: str = ""
+    release_id: int = 0
+
+
+_UNATTRIBUTED = _KeyAttribution(source=_ATTR_SOURCE_UNATTRIBUTED)
+
+
 @dataclass
 class _ComputeResult:
     """GetExperimentResult result the SDK keeps on the AbtestContext.
 
-    ``key_versions`` maps config_key.name → version_id (from the
-    ``config_flat_kv`` map).
+    ``key_versions`` maps config_key.name → version_id, rebuilt locally by the
+    SDK's merge of the per-group (EACH_EXPERIMENT_GROUP) response
+    (``client._merge_per_group_result``, design §3) — same key→versionId
+    semantics as the server-side ``config_flat_kv`` fold it replaces.
+
+    ``attribution`` is the parallel key → :class:`_KeyAttribution` map: every
+    key the merge writes into ``key_versions`` also gets an attribution entry
+    (possibly unattributed), so the hit-log ``reason`` is always decidable.
+    Mock seeds (``Client.mock_abtest_context``) populate only ``key_versions``;
+    consumers treat a missing attribution entry as unattributed.
     """
 
     key_versions: Dict[str, int] = field(default_factory=dict)
+    attribution: Dict[str, _KeyAttribution] = field(default_factory=dict)
 
 
 _EMPTY_RESULT = _ComputeResult()
@@ -224,13 +264,15 @@ class AbtestContext:
         return slot
 
     def prefetch_config_version_flat_kv_for_namespace(self, ns: str) -> None:
-        """Eagerly warm the ``config_version`` flat_kv result for ``ns``.
+        """Eagerly warm the per-ns ``config_version`` result for ``ns``.
 
         Explicit opt-in prefetch: spawns the single per-ns
-        ``GetExperimentResult`` (type=config_version, display=flat_kv) task in
-        the background and memoises its slot, so a later ``get_config`` for
-        ``ns`` reuses the SAME task (at-most-once). Returns immediately — it
-        does NOT await the result.
+        ``GetExperimentResult`` (type=config_version,
+        display=each_experiment_group, merged locally into the flat
+        key→versionId map — the method name keeps its historical "flat_kv"
+        spelling for API stability) task in the background and memoises its
+        slot, so a later ``get_config`` for ``ns`` reuses the SAME task
+        (at-most-once). Returns immediately — it does NOT await the result.
 
         Idempotent: prefetching an already-fetched ns is a no-op. An empty /
         identity-less / mock ctx and an unsubscribed ns short-circuit inside

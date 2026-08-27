@@ -2,6 +2,7 @@ package tipsyabconfig
 
 import (
 	"context"
+	"crypto/subtle"
 	"errors"
 	"io"
 	"log/slog"
@@ -41,6 +42,9 @@ type fakeConfigServer struct {
 	// pullReqs records every PullAllRequest received (used to verify fields
 	// like env/trace_id land on the wire). Mirrors subscribeReqs.
 	pullReqs []*configv1.PullAllRequest
+	// pullAuths records the raw `authorization` metadata value seen on every
+	// PullAll (used for exact-literal credential scheme assertions, #16).
+	pullAuths []string
 
 	// Subscribe knobs.
 	subscribeReqs []*configv1.SubscribeRequest
@@ -121,10 +125,27 @@ func (f *fakeConfigServer) LastPullReq() *configv1.PullAllRequest {
 	return f.pullReqs[len(f.pullReqs)-1]
 }
 
-func (f *fakeConfigServer) PullAll(_ context.Context, req *configv1.PullAllRequest) (*configv1.PullAllResponse, error) {
+// LastPullAuth returns the raw `authorization` metadata value seen on the
+// most recent PullAll ("" when none observed yet). Exact-equality companion
+// to the HTTP harness's lastPullAuth (#16 dual-path scheme assertions).
+func (f *fakeConfigServer) LastPullAuth() string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.pullAuths) == 0 {
+		return ""
+	}
+	return f.pullAuths[len(f.pullAuths)-1]
+}
+
+func (f *fakeConfigServer) PullAll(ctx context.Context, req *configv1.PullAllRequest) (*configv1.PullAllResponse, error) {
 	f.mu.Lock()
 	f.pullCalls++
 	f.pullReqs = append(f.pullReqs, req)
+	if md, ok := metadata.FromIncomingContext(ctx); ok {
+		if vs := md.Get(authorizationKey); len(vs) > 0 {
+			f.pullAuths = append(f.pullAuths, vs[0])
+		}
+	}
 	pullErr := f.pullErr
 	out := []*configv1.NamespaceSnapshot{}
 	for _, ns := range req.GetNamespaces() {
@@ -421,7 +442,11 @@ var _ = errBadAuth
 //
 //   - Read the gRPC `authorization` metadata key (grpc-go lower-cases all
 //     header names on the server side).
-//   - Strip the "Bearer " prefix (case-insensitive).
+//   - "SecretKey <v>" scheme (issue #16): scheme matched case-insensitively
+//     (mirrors the platform verifier's EqualFold contract), value compared in
+//     constant time against the shared testSecret. Fail-closed: a wrong
+//     secret is rejected without falling back to Bearer parsing.
+//   - Otherwise strip the "Bearer " prefix (case-insensitive).
 //   - Parse the JWT with HS256 + the shared testSecret; the jwt/v5 parser
 //     validates iat/exp automatically.
 //   - On any failure return codes.Unauthenticated.
@@ -462,6 +487,13 @@ func harnessAuthenticate(ctx context.Context, secret string) error {
 		return status.Error(codes.Unauthenticated, "missing authorization metadata")
 	}
 	raw := strings.TrimSpace(values[0])
+	if len(raw) >= 10 && strings.EqualFold(raw[:10], "SecretKey ") {
+		v := strings.TrimSpace(raw[10:])
+		if subtle.ConstantTimeCompare([]byte(v), []byte(secret)) == 1 {
+			return nil
+		}
+		return status.Error(codes.Unauthenticated, "invalid secret key")
+	}
 	if len(raw) >= 7 && strings.EqualFold(raw[:7], "Bearer ") {
 		raw = strings.TrimSpace(raw[7:])
 	}

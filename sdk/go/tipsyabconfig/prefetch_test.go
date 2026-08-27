@@ -52,9 +52,7 @@ func TestPrefetch_ThenGetConfigReusesSingleRPC(t *testing.T) {
 		full     int64
 		versions map[int64]string
 	}{"k": {full: 1, versions: map[int64]string{1: "full", 2: "ab"}}}))
-	h.abServer.SetResponse("ns1", &abtestv1.GetExperimentResultResponse{
-		ConfigFlatKv: map[string]int64{"k": 2},
-	})
+	h.abServer.SetResponse("ns1", perGroupResponse(map[string]int64{"k": 2}))
 	cfg := h.baseConfig([]string{"ns1"})
 	cfg.AbtestTimeout = 2 * time.Second
 	cli, err := Init(context.Background(), cfg)
@@ -95,9 +93,7 @@ func TestPrefetch_NonBlocking(t *testing.T) {
 	}{"k": {full: 1, versions: map[int64]string{1: "full", 2: "ab"}}}))
 	// Server holds each RPC for 300ms; a blocking prefetch would stall here.
 	h.abServer.SetDelay(300 * time.Millisecond)
-	h.abServer.SetResponse("ns1", &abtestv1.GetExperimentResultResponse{
-		ConfigFlatKv: map[string]int64{"k": 2},
-	})
+	h.abServer.SetResponse("ns1", perGroupResponse(map[string]int64{"k": 2}))
 	cfg := h.baseConfig([]string{"ns1"})
 	cfg.AbtestTimeout = 2 * time.Second
 	cli, err := Init(context.Background(), cfg)
@@ -137,9 +133,7 @@ func TestPrefetch_Idempotent(t *testing.T) {
 	// Small delay so the second prefetch lands while the first RPC is still in
 	// flight — the strongest form of the idempotency check.
 	h.abServer.SetDelay(120 * time.Millisecond)
-	h.abServer.SetResponse("ns1", &abtestv1.GetExperimentResultResponse{
-		ConfigFlatKv: map[string]int64{},
-	})
+	h.abServer.SetResponse("ns1", perGroupResponse(map[string]int64{}))
 	cfg := h.baseConfig([]string{"ns1"})
 	cfg.AbtestTimeout = 2 * time.Second
 	cli, err := Init(context.Background(), cfg)
@@ -229,8 +223,12 @@ func TestPrefetch_CarriesContextTraceID(t *testing.T) {
 	if req.GetExperimentType() != abtestv1.ExperimentType_EXPERIMENT_TYPE_CONFIG_VERSION {
 		t.Fatalf("prefetch type = %v, want CONFIG_VERSION", req.GetExperimentType())
 	}
-	if req.GetDisplayType() != abtestv1.ResultDisplayType_RESULT_DISPLAY_TYPE_FLAT_KV {
-		t.Fatalf("prefetch display = %v, want FLAT_KV", req.GetDisplayType())
+	// Reversed by actual-enrollment-log design §1: the internal per-ns fetch
+	// (prefetch included) now requests EACH_EXPERIMENT_GROUP so attribution
+	// survives to the SDK. FLAT_KV here would be the design's core mutation
+	// ("display_type 改回 FLAT_KV") — this assertion is its kill site.
+	if req.GetDisplayType() != abtestv1.ResultDisplayType_RESULT_DISPLAY_TYPE_EACH_EXPERIMENT_GROUP {
+		t.Fatalf("prefetch display = %v, want EACH_EXPERIMENT_GROUP", req.GetDisplayType())
 	}
 }
 
@@ -245,9 +243,7 @@ func TestPrefetchAndGetConfig_ConcurrentMixedAtMostOnce(t *testing.T) {
 	}{"k": {full: 1, versions: map[int64]string{1: "full", 2: "ab"}}}))
 	// Latency so the racers genuinely overlap in flight.
 	h.abServer.SetDelay(100 * time.Millisecond)
-	h.abServer.SetResponse("ns1", &abtestv1.GetExperimentResultResponse{
-		ConfigFlatKv: map[string]int64{"k": 2},
-	})
+	h.abServer.SetResponse("ns1", perGroupResponse(map[string]int64{"k": 2}))
 	cfg := h.baseConfig([]string{"ns1"})
 	cfg.AbtestTimeout = 2 * time.Second
 	cli, err := Init(context.Background(), cfg)

@@ -12,7 +12,7 @@ from .conftest import (
     FakeAbtestServicer,
     FakeConfigServicer,
     issue_test_token,
-    make_exp_result,
+    make_per_group_result,
     make_snapshot,
 )
 
@@ -301,7 +301,7 @@ async def test_middleware_matched_path_prefetches_default_ns_once(
 ):
     """prefetch_paths=["/x"], request to /x => exactly 1 prefetch RPC for default ns."""
     cfg_addr, ab_addr = running_servers
-    ab_servicer.set_response("ns1", make_exp_result({"k": 2}))
+    ab_servicer.set_response("ns1", make_per_group_result({"k": 2}))
     cli = await _init_with_default_ns(cfg_servicer, cfg_addr, ab_addr)
     app = await _whitelist_app(cli, user_provider=_ok_provider, prefetch_paths=["/x"])
     try:
@@ -318,9 +318,11 @@ async def test_middleware_matched_path_prefetches_default_ns_once(
             req.experiment_type
             == abtest_pb2.ExperimentType.EXPERIMENT_TYPE_CONFIG_VERSION
         )
+        # Internal prefetch switched to the per-group display (attribution
+        # merge, actual-enrollment-log design §1).
         assert (
             req.display_type
-            == abtest_pb2.ResultDisplayType.RESULT_DISPLAY_TYPE_FLAT_KV
+            == abtest_pb2.ResultDisplayType.RESULT_DISPLAY_TYPE_EACH_EXPERIMENT_GROUP
         )
     finally:
         await cli.aclose()

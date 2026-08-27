@@ -2,7 +2,6 @@ package tipsyabconfig
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"time"
 
@@ -102,7 +101,13 @@ func (c *Client) runPullLoop() {
 					return
 				}
 				if err := c.pullOnce(c.rootCtx, ns); err != nil {
-					if errors.Is(err, context.Canceled) {
+					// Ctx cancellation is an expected termination (issue #15):
+					// exit silently — no pullFailure inc, no ERROR, no event.
+					// isContextCanceled also catches the grpc status error
+					// carrying codes.Canceled, which does NOT wrap the
+					// context.Canceled sentinel; the rootCtx.Err() check above
+					// stays as the backstop.
+					if isContextCanceled(err) {
 						return
 					}
 					c.metrics.pullFailure.inc(ns)

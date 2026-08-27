@@ -12,7 +12,7 @@ from .conftest import (
     FakeAbtestServicer,
     FakeConfigServicer,
     issue_test_token,
-    make_exp_result,
+    make_per_group_result,
     make_snapshot,
 )
 
@@ -32,7 +32,7 @@ async def test_one_compute_per_ns_per_request(
             },
         )
     )
-    ab_servicer.set_response("ns1", make_exp_result({"k1": 2, "k2": 2}))
+    ab_servicer.set_response("ns1", make_per_group_result({"k1": 2, "k2": 2}))
 
     cli = await init(
         Config(
@@ -121,7 +121,7 @@ async def test_abtest_timeout_degrades_silently(
     cfg_servicer.set_pull_snapshot(
         make_snapshot("ns1", 1, 1, {"k": (1, {1: "full"})})
     )
-    ab_servicer.set_response("ns1", make_exp_result({"k": 99}))
+    ab_servicer.set_response("ns1", make_per_group_result({"k": 99}))
     ab_servicer.delay = 0.5  # 500ms — well past timeout
 
     cli = await init(
@@ -195,7 +195,7 @@ async def test_get_config_no_user_uid_skips_abtest(
         make_snapshot("ns1", 1, 1, {"k": (1, {1: "full", 2: "ab-v2"})})
     )
     # Arm an ab hit that WOULD win if the RPC fired — the shortcut must skip it.
-    ab_servicer.set_response("ns1", make_exp_result({"k": 2}))
+    ab_servicer.set_response("ns1", make_per_group_result({"k": 2}))
     cli = await init(
         Config(
             namespaces=["ns1"],
@@ -228,7 +228,7 @@ async def test_get_config_no_user_uid_no_full_returns_default(
     cfg_servicer.set_pull_snapshot(
         make_snapshot("ns1", 1, 1, {"k": (None, {2: "ab-only"})})
     )
-    ab_servicer.set_response("ns1", make_exp_result({"k": 2}))
+    ab_servicer.set_response("ns1", make_per_group_result({"k": 2}))
     cli = await init(
         Config(
             namespaces=["ns1"],
@@ -256,7 +256,7 @@ async def test_get_config_normal_uid_still_calls_abtest(
     cfg_servicer.set_pull_snapshot(
         make_snapshot("ns1", 1, 1, {"k": (1, {1: "full", 2: "ab-v2"})})
     )
-    ab_servicer.set_response("ns1", make_exp_result({"k": 2}))
+    ab_servicer.set_response("ns1", make_per_group_result({"k": 2}))
     cli = await init(
         Config(
             namespaces=["ns1"],
@@ -285,7 +285,7 @@ async def test_prefetch_no_user_uid_zero_rpc(
     cfg_servicer.set_pull_snapshot(
         make_snapshot("ns1", 1, 1, {"k": (1, {1: "full", 2: "ab-v2"})})
     )
-    ab_servicer.set_response("ns1", make_exp_result({"k": 2}))
+    ab_servicer.set_response("ns1", make_per_group_result({"k": 2}))
     cli = await init(
         Config(
             namespaces=["ns1"],
@@ -322,7 +322,7 @@ async def test_abtest_context_none_user_id_normalises_and_shortcuts(
     cfg_servicer.set_pull_snapshot(
         make_snapshot("ns1", 1, 1, {"k": (1, {1: "full", 2: "ab-v2"})})
     )
-    ab_servicer.set_response("ns1", make_exp_result({"k": 2}))
+    ab_servicer.set_response("ns1", make_per_group_result({"k": 2}))
     cli = await init(
         Config(
             namespaces=["ns1"],

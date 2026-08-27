@@ -20,14 +20,15 @@ import java.util.function.Supplier;
  * {@link HttpAbtestTransport}.
  *
  * <p>Mirrors Go {@code httpTransport}. Owns the JDK {@link HttpClient}, the
- * bearer-token supplier, and the response-size cap. Requests are protojson
+ * auth-header supplier, and the response-size cap. Requests are protojson
  * (mirroring the server's publicread codec); 2xx bodies are decoded with
  * {@code ignoringUnknownFields()}; non-2xx bodies are surfaced as a transport
  * error carrying the HTTP status code and a parsed {@code {"error": msg}}
  * message (falling back to the raw body text).
  *
  * <p>Auth is decoupled via a {@code Supplier<String>} that returns the full
- * {@code Authorization} header value (e.g. {@code "Bearer xxx"}). The supplier
+ * {@code Authorization} header value (e.g. {@code "Bearer xxx"} or
+ * {@code "SecretKey xxx"}). The supplier
  * may throw a {@link RuntimeException} to signal a token-acquisition failure,
  * which is caught and wrapped as a transport error — the transport never
  * depends on any concrete token type.
@@ -49,9 +50,9 @@ abstract class HttpJsonTransport {
     }
 
     /**
-     * Marshals {@code req} to protojson, POSTs it to {@code url} with a fresh
-     * bearer token and the per-call {@code timeout}, and merges a 2xx response
-     * body into {@code outBuilder}.
+     * Marshals {@code req} to protojson, POSTs it to {@code url} with a freshly
+     * acquired auth header and the per-call {@code timeout}, and merges a 2xx
+     * response body into {@code outBuilder}.
      *
      * @throws Exception on token acquisition, transport, oversized-response,
      *                   non-2xx, or decode failure.
@@ -60,7 +61,7 @@ abstract class HttpJsonTransport {
             throws Exception {
         String body = JsonFormat.printer().print(req);
 
-        // Acquire the bearer header per request, matching the gRPC per-RPC
+        // Acquire the auth header per request, matching the gRPC per-RPC
         // credential timing. A supplier failure fails this request.
         String authz;
         try {

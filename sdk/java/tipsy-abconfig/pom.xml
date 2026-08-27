@@ -63,6 +63,14 @@
       <artifactId>mockito-core</artifactId>
       <scope>test</scope>
     </dependency>
+    <!-- Test-only slf4j backend so tests can attach a ListAppender to the
+         SDK logger and assert the fixed-template hit-log lines. Version is
+         pinned in the parent dependencyManagement (1.5.x ⟷ slf4j 2.0.x). -->
+    <dependency>
+      <groupId>ch.qos.logback</groupId>
+      <artifactId>logback-classic</artifactId>
+      <scope>test</scope>
+    </dependency>
     <dependency>
       <groupId>io.grpc</groupId>
       <artifactId>grpc-inprocess</artifactId>

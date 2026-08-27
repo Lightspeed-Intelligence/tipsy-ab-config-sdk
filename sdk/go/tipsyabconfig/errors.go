@@ -28,7 +28,13 @@
 // downstream client.
 package tipsyabconfig
 
-import "errors"
+import (
+	"context"
+	"errors"
+
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+)
 
 // ErrAbtestContextMissing is returned by GetConfig when the caller passes a
 // nil AbtestContext. Per abtest-platform-sdk.md §4 callers must explicitly
@@ -55,3 +61,22 @@ var ErrNamespaceRequired = errors.New("tipsyabconfig: namespace required (no exp
 // subscribed namespaces; an unsubscribed ns has no local cache to resolve
 // against, so the caller must fix the subscription / call site.
 var ErrNamespaceNotSubscribed = errors.New("tipsyabconfig: namespace not subscribed")
+
+// isContextCanceled reports whether err is a context cancellation — an
+// EXPECTED termination (SDK Close(), upstream client disconnect, handler
+// already returned), not a fault (issue #15). It must recognise BOTH shapes:
+//
+//   - the bare context.Canceled sentinel (possibly wrapped), and
+//   - the grpc-go status error with codes.Canceled. grpc-go converts a
+//     cancelled ctx into a *status.Error that does NOT wrap the sentinel
+//     (rpc_util.go errContextCanceled; its Is() only compares against other
+//     status errors), so errors.Is against context.Canceled is false there.
+//
+// status.Code(nil) == codes.OK and status.Code(non-status-err) == codes.Unknown,
+// so the code check is safe on any input. A codes.Canceled sent by the SERVER
+// is deliberately treated the same way — from the caller's perspective both
+// mean "this call was cancelled" (issue #15 建议改法). DeadlineExceeded is
+// explicitly NOT matched: a real timeout stays an error.
+func isContextCanceled(err error) bool {
+	return errors.Is(err, context.Canceled) || status.Code(err) == codes.Canceled
+}

@@ -21,8 +21,6 @@ import (
 	"reflect"
 	"testing"
 	"time"
-
-	abtestv1 "github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk/api/gen/go/tipsy/abtest/v1"
 )
 
 // noUserSnapshot is the shared fixture for the uid short-circuit cases: two
@@ -50,7 +48,7 @@ func TestNoUserUID_GetConfigZeroRPC(t *testing.T) {
 		t.Run("uid="+quoteUID(uid), func(t *testing.T) {
 			h := newHarness(t)
 			h.cfgServer.SetPullSnapshot(makeSnapshot("ns1", 1, 1, keys))
-			h.abServer.SetResponse("ns1", &abtestv1.GetExperimentResultResponse{ConfigFlatKv: flatKv})
+			h.abServer.SetResponse("ns1", perGroupResponse(flatKv))
 			cli := initClient(t, h.baseConfig([]string{"ns1"}))
 
 			before := h.abServer.Calls("ns1")
@@ -73,7 +71,7 @@ func TestNoUserUID_GetConfigZeroRPC(t *testing.T) {
 	t.Run("uid=1", func(t *testing.T) {
 		h := newHarness(t)
 		h.cfgServer.SetPullSnapshot(makeSnapshot("ns1", 1, 1, keys))
-		h.abServer.SetResponse("ns1", &abtestv1.GetExperimentResultResponse{ConfigFlatKv: flatKv})
+		h.abServer.SetResponse("ns1", perGroupResponse(flatKv))
 		cli := initClient(t, h.baseConfig([]string{"ns1"}))
 
 		before := h.abServer.Calls("ns1")
@@ -101,7 +99,7 @@ func TestNoUserUID_GetAllConfigsZeroRPC(t *testing.T) {
 		t.Run("uid="+quoteUID(uid), func(t *testing.T) {
 			h := newHarness(t)
 			h.cfgServer.SetPullSnapshot(makeSnapshot("ns1", 1, 1, keys))
-			h.abServer.SetResponse("ns1", &abtestv1.GetExperimentResultResponse{ConfigFlatKv: flatKv})
+			h.abServer.SetResponse("ns1", perGroupResponse(flatKv))
 			cli := initClient(t, h.baseConfig([]string{"ns1"}))
 
 			before := h.abServer.Calls("ns1")
@@ -123,7 +121,7 @@ func TestNoUserUID_GetAllConfigsZeroRPC(t *testing.T) {
 	t.Run("uid=1", func(t *testing.T) {
 		h := newHarness(t)
 		h.cfgServer.SetPullSnapshot(makeSnapshot("ns1", 1, 1, keys))
-		h.abServer.SetResponse("ns1", &abtestv1.GetExperimentResultResponse{ConfigFlatKv: flatKv})
+		h.abServer.SetResponse("ns1", perGroupResponse(flatKv))
 		cli := initClient(t, h.baseConfig([]string{"ns1"}))
 
 		before := h.abServer.Calls("ns1")
@@ -185,9 +183,7 @@ func TestNoUserUID_PrefetchAndWaitZeroRPC(t *testing.T) {
 			h.cfgServer.SetPullSnapshot(makeSnapshot("ns1", 1, 1, map[string]typedKey{
 				"k": {full: 1, versions: map[int64]string{1: "full", 2: "ab"}},
 			}))
-			h.abServer.SetResponse("ns1", &abtestv1.GetExperimentResultResponse{
-				ConfigFlatKv: map[string]int64{"k": 2},
-			})
+			h.abServer.SetResponse("ns1", perGroupResponse(map[string]int64{"k": 2}))
 			cli := initClient(t, h.baseConfig([]string{"ns1"}))
 
 			before := h.abServer.TotalCalls()
@@ -218,9 +214,7 @@ func TestNoUserUID_EmptyAbtestContextUnchanged(t *testing.T) {
 	h.cfgServer.SetPullSnapshot(makeSnapshot("ns1", 1, 1, map[string]typedKey{
 		"k": {full: 1, versions: map[int64]string{1: "full", 2: "ab"}},
 	}))
-	h.abServer.SetResponse("ns1", &abtestv1.GetExperimentResultResponse{
-		ConfigFlatKv: map[string]int64{"k": 2},
-	})
+	h.abServer.SetResponse("ns1", perGroupResponse(map[string]int64{"k": 2}))
 	cli := initClient(t, h.baseConfig([]string{"ns1"}))
 
 	before := h.abServer.Calls("ns1")

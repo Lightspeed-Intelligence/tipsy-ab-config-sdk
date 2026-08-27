@@ -15,6 +15,7 @@ type Metrics struct {
 	subscribeEvent   *nsCounter
 	localCacheBytes  *nsGauge
 	abtestFallback   *nsCounter
+	abtestCanceled   *nsCounter
 	businessSeqMoved *nsCounter
 	experimentSeqMov *nsCounter
 }
@@ -26,6 +27,7 @@ func newMetrics() *Metrics {
 		subscribeEvent:   newNSCounter(),
 		localCacheBytes:  newNSGauge(),
 		abtestFallback:   newNSCounter(),
+		abtestCanceled:   newNSCounter(),
 		businessSeqMoved: newNSCounter(),
 		experimentSeqMov: newNSCounter(),
 	}
@@ -50,6 +52,13 @@ func (m *Metrics) LocalCacheBytes(ns string) uint64 { return m.localCacheBytes.g
 // The "key" dimension from design §10.6 is collapsed to per-ns; the SDK
 // host can re-fan out at log level if it needs key-level detail.
 func (m *Metrics) AbtestFallbackTotal(ns string) uint64 { return m.abtestFallback.get(ns) }
+
+// AbtestCanceledTotal corresponds to sdk_abtest_canceled_total{namespace}: the
+// per-ns count of GetExperimentResult calls that ended in a context
+// cancellation (issue #15). Cancellation is an expected termination, so it is
+// counted here — NOT in AbtestFallbackTotal — to keep the fallback metric a
+// pure fault signal while preserving observability of cancel-degraded lookups.
+func (m *Metrics) AbtestCanceledTotal(ns string) uint64 { return m.abtestCanceled.get(ns) }
 
 // BusinessSeqChangeTotal corresponds to sdk_business_seq_change_total{namespace}.
 func (m *Metrics) BusinessSeqChangeTotal(ns string) uint64 { return m.businessSeqMoved.get(ns) }

@@ -233,14 +233,78 @@ def make_snapshot(
 def make_exp_result(
     config_flat_kv: Optional[Dict[str, int]] = None,
 ) -> abtest_pb2.GetExperimentResultResponse:
-    """Build a GetExperimentResultResponse with a config_flat_kv map.
+    """Build a FLAT_KV-shaped GetExperimentResultResponse (config_flat_kv map).
 
-    Mirrors the Go harness's ``&abtestv1.GetExperimentResultResponse{
-    ConfigFlatKv: ...}`` literal used across v2_namespace_test.go.
+    Since the internal per-ns fetch switched to
+    ``display_type=EACH_EXPERIMENT_GROUP`` (actual-enrollment-log design §1),
+    this flat shape is ONLY correct for canned responses consumed by the
+    PUBLIC ``Client.get_experiment_result`` API (which still defaults to
+    FLAT_KV and passes the response through untouched) and for the flat side
+    of the alignment tests. Canned responses that feed ``get_config`` /
+    ``get_all_configs`` / prefetch (the internal merge path) must use
+    :func:`make_per_group_result` instead — the merge reads only ``groups`` /
+    ``gray_hits`` and ignores ``config_flat_kv`` entirely.
     """
     resp = abtest_pb2.GetExperimentResultResponse()
     for k, v in (config_flat_kv or {}).items():
         resp.config_flat_kv[k] = v
+    return resp
+
+
+def make_per_group_result(
+    params: Optional[Dict[str, int]] = None,
+    *,
+    experiment_id: str = "exp-1",
+    group_id: str = "grp-1",
+    extra_groups: Optional[List[Tuple[str, str, Dict[str, int]]]] = None,
+    gray_hits: Optional[List[Tuple[int, Dict[str, int]]]] = None,
+    experiment_type: int = abtest_pb2.ExperimentType.EXPERIMENT_TYPE_CONFIG_VERSION,
+) -> abtest_pb2.GetExperimentResultResponse:
+    """Build an EACH_EXPERIMENT_GROUP-shaped GetExperimentResultResponse.
+
+    The per-group counterpart of :func:`make_exp_result` for canned responses
+    consumed by the SDK-internal per-ns fetch (get_config / get_all_configs /
+    prefetch), which requests ``display_type=EACH_EXPERIMENT_GROUP`` and
+    locally merges ``groups`` + ``gray_hits`` into key→versionId
+    (actual-enrollment-log design §3). ``config_flat_kv`` is deliberately left
+    empty — per-group servers never populate it (platform engine.go per-group
+    branch) and the SDK merge must not read it.
+
+    - ``params``: shorthand for ONE attributed experiment group
+      ``(experiment_id, group_id, params)``. ``None`` ⇒ no primary group.
+      Migrated legacy call sites use exactly
+      ``make_per_group_result({"k": 2})`` where they previously used
+      ``make_exp_result({"k": 2})`` — one attributed group carrying the same
+      key→versionId map, so the resolved values are byte-identical.
+    - ``extra_groups``: additional ``(experiment_id, group_id, params)``
+      groups appended AFTER the primary one, in order (wire order is
+      significant: the merge traverses ``groups`` in response order). Pass
+      empty-string ids to build an unattributed group (F3 value/attribution
+      decoupling fixtures).
+    - ``gray_hits``: ``(release_id, key_versions)`` entries appended in the
+      given order. Real servers emit them sorted by release_id ascending
+      (abtest.proto GetExperimentResultResponse.gray_hits contract); tests
+      that model reachable wire shapes must pass them ascending.
+    - ``experiment_type``: applied to every group this helper builds; defaults
+      to CONFIG_VERSION which is what the internal fetch consumes.
+    """
+    resp = abtest_pb2.GetExperimentResultResponse()
+    groups: List[Tuple[str, str, Dict[str, int]]] = []
+    if params is not None:
+        groups.append((experiment_id, group_id, params))
+    groups.extend(extra_groups or [])
+    for exp_id, grp_id, kv in groups:
+        g = resp.groups.add()
+        g.experiment_id = exp_id
+        g.group_id = grp_id
+        g.experiment_type = experiment_type
+        for k, v in kv.items():
+            g.params_versions[k] = v
+    for release_id, kv in gray_hits or []:
+        h = resp.gray_hits.add()
+        h.release_id = release_id
+        for k, v in kv.items():
+            h.key_versions[k] = v
     return resp
 
 

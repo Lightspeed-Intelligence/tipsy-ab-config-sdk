@@ -8,6 +8,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — ctx-cancel 误报（issue #15）
+
+- **调用方上下文取消（gRPC `CANCELLED`）不再按故障处理**。此前上游客户端断连、
+  deadline 传播、`close()` 的 executor 中断等产生的
+  `StatusRuntimeException(CANCELLED)` 会打 ERROR/WARN、计失败指标并发
+  `BackgroundErrorEvent`。现在：
+  - Subscribe 流与周期 PullAll 循环命中 ctx-cancel 时**静默退出**——不 inc
+    `subscribeDisc`/`pullFailure`、不打 ERROR、不发 `subscribe`/`periodic_pull`
+    事件（`SubscribeConnected` 不再被误翻 false）。`close()` 经
+    `channel.shutdownNow()` 产生的 UNAVAILABLE 仍由原有 `closed` 兜底覆盖，行为不变。
+  - abtest 拉取（`GetExperimentResult`）命中 ctx-cancel 时降为 **INFO** 日志，
+    计入**新增指标 `sdk_abtest_canceled_total{namespace}`**
+    （`Metrics.abtestCanceledTotal(ns)`），不再计 `abtestFallback`。取值语义不变
+    （仍回落 full release / default）。
+  - 判定刻意收窄为 `StatusRuntimeException` + `Status.Code.CANCELLED`：
+    `DEADLINE_EXCEEDED` 等真错误路径行为不变（回归用例钉住）。
+  - 说明：Go 端同批修复（`isContextCanceled`）；**Python 无需改动**——实测
+    grpcio 的取消抛 `asyncio.CancelledError`（`BaseException`），现有代码已正确
+    处理，属三语言对齐规则的合理例外（论证见 issue #15）。
+
+### Added — secretKey 鉴权（issue #16）
+
+- **`Config.Builder.secretKey(String)`：仅配置 secretKey（即 `TIPSY_SERVICE_SECRET` 本身）
+  即可完成鉴权**，无需可信 issuer 签发 JWT。凭据优先级 **SecretKey > TokenProvider > Token**
+  （每请求在 `TokenSource.authHeaderValue()` 单取值点判定，gRPC metadata 与 HTTP header
+  两路径同源），发送形态为精确字面量 `Authorization: SecretKey <secret>`（服务端按 scheme
+  前缀分派，需平台侧 `feat/secretkey-auth` 配套）。Init 校验放宽为 secretKey / token /
+  tokenProvider 三者至少其一，缺失时错误文案三端统一：
+  `tipsyabconfig: SecretKey, Token or TokenProvider must be set`。
+  SDK 不读任何环境变量，secretKey 由业务方显式传入；secret 值不进入任何日志。
+  持有 secretKey 即等效全量访问（`internal_service` + `"*"`），信任边界见
+  `docs/usage-and-integration.md` §3。
+
+### Added
+
+- **`getConfig` / `getConfigDefault` 命中日志新增结构化归因字段 `reason`**（4 值完备：
+  `full_release` / `experiment` / `gray_whitelist` / `abtest_unattributed`）。
+  `reason=experiment` 时同时输出 `experiment_id`、`group_id`；`reason=gray_whitelist`
+  时同时输出 `release_id`（整数）。条件字段缺席时整键省略（omit），不用空串占位。
+  Java 端为保证 SLS 机器可解析，采用**每-reason 固定 kv 文本模板**（字段顺序固定）；
+  msg 前缀 `tipsyabconfig: get_config hit (abtest)` / `(full)` 不变，既有检索/告警
+  不受影响。`getConfigStatic` 的日志行保持现状（`source=full_static`，无 reason）。
+
+### Changed
+
+- **内部 per-ns abtest fetch 的 wire 形态由 `CONFIG_VERSION + FLAT_KV` 切换为
+  `CONFIG_VERSION + EACH_EXPERIMENT_GROUP`**，SDK 本地把 `groups[]` + `gray_hits[]`
+  合并为原有的扁平 key→versionId map（逐行复刻平台 flat 合并：灰度无条件优先于实验；
+  同类型 key 冲突属异常情况，平台 + SDK 只保障至少返回可选值中的一个），归因信息
+  （experimentId / groupId / releaseId）由此保留并进入命中日志。值解析结果与原
+  FLAT_KV 等价。公共 API 零改动：`getExperimentResult`、
+  `prefetchConfigVersionFlatKvForNamespace` 等签名与语义不变（后者名称中的
+  "FlatKv" 指其输出形态，予以保留）。
+
+### Test infrastructure
+
+- 新增 test-scope 依赖 `ch.qos.logback:logback-classic`（parent 统一 pin 1.5.x，
+  与 slf4j-api 2.0.x 配套），供测试用 `ListAppender` 捕获并断言命中日志整行形状。
+  仅测试期生效，不进入发布 jar 的依赖图。
+
 ## [0.10.1] - 2026-08-24
 
 ### Changed

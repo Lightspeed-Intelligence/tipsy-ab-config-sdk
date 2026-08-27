@@ -44,6 +44,7 @@ public final class Config {
     private final int pullRetries;
     private final Duration abtestTimeout;
     private final boolean startupFailOpen;
+    private final String secretKey;
     private final String token;
     private final TokenProvider tokenProvider;
     private final int maxRecvMessageSize;
@@ -63,6 +64,7 @@ public final class Config {
         this.pullRetries = b.pullRetries;
         this.abtestTimeout = b.abtestTimeout;
         this.startupFailOpen = b.startupFailOpen;
+        this.secretKey = b.secretKey;
         this.token = b.token;
         this.tokenProvider = b.tokenProvider;
         this.maxRecvMessageSize = b.maxRecvMessageSize;
@@ -119,7 +121,21 @@ public final class Config {
         return startupFailOpen;
     }
 
-    /** The static bearer token (required unless {@link #tokenProvider()} is set). */
+    /**
+     * The raw service secret ({@code TIPSY_SERVICE_SECRET}) used as a standalone
+     * credential; may be {@code null}/empty. When set it takes precedence over
+     * both {@link #tokenProvider()} and {@link #token()} and is sent as
+     * {@code Authorization: SecretKey <secret>} on every request (gRPC and HTTP
+     * alike). Never read from the environment: the host passes it explicitly.
+     */
+    public String secretKey() {
+        return secretKey;
+    }
+
+    /**
+     * The static bearer token (at least one of {@link #secretKey()}, this, or
+     * {@link #tokenProvider()} must be set).
+     */
     public String token() {
         return token;
     }
@@ -184,6 +200,7 @@ public final class Config {
         private int pullRetries = 3;
         private Duration abtestTimeout = Duration.ofMillis(1500);
         private boolean startupFailOpen;
+        private String secretKey;
         private String token;
         private TokenProvider tokenProvider;
         private int maxRecvMessageSize = 512 * 1024 * 1024;
@@ -250,6 +267,17 @@ public final class Config {
         /** Sets whether a failed startup PullAll is absorbed instead of aborting (default false). */
         public Builder startupFailOpen(boolean startupFailOpen) {
             this.startupFailOpen = startupFailOpen;
+            return this;
+        }
+
+        /**
+         * Sets the raw service secret ({@code TIPSY_SERVICE_SECRET}) as a
+         * standalone credential. Takes precedence over {@link #tokenProvider(TokenProvider)}
+         * and {@link #token(String)}; sent as {@code Authorization: SecretKey <secret>}.
+         * Never read from the environment.
+         */
+        public Builder secretKey(String secretKey) {
+            this.secretKey = secretKey;
             return this;
         }
 

@@ -34,6 +34,7 @@ from .conftest import (
     FakeConfigServicer,
     issue_test_token,
     make_exp_result,
+    make_per_group_result,
     make_snapshot,
 )
 
@@ -90,7 +91,7 @@ async def test_default_namespace_from_config(
     cfg_servicer.set_pull_snapshot(
         make_snapshot("ns1", 1, 1, {"k": (1, {1: "full-v1", 2: "ab-v2"})})
     )
-    ab_servicer.set_response("ns1", make_exp_result({"k": 2}))
+    ab_servicer.set_response("ns1", make_per_group_result({"k": 2}))
     cli = await init(
         Config(
             namespaces=["ns1"],
@@ -133,7 +134,7 @@ async def test_default_namespace_from_env(
     cfg_servicer.set_pull_snapshot(
         make_snapshot("ns1", 1, 1, {"k": (1, {1: "full-v1", 2: "ab-v2"})})
     )
-    ab_servicer.set_response("ns1", make_exp_result({"k": 2}))
+    ab_servicer.set_response("ns1", make_per_group_result({"k": 2}))
     monkeypatch.setenv("PROJECT_DEFAULT_NAMESPACE", "ns1")
     cli = await init(
         Config(
@@ -169,15 +170,15 @@ async def test_new_abtest_context_construction_issues_zero_rpc(
     which asserted a construction-time eager pre-request for the default ns.
     After the prefetch decouple (design G1 / D1) construction NEVER issues an
     RPC; the first dynamic ``get_config`` pays the lazy latency instead, and the
-    shape of THAT request (config_version + flat_kv for the accessed ns) is the
-    asserted contract. ns2 is never touched until accessed.
+    shape of THAT request (config_version + each_experiment_group for the
+    accessed ns) is the asserted contract. ns2 is never touched until accessed.
     """
     cfg_addr, ab_addr = running_servers
     cfg_servicer.set_pull_snapshot(
         make_snapshot("ns1", 1, 1, {"k": (1, {1: "full", 2: "ab"})})
     )
     cfg_servicer.set_pull_snapshot(make_snapshot("ns2", 1, 1))
-    ab_servicer.set_response("ns1", make_exp_result({"k": 2}))
+    ab_servicer.set_response("ns1", make_per_group_result({"k": 2}))
     cli = await init(
         Config(
             namespaces=["ns1", "ns2"],
@@ -202,7 +203,9 @@ async def test_new_abtest_context_construction_issues_zero_rpc(
         assert ab_servicer.calls_by_ns.get("ns2", 0) == 0
 
         # The first dynamic get_config on the default ns pays the lazy RPC, and
-        # that request carries the hardwired config_version + flat_kv shape.
+        # that request carries the hardwired config_version + per-group shape
+        # (the internal fetch switched to EACH_EXPERIMENT_GROUP so the local
+        # merge keeps attribution — actual-enrollment-log design §1).
         val = await cli.get_config_default(abctx, "k", "def")
         assert val == "ab"
         assert ab_servicer.calls - before == 1
@@ -215,7 +218,7 @@ async def test_new_abtest_context_construction_issues_zero_rpc(
         )
         assert (
             req.display_type
-            == abtest_pb2.ResultDisplayType.RESULT_DISPLAY_TYPE_FLAT_KV
+            == abtest_pb2.ResultDisplayType.RESULT_DISPLAY_TYPE_EACH_EXPERIMENT_GROUP
         )
     finally:
         await cli.aclose()
@@ -262,7 +265,7 @@ async def test_result_for_concurrent_at_most_once(
     )
     # Add latency so concurrent first-accessors genuinely race in-flight.
     ab_servicer.delay = 0.08
-    ab_servicer.set_response("ns1", make_exp_result({"k": 2}))
+    ab_servicer.set_response("ns1", make_per_group_result({"k": 2}))
     cli = await init(
         Config(
             namespaces=["ns1"],
@@ -297,8 +300,9 @@ async def test_get_config_full_fallback_preserved_for_unhit_key(
     ab_servicer: FakeAbtestServicer,
     running_servers,
 ):
-    """M6: a key NOT in config_flat_kv resolves to the full-release version
-    (not the default), even though the abtest result was fetched for the ns."""
+    """M6: a key NOT hit by the merged abtest result resolves to the
+    full-release version (not the default), even though the abtest result was
+    fetched for the ns."""
     cfg_addr, ab_addr = running_servers
     cfg_servicer.set_pull_snapshot(
         make_snapshot(
@@ -309,8 +313,8 @@ async def test_get_config_full_fallback_preserved_for_unhit_key(
             },
         )
     )
-    # Experiment only hits "hit"; "unhit" is absent from config_flat_kv.
-    ab_servicer.set_response("ns1", make_exp_result({"hit": 2}))
+    # Experiment only hits "hit"; "unhit" is absent from the merged result.
+    ab_servicer.set_response("ns1", make_per_group_result({"hit": 2}))
     cli = await init(
         Config(
             namespaces=["ns1"],
