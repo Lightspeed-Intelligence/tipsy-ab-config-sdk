@@ -470,7 +470,9 @@ public final class TipsyAbConfigClient implements AutoCloseable {
      * results. Each entry in {@code kvByNs} pre-resolves the abtest result for
      * that namespace (a completed future); namespaces not in the map resolve to
      * the empty result without an RPC ({@code empty=true}). A fresh trace id is
-     * generated.
+     * generated. Seeds ONLY the key&rarr;version map (no attribution), so a
+     * mock-driven {@code getConfig} abtest hit logs
+     * {@code reason=abtest_unattributed}.
      */
     public AbtestContext mockAbtestContext(String userId, Map<String, Map<String, Long>> kvByNs) {
         Map<String, CompletableFuture<AbtestComputeResult>> results =
@@ -499,11 +501,14 @@ public final class TipsyAbConfigClient implements AutoCloseable {
      *       {@link NamespaceRequiredException}; unsubscribed &rArr;
      *       {@link NamespaceNotSubscribedException}).</li>
      *   <li>The per-ns abtest result is memoised into {@code abctx} (at-most-once
-     *       RPC per request link). When {@code key} is present in
-     *       {@code config_flat_kv} with a non-zero version and the local cache
-     *       holds that version, the value is returned (the empty string is a
-     *       valid value). A cache miss on the ab version bumps the fallback
-     *       metric + WARN and falls through to the full release.</li>
+     *       RPC per request link; internally the SDK requests the
+     *       {@code EACH_EXPERIMENT_GROUP} display type and merges the response
+     *       locally into a flat key&rarr;version map with per-key attribution).
+     *       When {@code key} is present in that merged map with a non-zero
+     *       version and the local cache holds that version, the value is
+     *       returned (the empty string is a valid value). A cache miss on the
+     *       ab version bumps the fallback metric + WARN and falls through to
+     *       the full release.</li>
      *   <li>Full-release fallback: a key absent from the abtest map is the common
      *       "no experiment hit" case and resolves to the full-release version,
      *       NOT the default. The default is only returned when neither an abtest
@@ -551,17 +556,58 @@ public final class TipsyAbConfigClient implements AutoCloseable {
         KeyResolution r = resolveKeyFromSnapshot(snap, resolvedNs, key, abresult, abctx.traceId());
         switch (r.source) {
             case ABTEST:
-                LOG.info("tipsyabconfig: get_config hit (abtest) "
-                        + "(ns={}, key={}, version={}, uid={}, trace_id={})",
-                        resolvedNs, key, r.version, abctx.userId(), abctx.traceId());
+                // Hit-log SLS contract (design §4): one FIXED kv text template
+                // per reason, field order fixed, an absent conditional field
+                // omits the whole key=value pair (never an empty placeholder).
+                // The msg prefix "tipsyabconfig: get_config hit (abtest)" is
+                // unchanged (existing SLS searches / alerts keep matching).
+                logAbtestHit(resolvedNs, key, r, abctx);
                 return r.value;
             case FULL:
                 LOG.info("tipsyabconfig: get_config hit (full) "
-                        + "(ns={}, key={}, version={}, uid={}, trace_id={})",
+                        + "reason=full_release, ns={}, key={}, version={}, uid={}, trace_id={}",
                         resolvedNs, key, r.version, abctx.userId(), abctx.traceId());
                 return r.value;
             default:
                 return defaultValue;
+        }
+    }
+
+    /**
+     * Emits the abtest-hit Info log for {@link #getConfig} using the per-reason
+     * FIXED kv text templates from design §4 (SLS parse contract): the field
+     * order within each template is fixed, and the conditional attribution
+     * fields ({@code experiment_id}/{@code group_id} for {@code experiment},
+     * {@code release_id} for {@code gray_whitelist}) are present ONLY in their
+     * own reason's template — absence means the whole key is omitted.
+     * {@code version} and {@code release_id} are logged as plain integers.
+     */
+    private static void logAbtestHit(
+            String resolvedNs, String key, KeyResolution r, AbtestContext abctx) {
+        AbtestComputeResult.Attribution attr = r.attribution == null
+                ? AbtestComputeResult.Attribution.UNATTRIBUTED : r.attribution;
+        switch (attr.source) {
+            case EXPERIMENT:
+                LOG.info("tipsyabconfig: get_config hit (abtest) "
+                        + "reason=experiment, ns={}, key={}, version={}, "
+                        + "experiment_id={}, group_id={}, uid={}, trace_id={}",
+                        resolvedNs, key, r.version, attr.experimentId, attr.groupId,
+                        abctx.userId(), abctx.traceId());
+                break;
+            case GRAY_WHITELIST:
+                LOG.info("tipsyabconfig: get_config hit (abtest) "
+                        + "reason=gray_whitelist, ns={}, key={}, version={}, "
+                        + "release_id={}, uid={}, trace_id={}",
+                        resolvedNs, key, r.version, attr.releaseId,
+                        abctx.userId(), abctx.traceId());
+                break;
+            default:
+                // UNATTRIBUTED: value valid, attribution unknown (empty-id
+                // group, release_id=0 gray hit, mock-seeded result).
+                LOG.info("tipsyabconfig: get_config hit (abtest) "
+                        + "reason=abtest_unattributed, ns={}, key={}, version={}, uid={}, trace_id={}",
+                        resolvedNs, key, r.version, abctx.userId(), abctx.traceId());
+                break;
         }
     }
 
@@ -583,21 +629,28 @@ public final class TipsyAbConfigClient implements AutoCloseable {
 
     /**
      * The outcome of resolving a single key against one captured snapshot: the
-     * source, the resolved value (meaningless when {@code source == NONE}), and
-     * the version id the value came from (0 when {@code source == NONE}).
+     * source, the resolved value (meaningless when {@code source == NONE}), the
+     * version id the value came from (0 when {@code source == NONE}), and — for
+     * an ABTEST hit only — the attribution the hit log reports (never
+     * {@code null} for ABTEST; a result without an attribution entry, e.g. a
+     * mock-seeded one, resolves to
+     * {@link AbtestComputeResult.Attribution#UNATTRIBUTED}).
      */
     private static final class KeyResolution {
         final KeySource source;
         final String value;
         final long version;
+        final AbtestComputeResult.Attribution attribution;
 
-        KeyResolution(KeySource source, String value, long version) {
+        KeyResolution(KeySource source, String value, long version,
+                AbtestComputeResult.Attribution attribution) {
             this.source = source;
             this.value = value;
             this.version = version;
+            this.attribution = attribution;
         }
 
-        static final KeyResolution NONE = new KeyResolution(KeySource.NONE, null, 0L);
+        static final KeyResolution NONE = new KeyResolution(KeySource.NONE, null, 0L, null);
     }
 
     /**
@@ -626,17 +679,23 @@ public final class TipsyAbConfigClient implements AutoCloseable {
         // abtest branch below still runs so getConfig keeps its WARN + fallback
         // metric when a non-zero ab version cannot be resolved locally (matching
         // the pre-refactor behaviour). get-all never reaches here with a null ks
-        // because it iterates snap.keys, so its intentional "silent omit" for a
-        // flat_kv key absent from the snapshot is preserved.
+        // because it iterates snap.keys, so its intentional "silent omit" for an
+        // abtest-hit key absent from the snapshot is preserved.
         KeyState ks = (snap == null) ? null : snap.keys.get(key);
 
-        // abtest hit path: key present in config_flat_kv with a non-zero version.
+        // abtest hit path: key present in the merged abtest key→version map with
+        // a non-zero version.
         if (abresult != null) {
             Long abVersion = abresult.keyVersions.get(key);
             if (abVersion != null && abVersion != 0L) {
                 String v = (ks == null) ? null : ks.versions.get(abVersion);
                 if (v != null) {
-                    return new KeyResolution(KeySource.ABTEST, v, abVersion);
+                    // Attribution rides along for the getConfig hit log; a
+                    // result without an entry (mock-seeded) degrades to
+                    // UNATTRIBUTED — never to a different value (F3).
+                    AbtestComputeResult.Attribution attr = abresult.attribution.get(key);
+                    return new KeyResolution(KeySource.ABTEST, v, abVersion,
+                            attr == null ? AbtestComputeResult.Attribution.UNATTRIBUTED : attr);
                 }
                 // ab→full fallback: local cache missing the ab version.
                 metrics.abtestFallback.inc(resolvedNs);
@@ -651,7 +710,7 @@ public final class TipsyAbConfigClient implements AutoCloseable {
         if (ks != null && ks.fullReleaseVersion != 0L) {
             String v = ks.versions.get(ks.fullReleaseVersion);
             if (v != null) {
-                return new KeyResolution(KeySource.FULL, v, ks.fullReleaseVersion);
+                return new KeyResolution(KeySource.FULL, v, ks.fullReleaseVersion, null);
             }
         }
         return KeyResolution.NONE;
@@ -690,7 +749,7 @@ public final class TipsyAbConfigClient implements AutoCloseable {
      * {@code getConfig} sweep (RPC / metric behaviour only): (1) an absent
      * snapshot returns an empty map with zero RPC, whereas {@code getConfig} would
      * still fire the abtest RPC then return the default; (2) a key present in
-     * {@code config_flat_kv} but absent from the snapshot is silently omitted (no
+     * the merged abtest result but absent from the snapshot is silently omitted (no
      * WARN, no fallback metric), since it has no resolvable value anyway.
      *
      * <p>The returned {@code HashMap} is freshly allocated and mutable; callers

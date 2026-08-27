@@ -8,6 +8,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`getConfig` / `getConfigDefault` 命中日志新增结构化归因字段 `reason`**（4 值完备：
+  `full_release` / `experiment` / `gray_whitelist` / `abtest_unattributed`）。
+  `reason=experiment` 时同时输出 `experiment_id`、`group_id`；`reason=gray_whitelist`
+  时同时输出 `release_id`（整数）。条件字段缺席时整键省略（omit），不用空串占位。
+  Java 端为保证 SLS 机器可解析，采用**每-reason 固定 kv 文本模板**（字段顺序固定）；
+  msg 前缀 `tipsyabconfig: get_config hit (abtest)` / `(full)` 不变，既有检索/告警
+  不受影响。`getConfigStatic` 的日志行保持现状（`source=full_static`，无 reason）。
+
+### Changed
+
+- **内部 per-ns abtest fetch 的 wire 形态由 `CONFIG_VERSION + FLAT_KV` 切换为
+  `CONFIG_VERSION + EACH_EXPERIMENT_GROUP`**，SDK 本地把 `groups[]` + `gray_hits[]`
+  合并为原有的扁平 key→versionId map（逐行复刻平台 flat 合并：灰度无条件优先于实验；
+  同类型 key 冲突属异常情况，平台 + SDK 只保障至少返回可选值中的一个），归因信息
+  （experimentId / groupId / releaseId）由此保留并进入命中日志。值解析结果与原
+  FLAT_KV 等价。公共 API 零改动：`getExperimentResult`、
+  `prefetchConfigVersionFlatKvForNamespace` 等签名与语义不变（后者名称中的
+  "FlatKv" 指其输出形态，予以保留）。
+
+### Test infrastructure
+
+- 新增 test-scope 依赖 `ch.qos.logback:logback-classic`（parent 统一 pin 1.5.x，
+  与 slf4j-api 2.0.x 配套），供测试用 `ListAppender` 捕获并断言命中日志整行形状。
+  仅测试期生效，不进入发布 jar 的依赖图。
+
 ## [0.10.1] - 2026-08-24
 
 ### Changed

@@ -1,11 +1,15 @@
 package io.github.lightspeedintelligence.abconfig;
 
+import io.github.lightspeedintelligence.abconfig.proto.abtest.v1.ExperimentGroupResult;
 import io.github.lightspeedintelligence.abconfig.proto.abtest.v1.GetExperimentResultRequest;
 import io.github.lightspeedintelligence.abconfig.proto.abtest.v1.GetExperimentResultResponse;
+import io.github.lightspeedintelligence.abconfig.proto.abtest.v1.GrayReleaseHit;
 import io.github.lightspeedintelligence.abconfig.proto.abtest.v1.Value;
 import java.time.Duration;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import org.slf4j.Logger;
@@ -218,12 +222,17 @@ public final class AbtestContext {
     }
 
     /**
-     * Explicit, opt-in prefetch (warm-up) of the {@code config_version flat_kv}
-     * result for {@code ns} within this request link. Non-blocking: it triggers
-     * the at-most-once fetch via {@link #ensureFetch} and returns immediately
-     * without awaiting the result, so a subsequent {@link
-     * TipsyAbConfigClient#getConfig} for the same ns reuses the warmed future
-     * instead of paying the RPC latency inline.
+     * Explicit, opt-in prefetch (warm-up) of the per-namespace abtest result
+     * for {@code ns} within this request link. The method name keeps its
+     * historical "FlatKv" wording (API compatibility): the OUTPUT consumed by
+     * {@code getConfig} is still the flat key&rarr;versionId map, but the SDK
+     * internally requests the {@code EACH_EXPERIMENT_GROUP} display type and
+     * merges the per-group response locally (preserving per-key attribution
+     * for the hit log). Non-blocking: it triggers the at-most-once fetch via
+     * {@link #ensureFetch} and returns immediately without awaiting the
+     * result, so a subsequent {@link TipsyAbConfigClient#getConfig} for the
+     * same ns reuses the warmed future instead of paying the RPC latency
+     * inline.
      *
      * <p>Idempotent and at-most-once: calling this more than once for the same
      * ns (or prefetching then {@code getConfig}-ing) issues AT MOST ONE
@@ -272,11 +281,16 @@ public final class AbtestContext {
 
     /**
      * Wraps {@code AbtestService.GetExperimentResult} with the per-call timeout
-     * for the {@code config_version flat_kv} shape the dynamic {@code getConfig}
-     * fast path consumes (the experiment type and display type are hardwired to
-     * {@code CONFIG_VERSION} / {@code FLAT_KV}; this is NOT the general-purpose
-     * {@link TipsyAbConfigClient#getExperimentResult} API). On ANY error
-     * (including a missing abtest connection) it returns
+     * for the shape the dynamic {@code getConfig} fast path consumes: the
+     * experiment type and display type are hardwired to {@code CONFIG_VERSION}
+     * / {@code EACH_EXPERIMENT_GROUP}, and the per-group response
+     * ({@code groups[]} + {@code gray_hits[]}) is merged SDK-locally via
+     * {@link #mergeEachExperimentGroupResponse} into the flat key&rarr;version
+     * map (plus per-key attribution for the hit log). The method name keeps its
+     * historical "FlatKv" wording because the OUTPUT is still the flat
+     * key&rarr;versionId map; only the wire shape changed. This is NOT the
+     * general-purpose {@link TipsyAbConfigClient#getExperimentResult} API. On
+     * ANY error (including a missing abtest connection) it returns
      * {@link AbtestComputeResult#EMPTY_RESULT} and bumps the per-ns fallback
      * counter so the caller can monitor degraded mode. NEVER throws (F5): the
      * lazy fetch and explicit prefetch paths both rely on this.
@@ -292,7 +306,7 @@ public final class AbtestContext {
                 .setUserId(userId)
                 .putAllUserAttrs(encodeUserAttrs(attrs, owner.logger()))
                 .setExperimentType(io.github.lightspeedintelligence.abconfig.proto.abtest.v1.ExperimentType.EXPERIMENT_TYPE_CONFIG_VERSION)
-                .setDisplayType(io.github.lightspeedintelligence.abconfig.proto.abtest.v1.ResultDisplayType.RESULT_DISPLAY_TYPE_FLAT_KV)
+                .setDisplayType(io.github.lightspeedintelligence.abconfig.proto.abtest.v1.ResultDisplayType.RESULT_DISPLAY_TYPE_EACH_EXPERIMENT_GROUP)
                 .setTraceId(traceId)
                 .build();
         long __start = System.nanoTime();
@@ -300,9 +314,8 @@ public final class AbtestContext {
             GetExperimentResultResponse resp =
                     transport.getExperimentResult(req, owner.abtestTimeout());
             double durMs = (System.nanoTime() - __start) / 1_000_000.0;
-            Map<String, Long> kv = new HashMap<>(resp.getConfigFlatKvMap());
             owner.logger().debug("tipsyabconfig: GetExperimentResult rpc (ns={}, trace_id={}, duration_ms={})", ns, traceId, durMs);
-            return new AbtestComputeResult(kv);
+            return mergeEachExperimentGroupResponse(resp, ns);
         } catch (Exception e) {
             owner.metricsInternal().abtestFallback.inc(ns);
             owner.logger().warn(
@@ -313,6 +326,128 @@ public final class AbtestContext {
             owner.logger().debug("tipsyabconfig: GetExperimentResult rpc failed (ns={}, trace_id={}, duration_ms={})", ns, traceId, durMs, e);
             return AbtestComputeResult.EMPTY_RESULT;
         }
+    }
+
+    /**
+     * SDK-local merge of an {@code EACH_EXPERIMENT_GROUP} response into the
+     * flat key&rarr;versionId map plus per-key attribution. This is a
+     * line-by-line replica of the platform's flat_kv assembly
+     * ({@code internal/abtest/compute/engine.go:329-385} in the platform repo,
+     * pinned at HEAD {@code dd3cf76}), because "the merged result equals what
+     * the old FLAT_KV wire returned" is the sole equivalence criterion:
+     * <ol>
+     *   <li>{@code gray_hits} first, in wire order (the server emits them
+     *       sorted by release_id ascending), first-writer-wins. A cross-entry
+     *       duplicate key is structurally unreachable on the wire (the
+     *       platform's computeGray already folds multi-gray conflicts), so the
+     *       skip here is purely defensive.</li>
+     *   <li>{@code groups} next, in wire order, {@code CONFIG_VERSION} entries
+     *       only. A key already owned by a gray hit is SKIPPED — gray wins
+     *       unconditionally over experiment (replicates
+     *       {@code engine.go:355-356}; this cross-source rule is the strictly
+     *       guaranteed product semantic). Between experiment groups the last
+     *       write wins (replicates {@code engine.go:380}).</li>
+     * </ol>
+     *
+     * <p><b>核心不变式（F3）</b>：keyVersions 的写入永不依赖归因字段是否有效。
+     * 空 experiment_id/group_id 的组、release_id=0 的 gray hit 仍写入 versionId，
+     * 仅将 attribution 记为 {@code UNATTRIBUTED}（日志 reason 降级，值不变）。
+     * 唯一的刻意例外：{@code experiment_type != CONFIG_VERSION} 的组按 fail-closed
+     * 过滤跳过——复刻平台 flat 路径的同一过滤（matchesType），且平台侧对该字段填充
+     * 有可变红守护（探针 M10）。
+     *
+     * <p><b>同类型冲突契约（用户决策 2025-08-26，逐字）</b>：
+     * 正常情况下不会发生同类型 key 冲突，同类型 key 冲突是异常情况，此时平台 + SDK
+     * 只需保障至少返回可选值中的一个就算符合承诺。
+     *
+     * <p><b>实现约束（防 flapping）</b>：合并必须顺序遍历 {@code groups} /
+     * {@code gray_hits} 两个 proto repeated 字段（有序数组），绝不可把候选中转进
+     * map 再按 map 迭代序合并——顺序遍历使同一响应的重复合并结果恒定。（每个元素
+     * 内部的 {@code key_versions} / {@code params_versions} map 键唯一，迭代序不
+     * 影响结果。）跨仓备注（R3）：平台侧 wire {@code groups} 顺序等于其 flat 路径
+     * 的遍历顺序（assembleGroups 不排序），但平台无测试钉住该性质；按上述契约放宽
+     * 后 SDK 不依赖它——同类型冲突返回任一候选值皆符合承诺。
+     */
+    AbtestComputeResult mergeEachExperimentGroupResponse(
+            GetExperimentResultResponse resp, String ns) {
+        Map<String, Long> keyVersions = new HashMap<>();
+        Map<String, AbtestComputeResult.Attribution> attribution = new HashMap<>();
+        // Keys written by a gray hit: the experiment pass below never overwrites
+        // these (gray wins unconditionally — engine.go:355-356, strict).
+        Set<String> grayOwned = new HashSet<>();
+
+        // Step 1: gray_hits in wire order (release_id ascending), first-writer-wins.
+        for (GrayReleaseHit hit : resp.getGrayHitsList()) {
+            for (Map.Entry<String, Long> e : hit.getKeyVersionsMap().entrySet()) {
+                String key = e.getKey();
+                if (grayOwned.contains(key)) {
+                    // Same-source (gray vs gray) conflict: wire-unreachable,
+                    // defensive first-writer-wins (topology.go:433-435). The
+                    // platform treats same-source conflicts as deterministic
+                    // normal behaviour, so DEBUG, not WARN.
+                    if (owner != null) {
+                        AbtestComputeResult.Attribution kept = attribution.get(key);
+                        owner.logger().debug(
+                                "tipsyabconfig: abtest merge conflict (gray vs gray), first writer wins "
+                                        + "(ns={}, key={}, kept_version={}, kept_release_id={}, "
+                                        + "skipped_version={}, skipped_release_id={}, trace_id={})",
+                                ns, key, keyVersions.get(key),
+                                kept == null ? 0L : kept.releaseId,
+                                e.getValue(), hit.getReleaseId(), traceId);
+                    }
+                    continue;
+                }
+                grayOwned.add(key);
+                keyVersions.put(key, e.getValue());
+                // F3: the value is written above regardless; release_id=0 only
+                // degrades the attribution to UNATTRIBUTED.
+                attribution.put(key, hit.getReleaseId() != 0L
+                        ? AbtestComputeResult.Attribution.grayWhitelist(hit.getReleaseId())
+                        : AbtestComputeResult.Attribution.UNATTRIBUTED);
+            }
+        }
+
+        // Step 2: groups in wire order, CONFIG_VERSION only.
+        for (ExperimentGroupResult g : resp.getGroupsList()) {
+            if (g.getExperimentType()
+                    != io.github.lightspeedintelligence.abconfig.proto.abtest.v1.ExperimentType.EXPERIMENT_TYPE_CONFIG_VERSION) {
+                // Fail-closed type filter — deliberate exception to F3 (see
+                // the method javadoc): replicates the platform flat path's
+                // matchesType filter, guarded platform-side (probe M10).
+                continue;
+            }
+            for (Map.Entry<String, Long> e : g.getParamsVersionsMap().entrySet()) {
+                String key = e.getKey();
+                if (grayOwned.contains(key)) {
+                    // Cross-source: gray wins unconditionally (engine.go:355-356,
+                    // strictly guaranteed product semantic) — skip, no overwrite.
+                    continue;
+                }
+                Long prev = keyVersions.get(key);
+                if (prev != null && owner != null) {
+                    // Same-source (experiment vs experiment) conflict:
+                    // last-write-wins (engine.go:380). Deterministic normal
+                    // behaviour platform-side, so DEBUG, not WARN.
+                    AbtestComputeResult.Attribution prevAttr = attribution.get(key);
+                    owner.logger().debug(
+                            "tipsyabconfig: abtest merge conflict (experiment vs experiment), last writer wins "
+                                    + "(ns={}, key={}, prev_version={}, prev_experiment_id={}, "
+                                    + "new_version={}, new_experiment_id={}, trace_id={})",
+                            ns, key, prev,
+                            prevAttr == null ? "" : prevAttr.experimentId,
+                            e.getValue(), g.getExperimentId(), traceId);
+                }
+                keyVersions.put(key, e.getValue());
+                // F3: the value is written above regardless; empty ids only
+                // degrade the attribution to UNATTRIBUTED (never skip the key —
+                // skipping would drop the versionId, a value-resolution change).
+                boolean attributed = !g.getExperimentId().isEmpty() && !g.getGroupId().isEmpty();
+                attribution.put(key, attributed
+                        ? AbtestComputeResult.Attribution.experiment(g.getExperimentId(), g.getGroupId())
+                        : AbtestComputeResult.Attribution.UNATTRIBUTED);
+            }
+        }
+        return new AbtestComputeResult(keyVersions, attribution);
     }
 
     // ------------------------------------------------------------------
