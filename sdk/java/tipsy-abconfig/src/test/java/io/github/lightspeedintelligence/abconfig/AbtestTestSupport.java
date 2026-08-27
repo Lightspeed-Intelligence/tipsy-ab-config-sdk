@@ -152,6 +152,12 @@ final class AbtestTestSupport implements AutoCloseable {
         /** ns -> if true, the handler fails the call with INTERNAL. */
         final ConcurrentHashMap<String, Boolean> failNs = new ConcurrentHashMap<>();
         /**
+         * ns -> a specific {@link io.grpc.Status} to fail the call with
+         * (overrides {@link #failNs}). Lets tests inject e.g. CANCELLED for the
+         * #15 ctx-cancel handling instead of the generic INTERNAL failure.
+         */
+        final ConcurrentHashMap<String, io.grpc.Status> failStatusNs = new ConcurrentHashMap<>();
+        /**
          * Optional barrier: when set, the handler blocks on this latch before
          * responding, letting a test force concurrent first-accessors to pile up
          * on the same in-flight RPC.
@@ -168,6 +174,11 @@ final class AbtestTestSupport implements AutoCloseable {
 
         void failFor(String ns) {
             failNs.put(ns, Boolean.TRUE);
+        }
+
+        /** Fails GetExperimentResult for {@code ns} with the given status (e.g. CANCELLED). */
+        void failWithStatus(String ns, io.grpc.Status status) {
+            failStatusNs.put(ns, status);
         }
 
         int callsFor(String ns) {
@@ -190,6 +201,11 @@ final class AbtestTestSupport implements AutoCloseable {
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                 }
+            }
+            io.grpc.Status failStatus = failStatusNs.get(ns);
+            if (failStatus != null) {
+                responseObserver.onError(failStatus.asRuntimeException());
+                return;
             }
             if (Boolean.TRUE.equals(failNs.get(ns))) {
                 responseObserver.onError(io.grpc.Status.INTERNAL

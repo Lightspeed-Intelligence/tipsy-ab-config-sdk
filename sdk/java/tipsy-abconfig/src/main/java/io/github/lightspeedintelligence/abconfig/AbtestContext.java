@@ -267,11 +267,7 @@ public final class AbtestContext {
                 f.complete(fetchConfigVersionFlatKvForNamespace(ns));
             } catch (Throwable t) {
                 if (owner != null) {
-                    owner.metricsInternal().abtestFallback.inc(ns);
-                    owner.logger().warn(
-                            "tipsyabconfig: abtest compute task threw; falling back to full release"
-                                    + " (ns={}, trace_id={})",
-                            ns, traceId, t);
+                    recordFetchFailure(ns, t, "abtest compute task threw");
                 }
                 f.complete(AbtestComputeResult.EMPTY_RESULT);
             }
@@ -317,14 +313,42 @@ public final class AbtestContext {
             owner.logger().debug("tipsyabconfig: GetExperimentResult rpc (ns={}, trace_id={}, duration_ms={})", ns, traceId, durMs);
             return mergeEachExperimentGroupResponse(resp, ns);
         } catch (Exception e) {
-            owner.metricsInternal().abtestFallback.inc(ns);
-            owner.logger().warn(
-                    "tipsyabconfig: AbtestService.GetExperimentResult failed; falling back to full release"
-                            + " (ns={}, trace_id={})",
-                    ns, traceId, e);
+            recordFetchFailure(ns, e, "AbtestService.GetExperimentResult failed");
             double durMs = (System.nanoTime() - __start) / 1_000_000.0;
             owner.logger().debug("tipsyabconfig: GetExperimentResult rpc failed (ns={}, trace_id={}, duration_ms={})", ns, traceId, durMs, e);
             return AbtestComputeResult.EMPTY_RESULT;
+        }
+    }
+
+    /**
+     * Records one failed per-ns abtest fetch on the owner's observability
+     * surface (#15). A caller-context cancellation (gRPC {@code CANCELLED} —
+     * SDK {@code close()}'s executor {@code shutdownNow()}, upstream client
+     * disconnect / deadline propagation, handler already returned) is expected
+     * termination, NOT a fault: it logs at INFO and bumps the dedicated
+     * {@code abtestCanceled} counter. Anything else keeps the historical WARN +
+     * {@code abtestFallback} accounting. Either way the caller degrades to
+     * {@link AbtestComputeResult#EMPTY_RESULT} (getConfig still resolves to the
+     * full release / default value) — only the observability differs.
+     *
+     * <p>Callers must ensure {@code owner != null}.
+     *
+     * @param failureClause the leading clause of the non-cancel WARN line
+     *        (e.g. {@code "AbtestService.GetExperimentResult failed"}), kept as
+     *        a parameter so both catch sites preserve their historical wording.
+     */
+    private void recordFetchFailure(String ns, Throwable t, String failureClause) {
+        if (TipsyAbConfigClient.isCancelled(t)) {
+            owner.metricsInternal().abtestCanceled.inc(ns);
+            owner.logger().info(
+                    "tipsyabconfig: abtest fetch canceled by caller context; falling back to full release"
+                            + " (ns={}, trace_id={}, err={})",
+                    ns, traceId, String.valueOf(t));
+        } else {
+            owner.metricsInternal().abtestFallback.inc(ns);
+            owner.logger().warn(
+                    "tipsyabconfig: {}; falling back to full release (ns={}, trace_id={})",
+                    failureClause, ns, traceId, t);
         }
     }
 

@@ -42,10 +42,15 @@ func (c *Client) runSubscribe() {
 		}
 		start := time.Now()
 		err := c.subscribeOnce(c.rootCtx)
-		if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, io.EOF) {
+		if err == nil || isContextCanceled(err) || errors.Is(err, io.EOF) {
 			// Server closed cleanly; reconnect immediately on EOF, exit
-			// on Canceled.
-			if errors.Is(err, context.Canceled) {
+			// silently on a ctx cancellation (issue #15: cancellation is an
+			// expected termination — no disc metric, no ERROR, no event; the
+			// rootCtx.Err() check at the top of the loop stays as the
+			// backstop). isContextCanceled catches BOTH the bare sentinel and
+			// the grpc status error carrying codes.Canceled, which does NOT
+			// wrap the sentinel.
+			if isContextCanceled(err) {
 				return
 			}
 			backoff = initialSubscribeBackoff

@@ -446,6 +446,17 @@ func (c *Client) fetchConfigVersionFlatKvForNamespace(parentCtx context.Context,
 	}
 	c.logger.Debug("tipsyabconfig: GetExperimentResult rpc", attrs...)
 	if err != nil {
+		// Ctx cancellation is an expected termination, not a fault (issue
+		// #15): count it in the dedicated abtestCanceled metric (NOT
+		// abtestFallback, which stays a pure fault signal) and log at Info.
+		// The return semantics are identical to the fault arm — empty result
+		// + err, so the caller degrades to the full release exactly as before.
+		if isContextCanceled(err) {
+			c.metrics.abtestCanceled.inc(ns)
+			c.logger.Info("tipsyabconfig: AbtestService.GetExperimentResult canceled; falling back to full release",
+				"ns", ns, "trace_id", traceID, "err", err)
+			return emptyAbtestResult, err
+		}
 		c.metrics.abtestFallback.inc(ns)
 		c.logger.Warn("tipsyabconfig: AbtestService.GetExperimentResult failed; falling back to full release",
 			"ns", ns, "trace_id", traceID, "err", err)

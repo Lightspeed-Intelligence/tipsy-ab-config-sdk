@@ -39,6 +39,16 @@ public final class Metrics {
     /** {@code sdk_abtest_fallback_total{namespace}} — incremented when a per-ns abtest call falls back to full release. */
     final NsCounter abtestFallback = new NsCounter();
 
+    /**
+     * {@code sdk_abtest_canceled_total{namespace}} — incremented when a per-ns
+     * abtest call is terminated by a caller-context cancellation (gRPC
+     * {@code CANCELLED}: SDK {@code close()}, upstream client disconnect,
+     * handler already returned). Split out of {@link #abtestFallback} (#15):
+     * the call still degrades to the full release value, but a cancellation is
+     * expected termination, not a failure.
+     */
+    final NsCounter abtestCanceled = new NsCounter();
+
     /** {@code sdk_business_seq_change_total{namespace}} — incremented by the cache when business_snapshot_seq advances. */
     final NsCounter businessSeqMoved = new NsCounter();
 
@@ -81,6 +91,11 @@ public final class Metrics {
     /** {@code sdk_abtest_fallback_total{namespace}}. */
     public long abtestFallbackTotal(String ns) {
         return abtestFallback.get(ns);
+    }
+
+    /** {@code sdk_abtest_canceled_total{namespace}}. */
+    public long abtestCanceledTotal(String ns) {
+        return abtestCanceled.get(ns);
     }
 
     /** {@code sdk_business_seq_change_total{namespace}}. */

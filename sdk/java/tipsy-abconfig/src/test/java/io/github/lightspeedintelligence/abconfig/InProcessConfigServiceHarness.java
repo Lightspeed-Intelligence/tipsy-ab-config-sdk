@@ -149,6 +149,11 @@ final class InProcessConfigServiceHarness implements AutoCloseable {
                 PullAllResponse resp = pullHandler.handle(request);
                 obs.onNext(resp);
                 obs.onCompleted();
+            } catch (io.grpc.StatusRuntimeException sre) {
+                // Pass a status-typed failure through unchanged so tests can
+                // inject specific codes (e.g. CANCELLED for the #15 ctx-cancel
+                // handling) instead of the INTERNAL wrap below.
+                obs.onError(sre);
             } catch (Exception e) {
                 obs.onError(io.grpc.Status.INTERNAL
                         .withDescription(String.valueOf(e.getMessage()))
