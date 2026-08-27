@@ -6,7 +6,8 @@ package tipsyabconfig
 //
 // All cases are pure in-process: the fake config server (cfgServer) seeds an
 // immutable NamespaceSnapshot via makeSnapshot, and the fake abtest server
-// (abServer) both arms the config_flat_kv response AND counts every
+// (abServer) both arms the abtest response (per-group shape via
+// perGroupResponse — actual-enrollment-log F2 migration) AND counts every
 // GetExperimentResult RPC (Calls / TotalCalls). RPC-count deltas are the proof
 // mechanism for "zero RPC" / "at-most-once" assertions.
 //
@@ -22,8 +23,6 @@ import (
 	"reflect"
 	"testing"
 	"time"
-
-	abtestv1 "github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk/api/gen/go/tipsy/abtest/v1"
 )
 
 // initClient runs Init and registers Close cleanup, trimming boilerplate that
@@ -60,10 +59,10 @@ func TestGetAllConfigs_ResolutionMatrix(t *testing.T) {
 		"emptyval": {full: 7, versions: map[int64]string{7: ""}},
 	}))
 	// abhit resolves to a cached version; abmiss points at version 99 which is
-	// NOT in the cache (forces the ab->full fallback + metric).
-	h.abServer.SetResponse("ns1", &abtestv1.GetExperimentResultResponse{
-		ConfigFlatKv: map[string]int64{"abhit": 2, "abmiss": 99},
-	})
+	// NOT in the cache (forces the ab->full fallback + metric). Fixture
+	// migrated to the per-group shape (actual-enrollment-log F2): same
+	// key→versionId map, transposed.
+	h.abServer.SetResponse("ns1", perGroupResponse(map[string]int64{"abhit": 2, "abmiss": 99}))
 	cli := initClient(t, h.baseConfig([]string{"ns1"}))
 
 	abctx := cli.NewAbtestContext(context.Background(), "u1", nil)
@@ -188,9 +187,7 @@ func TestGetAllConfigs_CtxCancelledPropagates(t *testing.T) {
 	}))
 	// Hold the RPC long enough that our cancel lands during the wait.
 	h.abServer.SetDelay(500 * time.Millisecond)
-	h.abServer.SetResponse("ns1", &abtestv1.GetExperimentResultResponse{
-		ConfigFlatKv: map[string]int64{"k": 2},
-	})
+	h.abServer.SetResponse("ns1", perGroupResponse(map[string]int64{"k": 2}))
 	cfg := h.baseConfig([]string{"ns1"})
 	cfg.AbtestTimeout = 2 * time.Second
 	cli := initClient(t, cfg)
@@ -256,9 +253,7 @@ func TestGetAllConfigs_AtMostOnceRPCWithGetConfig(t *testing.T) {
 		"k1": {full: 1, versions: map[int64]string{1: "full1", 2: "ab1"}},
 		"k2": {full: 1, versions: map[int64]string{1: "full2", 2: "ab2"}},
 	}))
-	h.abServer.SetResponse("ns1", &abtestv1.GetExperimentResultResponse{
-		ConfigFlatKv: map[string]int64{"k1": 2, "k2": 2},
-	})
+	h.abServer.SetResponse("ns1", perGroupResponse(map[string]int64{"k1": 2, "k2": 2}))
 	cli := initClient(t, h.baseConfig([]string{"ns1"}))
 
 	before := h.abServer.Calls("ns1")
@@ -293,9 +288,7 @@ func TestGetAllConfigs_AllFalseHDRZeroRPC(t *testing.T) {
 	h.cfgServer.SetPullSnapshot(pb)
 	// Arm the abtest server so a wrongful call would be counted (and would
 	// change the resolved values, surfacing the regression).
-	h.abServer.SetResponse("ns1", &abtestv1.GetExperimentResultResponse{
-		ConfigFlatKv: map[string]int64{"a": 1, "b": 2},
-	})
+	h.abServer.SetResponse("ns1", perGroupResponse(map[string]int64{"a": 1, "b": 2}))
 	cli := initClient(t, h.baseConfig([]string{"ns1"}))
 
 	before := h.abServer.Calls("ns1")
@@ -365,9 +358,7 @@ func TestGetAllConfigs_MixedFastPathFiresOneRPC(t *testing.T) {
 	setHDR(t, pb, "trueKey", boolPtr(true))
 	// absentKey: leave HDR nil (old-server frame) — must keep the abtest path.
 	h.cfgServer.SetPullSnapshot(pb)
-	h.abServer.SetResponse("ns1", &abtestv1.GetExperimentResultResponse{
-		ConfigFlatKv: map[string]int64{"trueKey": 2, "absentKey": 4},
-	})
+	h.abServer.SetResponse("ns1", perGroupResponse(map[string]int64{"trueKey": 2, "absentKey": 4}))
 	cli := initClient(t, h.baseConfig([]string{"ns1"}))
 
 	before := h.abServer.Calls("ns1")
@@ -402,10 +393,9 @@ func TestGetAllConfigs_FlatKvVersionZeroResolvesFull(t *testing.T) {
 	h.cfgServer.SetPullSnapshot(makeSnapshot("ns1", 1, 1, map[string]typedKey{
 		"k": {full: 1, versions: map[int64]string{1: "full-v1"}},
 	}))
-	// version 0 for "k" — not a real ab hit.
-	h.abServer.SetResponse("ns1", &abtestv1.GetExperimentResultResponse{
-		ConfigFlatKv: map[string]int64{"k": 0},
-	})
+	// version 0 for "k" — not a real ab hit. Per-group transposition keeps the
+	// zero versionId entry verbatim (merge writes it; resolve gates on != 0).
+	h.abServer.SetResponse("ns1", perGroupResponse(map[string]int64{"k": 0}))
 	cli := initClient(t, h.baseConfig([]string{"ns1"}))
 
 	abctx := cli.NewAbtestContext(context.Background(), "u1", nil)

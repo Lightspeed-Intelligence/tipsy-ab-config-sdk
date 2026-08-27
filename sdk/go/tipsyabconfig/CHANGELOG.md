@@ -20,6 +20,25 @@ bump first, then an SDK tag bump.
 
 ## [Unreleased]
 
+### Added
+- `GetConfig` / `GetConfigDefault` 命中日志（Info）新增结构化字段 `reason`
+  （4 值枚举：`full_release` / `experiment` / `gray_whitelist` / `abtest_unattributed`），
+  并按 reason 条件输出归因字段：`reason=experiment` 时带 `experiment_id` + `group_id`，
+  `reason=gray_whitelist` 时带 `release_id`；缺席字段整键省略（omit 语义，非空串占位）。
+  msg 文本（`get_config hit (full)` / `get_config hit (abtest)`）与既有字段
+  （`ns`/`key`/`version`/`uid`/`trace_id`）不变。`GetConfigStatic` 日志行不变
+  （无 reason，不属入组事件契约）。
+
+### Changed
+- 内部 per-ns abtest fetch 的请求 display_type 从 `FLAT_KV` 切换为
+  `EACH_EXPERIMENT_GROUP`（experiment_type 仍为 `CONFIG_VERSION`），SDK 本地把
+  groups + gray_hits 合并为同一 key→versionId 扁平 map（逐行复刻平台 flat 合并
+  语义：灰度无条件优先于实验；实验组间后写覆盖；灰度间 first-writer-wins），
+  值解析结果与原 FLAT_KV 消费语义等价，同时保留每-key 归因供命中日志使用。
+  公共 API 签名与语义零改动（`GetExperimentResult` /
+  `PrefetchConfigVersionFlatKvForNamespace` 等均不变；后者 docstring 更新说明
+  内部已切 per-group）。
+
 ## [0.13.2] - 2026-08-24
 
 ### Changed

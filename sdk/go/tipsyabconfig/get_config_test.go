@@ -9,8 +9,6 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
-
-	abtestv1 "github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk/api/gen/go/tipsy/abtest/v1"
 )
 
 func TestGetConfigStatic_HitAndMiss(t *testing.T) {
@@ -56,10 +54,9 @@ func TestGetConfig_AbtestHitResolvesAbVersion(t *testing.T) {
 	// Compute returns ab version=2. After D3 the SDK no longer emits
 	// ExposureEvents, so we only assert that the abtest-resolved version
 	// reaches the caller; the response carries no Exposures field anymore
-	// (server永不填充, see design v3 D1/D3).
-	h.abServer.SetResponse("ns1", &abtestv1.GetExperimentResultResponse{
-		ConfigFlatKv: map[string]int64{"k": 2},
-	})
+	// (server永不填充, see design v3 D1/D3). Fixture migrated to the per-group
+	// shape (actual-enrollment-log F2): same key→versionId map, transposed.
+	h.abServer.SetResponse("ns1", perGroupResponse(map[string]int64{"k": 2}))
 
 	cfg := h.baseConfig([]string{"ns1"})
 	cli, err := Init(context.Background(), cfg)
@@ -116,9 +113,7 @@ func TestGetConfig_AbVersionMissingInCacheFallsBack(t *testing.T) {
 		full     int64
 		versions map[int64]string
 	}{"k": {full: 1, versions: map[int64]string{1: "full-only"}}}))
-	h.abServer.SetResponse("ns1", &abtestv1.GetExperimentResultResponse{
-		ConfigFlatKv: map[string]int64{"k": 99},
-	})
+	h.abServer.SetResponse("ns1", perGroupResponse(map[string]int64{"k": 99}))
 
 	cfg := h.baseConfig([]string{"ns1"})
 	cli, err := Init(context.Background(), cfg)
@@ -167,9 +162,7 @@ func TestAbtestContext_OneComputePerNsPerRequest(t *testing.T) {
 		"k1": {full: 1, versions: map[int64]string{1: "a", 2: "b"}},
 		"k2": {full: 1, versions: map[int64]string{1: "c", 2: "d"}},
 	}))
-	h.abServer.SetResponse("ns1", &abtestv1.GetExperimentResultResponse{
-		ConfigFlatKv: map[string]int64{"k1": 2, "k2": 2},
-	})
+	h.abServer.SetResponse("ns1", perGroupResponse(map[string]int64{"k1": 2, "k2": 2}))
 	cfg := h.baseConfig([]string{"ns1"})
 	cli, err := Init(context.Background(), cfg)
 	if err != nil {
@@ -259,7 +252,7 @@ func TestAbtestContext_TimeoutDegradesSilently(t *testing.T) {
 	}{"k": {full: 1, versions: map[int64]string{1: "full"}}}))
 	// Make Compute hang past the per-call timeout.
 	h.abServer.SetDelay(500 * time.Millisecond)
-	h.abServer.SetResponse("ns1", &abtestv1.GetExperimentResultResponse{ConfigFlatKv: map[string]int64{"k": 99}})
+	h.abServer.SetResponse("ns1", perGroupResponse(map[string]int64{"k": 99}))
 
 	cfg := h.baseConfig([]string{"ns1"})
 	cfg.AbtestTimeout = 20 * time.Millisecond
@@ -344,9 +337,7 @@ func TestGetConfig_FastPath_FalseHDR_NoRPC(t *testing.T) {
 	h.cfgServer.SetPullSnapshot(pb)
 	// Arm the abtest server so that IF the SDK wrongly calls it, the call is
 	// counted (the response itself is irrelevant — the test fails on count>0).
-	h.abServer.SetResponse("ns1", &abtestv1.GetExperimentResultResponse{
-		ConfigFlatKv: map[string]int64{"pureFull": 1},
-	})
+	h.abServer.SetResponse("ns1", perGroupResponse(map[string]int64{"pureFull": 1}))
 
 	cfg := h.baseConfig([]string{"ns1"})
 	cli, err := Init(context.Background(), cfg)
@@ -406,9 +397,7 @@ func TestGetConfig_TrueHDR_StillCallsAbtest(t *testing.T) {
 	})
 	setHDR(t, pb, "k", proto.Bool(true))
 	h.cfgServer.SetPullSnapshot(pb)
-	h.abServer.SetResponse("ns1", &abtestv1.GetExperimentResultResponse{
-		ConfigFlatKv: map[string]int64{"k": 2},
-	})
+	h.abServer.SetResponse("ns1", perGroupResponse(map[string]int64{"k": 2}))
 
 	cfg := h.baseConfig([]string{"ns1"})
 	cli, err := Init(context.Background(), cfg)
@@ -447,9 +436,7 @@ func TestGetConfig_AbsentHDR_StillCallsAbtest(t *testing.T) {
 	// modelling an old server. makeSnapshot never sets it, so this is the
 	// genuine "field absent" frame.
 	h.cfgServer.SetPullSnapshot(pb)
-	h.abServer.SetResponse("ns1", &abtestv1.GetExperimentResultResponse{
-		ConfigFlatKv: map[string]int64{"k": 2},
-	})
+	h.abServer.SetResponse("ns1", perGroupResponse(map[string]int64{"k": 2}))
 
 	cfg := h.baseConfig([]string{"ns1"})
 	cli, err := Init(context.Background(), cfg)

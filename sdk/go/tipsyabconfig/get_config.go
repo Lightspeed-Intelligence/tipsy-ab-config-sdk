@@ -42,8 +42,9 @@ func (c *Client) GetConfigStatic(ns, key, defaultValue string) (string, bool) {
 // GetConfig falls back to the full-release version silently — emitting a
 // fallback metric tick but not an error.
 //
-// M6 (design 04 §B.3): after obtaining config_flat_kv the SDK ALWAYS preserves
-// the full-release fallback. A key absent from the map is the common
+// M6 (design 04 §B.3): after obtaining the abtest key→version result (merged
+// locally from the per-group response) the SDK ALWAYS preserves the
+// full-release fallback. A key absent from the map is the common
 // "no experiment hit" case and resolves to the full-release version, NOT the
 // default. The default is only returned when neither an abtest hit nor a
 // full-release version exists.
@@ -99,14 +100,58 @@ func (c *Client) getConfigResolved(ctx context.Context, abctx *AbtestContext, ns
 	if res.source == keySourceNone {
 		return defaultValue, nil
 	}
+	// Hit log (SLS contract, design §4): msg text unchanged; `reason` is always
+	// present (4-value enum); experiment_id/group_id/release_id are conditional
+	// fields with omit semantics — when absent the key is not emitted at all
+	// (never an empty-string placeholder). Downstream picks the conditional
+	// fields to read based on reason.
 	msg := "tipsyabconfig: get_config hit (full)"
+	reason := reasonFullRelease
 	if res.source == keySourceAbtest {
 		msg = "tipsyabconfig: get_config hit (abtest)"
+		switch res.attribution.source {
+		case attributionExperiment:
+			reason = reasonExperiment
+		case attributionGrayWhitelist:
+			reason = reasonGrayWhitelist
+		default:
+			reason = reasonAbtestUnattributed
+		}
 	}
-	c.logger.Info(msg,
-		"ns", resolvedNs, "key", key, "version", res.version, "uid", abctx.userID, "trace_id", abctx.traceID)
+	attrs := []any{"ns", resolvedNs, "key", key, "version", res.version, "reason", reason}
+	switch reason {
+	case reasonExperiment:
+		attrs = append(attrs, "experiment_id", res.attribution.experimentID, "group_id", res.attribution.groupID)
+	case reasonGrayWhitelist:
+		attrs = append(attrs, "release_id", res.attribution.releaseID)
+	}
+	attrs = append(attrs, "uid", abctx.userID, "trace_id", abctx.traceID)
+	c.logger.Info(msg, attrs...)
 	return res.value, nil
 }
+
+// reason enum for the getConfig hit log (SLS contract, design §4). Complete —
+// exactly these four values are ever emitted:
+//
+//   - full_release: value came from the full-release branch (incl. the
+//     fast-path and the ab→full fallback — the served value really is the
+//     full-release version).
+//   - experiment: abtest hit attributed to an experiment group; the log line
+//     also carries experiment_id + group_id.
+//   - gray_whitelist: abtest hit attributed to a gray release whitelist; the
+//     log line also carries release_id.
+//   - abtest_unattributed: abtest hit whose attribution is unknown (empty-id
+//     group, release_id=0, MockAbtestContext seed) — value valid, attribution
+//     missing.
+//
+// The contract covers dynamic GetConfig / GetConfigDefault only;
+// GetConfigStatic keeps its unchanged source=full_static line with no reason.
+const (
+	reasonFullRelease        = "full_release"
+	reasonExperiment         = "experiment"
+	reasonGrayWhitelist      = "gray_whitelist"
+	reasonAbtestUnattributed = "abtest_unattributed"
+)
 
 // keySource records where resolveKeyFromSnapshot found a key's value.
 type keySource uint8
@@ -121,10 +166,14 @@ const (
 // == keySourceNone means the key has no resolvable value (single key ⇒ return
 // default; get-all ⇒ omit the key). value/version are meaningful only when
 // source != keySourceNone; an empty-string value is a valid hit (§10.5).
+// attribution is meaningful only when source == keySourceAbtest (zero value =
+// unattributed otherwise); it feeds the hit-log reason and never influences
+// which value/version was resolved (F3 decoupling).
 type keyResolution struct {
-	value   string
-	source  keySource
-	version int64
+	value       string
+	source      keySource
+	version     int64
+	attribution keyAttribution
 }
 
 // keyIsStaticInSnapshot reports whether key is a pure full-release key in snap
@@ -160,7 +209,8 @@ func (c *Client) resolveKeyFromSnapshot(snap *NamespaceSnapshot, ns, key string,
 	if abresult != nil {
 		if abVersion, hit := abresult.keyVersions[key]; hit && abVersion != 0 {
 			if val, ok := ks.Versions[abVersion]; ok {
-				return keyResolution{value: val, source: keySourceAbtest, version: abVersion}
+				return keyResolution{value: val, source: keySourceAbtest, version: abVersion,
+					attribution: abresult.attributionFor(key)}
 			}
 			// ab→full fallback: this snapshot is missing the ab version.
 			c.metrics.abtestFallback.inc(ns)

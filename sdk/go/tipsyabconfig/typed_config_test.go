@@ -7,8 +7,6 @@ import (
 	"reflect"
 	"strconv"
 	"testing"
-
-	abtestv1 "github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk/api/gen/go/tipsy/abtest/v1"
 )
 
 // Typed config accessor tests.
@@ -417,9 +415,7 @@ func TestGetConfigBool_AbtestPathResolvesVersion(t *testing.T) {
 	h.cfgServer.SetPullSnapshot(makeSnapshot("ns1", 1, 1, map[string]typedKey{
 		"flag": {full: 1, versions: map[int64]string{1: "false", 2: "true"}},
 	}))
-	h.abServer.SetResponse("ns1", &abtestv1.GetExperimentResultResponse{
-		ConfigFlatKv: map[string]int64{"flag": 2},
-	})
+	h.abServer.SetResponse("ns1", perGroupResponse(map[string]int64{"flag": 2}))
 	cfg := h.baseConfig([]string{"ns1"})
 	cli, err := Init(context.Background(), cfg)
 	if err != nil {

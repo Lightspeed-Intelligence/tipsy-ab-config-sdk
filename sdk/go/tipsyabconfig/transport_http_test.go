@@ -489,10 +489,10 @@ func TestHTTP_GetConfig_FullChain(t *testing.T) {
 		versions map[int64]string
 	}{"k": {full: 1, versions: map[int64]string{1: "full-v1", 2: "ab-v2"}}}))
 	// After D3 the SDK no longer emits exposure events. The full chain test
-	// only verifies abtest version selection reaches the value lookup.
-	h.abServer.SetResponse("ns1", &abtestv1.GetExperimentResultResponse{
-		ConfigFlatKv: map[string]int64{"k": 2},
-	})
+	// only verifies abtest version selection reaches the value lookup. Fixture
+	// migrated to the per-group shape (actual-enrollment-log F2): same
+	// key→versionId map, transposed; exercises protojson round-trip of groups.
+	h.abServer.SetResponse("ns1", perGroupResponse(map[string]int64{"k": 2}))
 
 	cfg := h.baseHTTPConfig([]string{"ns1"})
 	cli, err := Init(context.Background(), cfg)
