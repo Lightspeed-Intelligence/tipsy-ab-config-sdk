@@ -54,8 +54,12 @@ import grpc.aio
 from .abtest_context import (
     AbtestContext,
     UserInfo,
+    _ATTR_SOURCE_EXPERIMENT,
+    _ATTR_SOURCE_GRAY_WHITELIST,
     _ComputeResult,
     _EMPTY_RESULT,
+    _KeyAttribution,
+    _UNATTRIBUTED,
     _ensure_ctx,
     abtest_ctx_var,
 )
@@ -88,6 +92,179 @@ from ._proto.tipsy.abtest.v1 import abtest_pb2 as abtest_pb2
 from ._proto.tipsy.abtest.v1 import abtest_pb2_grpc as abtest_pb2_grpc
 
 logger = logging.getLogger("tipsy_ab_config")
+
+
+# ``reason`` enum on the get_config hit log (design §4, SLS contract). The
+# enum is complete with exactly these 4 values; downstream parsers treat a
+# line carrying ``reason`` as an enrollment event.
+_REASON_FULL_RELEASE = "full_release"
+_REASON_EXPERIMENT = "experiment"
+_REASON_GRAY_WHITELIST = "gray_whitelist"
+_REASON_ABTEST_UNATTRIBUTED = "abtest_unattributed"
+
+# ``source`` values on _KeyResolution: which resolution branch produced the
+# value ("" when absent).
+_SOURCE_ABTEST = "abtest"
+_SOURCE_FULL = "full"
+
+
+class _KeyResolution(NamedTuple):
+    """Pure-data result of :meth:`Client._resolve_key_from_snapshot` (design §6).
+
+    ``source`` is ``"abtest"`` / ``"full"`` / ``""`` (absent); ``version`` is
+    the winning versionId (``None`` when absent); ``attribution`` is the merged
+    per-key attribution for the abtest branch (``None`` on the full branch, on
+    a miss, or for mock-seeded results that carry no attribution).
+    """
+
+    value: Optional[str]
+    present: bool
+    source: str
+    version: Optional[int]
+    attribution: Optional[_KeyAttribution]
+
+
+def _merge_per_group_result(
+    resp: "abtest_pb2.GetExperimentResultResponse",
+    ns: str,
+    trace_id: str,
+) -> _ComputeResult:
+    """Merge a per-group (EACH_EXPERIMENT_GROUP) response into a _ComputeResult.
+
+    Line-by-line replica of the platform's flat_kv assembly (platform repo
+    ``internal/abtest/compute/engine.go:329-385``) so the merged key→versionId
+    map is equivalent to what the server used to fold server-side under
+    FLAT_KV — while keeping the attribution the fold used to erase (design §3).
+
+    冲突契约（用户决策 2025-08-26，逐字）：
+    正常情况下不会发生同类型 key 冲突，同类型 key 冲突是异常情况，此时平台 +
+    SDK 只需保障至少返回可选值中的一个就算符合承诺。
+
+    Winner rules (design §3):
+
+    1. ``gray_hits`` first, in wire order (server emits them sorted by
+       release_id ascending); within gray, first-writer-wins (replicates
+       ``topology.go:433-435``). Defensive only: the platform folds multi-gray
+       conflicts BEFORE assembly, so one key never appears in two gray_hits on
+       the wire (design §3, r3-F2).
+    2. ``groups`` next, in wire order, taking only
+       ``experiment_type == CONFIG_VERSION`` groups (fail-closed filter — a
+       deliberate exception to F3's "never drop a value" direction: a group of
+       another type never belongs in the config_version merge; the platform
+       pins ``experiment_type`` population with its own tests). A key already
+       owned by a gray hit is SKIPPED — gray wins unconditionally
+       (``engine.go:355-356``; the ONE strictly guaranteed cross-source rule).
+       Between experiment groups the LAST writer wins (``engine.go:380``,
+       same-source conflict — covered by the relaxed contract above, aligned
+       with the platform but not guaranteed).
+
+    Core invariant (F3): a ``key_versions`` write NEVER depends on the
+    attribution fields being valid — an empty-id group / a zero release_id
+    still writes the value and records the key as unattributed. Attribution
+    loss only degrades the hit-log ``reason``, never the winning versionId.
+
+    Implementation constraint (design §3, "no flapping"): iterate the wire
+    ``repeated`` fields (``gray_hits`` / ``groups``) in the order received —
+    NEVER re-bucket them through an intermediate dict/map and iterate that
+    (map iteration order must not influence the winner). Cross-repo note
+    (design R3): the platform has no test pinning ``assembleGroups`` output
+    order; after the same-source relaxation the SDK does not DEPEND on the
+    groups order for any guarantee — sequential iteration is kept because it
+    is the simplest implementation and makes re-merging the same response
+    deterministic as a byproduct.
+
+    This merge reads ONLY ``groups`` / ``gray_hits``; it never reads (nor
+    depends on) ``config_flat_kv``, which the per-group server branch does not
+    populate.
+    """
+    key_versions: Dict[str, int] = {}
+    attribution: Dict[str, _KeyAttribution] = {}
+    gray_owned: set = set()
+
+    # Step 1: gray hits (wire order == release_id ascending).
+    for hit in resp.gray_hits:
+        release_id = int(hit.release_id)
+        for k, v in hit.key_versions.items():
+            key = str(k)
+            if key in gray_owned:
+                # Same-source (gray vs gray) conflict: first-writer-wins.
+                # Structurally unreachable on today's wire (see docstring);
+                # observable at DEBUG per design §3 step 3.
+                logger.debug(
+                    "tipsy_ab_config: per-group merge conflict (gray vs gray); "
+                    "first writer wins",
+                    extra={
+                        "ns": ns,
+                        "key": key,
+                        "kept_version": key_versions[key],
+                        "dropped_version": int(v),
+                        "kept_release_id": attribution[key].release_id,
+                        "dropped_release_id": release_id,
+                        "trace_id": trace_id,
+                    },
+                )
+                continue
+            gray_owned.add(key)
+            key_versions[key] = int(v)
+            if release_id != 0:
+                attribution[key] = _KeyAttribution(
+                    source=_ATTR_SOURCE_GRAY_WHITELIST, release_id=release_id
+                )
+            else:
+                # F3: zero release_id still writes the value; only the
+                # attribution degrades to unattributed.
+                attribution[key] = _UNATTRIBUTED
+
+    # Step 2: experiment groups (wire order; CONFIG_VERSION only).
+    for group in resp.groups:
+        if (
+            group.experiment_type
+            != abtest_pb2.ExperimentType.EXPERIMENT_TYPE_CONFIG_VERSION
+        ):
+            continue
+        experiment_id = str(group.experiment_id)
+        group_id = str(group.group_id)
+        for k, v in group.params_versions.items():
+            key = str(k)
+            if key in gray_owned:
+                # Cross-source conflict: gray wins unconditionally
+                # (engine.go:355-356 — strictly guaranteed).
+                continue
+            if key in key_versions:
+                # Same-source (experiment vs experiment) conflict: last
+                # writer wins (engine.go:380). Observable at DEBUG per design
+                # §3 step 3 — deliberately NOT a WARN: the platform treats
+                # this as deterministic fail-open behaviour, not an anomaly.
+                prev_attr = attribution.get(key)
+                logger.debug(
+                    "tipsy_ab_config: per-group merge conflict (experiment vs "
+                    "experiment); last writer wins",
+                    extra={
+                        "ns": ns,
+                        "key": key,
+                        "prev_version": key_versions[key],
+                        "new_version": int(v),
+                        "prev_experiment_id": (
+                            prev_attr.experiment_id if prev_attr else ""
+                        ),
+                        "new_experiment_id": experiment_id,
+                        "trace_id": trace_id,
+                    },
+                )
+            key_versions[key] = int(v)
+            if experiment_id and group_id:
+                attribution[key] = _KeyAttribution(
+                    source=_ATTR_SOURCE_EXPERIMENT,
+                    experiment_id=experiment_id,
+                    group_id=group_id,
+                )
+            else:
+                # F3: an empty-id group is NOT skipped — skipping would drop
+                # the versionId (a value-resolution change). Write the value,
+                # record the key as unattributed.
+                attribution[key] = _UNATTRIBUTED
+
+    return _ComputeResult(key_versions=key_versions, attribution=attribution)
 
 
 @dataclass
@@ -457,11 +634,11 @@ class Client:
         (design 04 §B.3). When abtest is unavailable or the per-ns call failed,
         ``get_config`` falls back to the full-release version silently.
 
-        M6 (design 04 §B.3): after obtaining ``config_flat_kv`` the SDK ALWAYS
-        preserves the full-release fallback. A key absent from the map is the
-        common "no experiment hit" case and resolves to the full-release
-        version, NOT the default. The default is only returned when neither an
-        abtest hit nor a full-release version exists.
+        M6 (design 04 §B.3): after obtaining the merged key→versionId map the
+        SDK ALWAYS preserves the full-release fallback. A key absent from the
+        map is the common "no experiment hit" case and resolves to the
+        full-release version, NOT the default. The default is only returned
+        when neither an abtest hit nor a full-release version exists.
         """
         if self._closed:
             raise SDKClosed("client closed")
@@ -493,18 +670,66 @@ class Client:
                 "get_config fast path (no dynamic resolution; skipping abtest)",
                 extra={"ns": resolved_ns, "key": key, "uid": ctx.user_id},
             )
-            value, present = self._resolve_key_from_snapshot(
-                snap, key, None, resolved_ns, ctx.user_id
-            )
-            return value if present else default
+            abresult: Optional[_ComputeResult] = None
+        else:
+            # Per-ns memoised abtest result (at-most-once RPC per request link).
+            abresult = await ctx.wait_for_abtest(resolved_ns)
 
-        # Per-ns memoised abtest result (at-most-once RPC per request link).
-        abresult: _ComputeResult = await ctx.wait_for_abtest(resolved_ns)
-
-        value, present = self._resolve_key_from_snapshot(
-            snap, key, abresult, resolved_ns, ctx.user_id
+        res = self._resolve_key_from_snapshot(
+            snap, key, abresult, resolved_ns, ctx.trace_id
         )
-        return value if present else default
+        if not res.present:
+            return default
+        # Hit Info log lives HERE on the single-key path only (design §6):
+        # get_all_configs shares the resolver but never logs per-key hits.
+        self._log_get_config_hit(res, resolved_ns, key, ctx)
+        return res.value
+
+    def _log_get_config_hit(
+        self,
+        res: _KeyResolution,
+        resolved_ns: str,
+        key: str,
+        ctx: AbtestContext,
+    ) -> None:
+        """Emit the single-key ``get_config`` hit Info log (design §4/§6).
+
+        Called ONLY from the :meth:`get_config` single-key path (both the
+        fast path and the abtest path); :meth:`get_all_configs` never emits
+        per-key hit logs (its aggregate Debug log is unchanged).
+
+        SLS contract (design §4): msg text unchanged (``get_config hit
+        (abtest)`` / ``(full)``); every line carries the constant fields
+        ``reason`` / ``uid`` / ``trace_id`` / ``ns`` / ``key`` / ``version``;
+        ``experiment_id`` / ``group_id`` / ``release_id`` are conditional on
+        ``reason`` with omit semantics (an absent field's key is not emitted).
+        """
+        extra: Dict[str, Any] = {
+            "ns": resolved_ns,
+            "key": key,
+            "version": res.version,
+            "uid": ctx.user_id,
+            "trace_id": ctx.trace_id,
+        }
+        if res.source == _SOURCE_ABTEST:
+            attr = res.attribution
+            if attr is not None and attr.source == _ATTR_SOURCE_EXPERIMENT:
+                extra["reason"] = _REASON_EXPERIMENT
+                extra["experiment_id"] = attr.experiment_id
+                extra["group_id"] = attr.group_id
+            elif attr is not None and attr.source == _ATTR_SOURCE_GRAY_WHITELIST:
+                extra["reason"] = _REASON_GRAY_WHITELIST
+                extra["release_id"] = attr.release_id
+            else:
+                # Attribution missing (mock seed) or unattributed (empty-id
+                # group / release_id == 0): value valid, origin unknown.
+                extra["reason"] = _REASON_ABTEST_UNATTRIBUTED
+            logger.info("get_config hit (abtest)", extra=extra)
+        else:
+            # Full branch: fast path, no-abtest-hit, and ab→full fallback all
+            # resolve to the full-release version (design §4/§5).
+            extra["reason"] = _REASON_FULL_RELEASE
+            logger.info("get_config hit (full)", extra=extra)
 
     def _resolve_key_from_snapshot(
         self,
@@ -512,8 +737,8 @@ class Client:
         key: str,
         abresult: Optional[_ComputeResult],
         resolved_ns: str,
-        uid: str,
-    ) -> Tuple[Optional[str], bool]:
+        trace_id: str,
+    ) -> _KeyResolution:
         """Resolve one key's value against a single captured snapshot.
 
         Shared by :meth:`get_config` (single key) and :meth:`get_all_configs`
@@ -522,9 +747,15 @@ class Client:
         each of which re-snapshots internally — so a whole get-all sweep sees
         one consistent snapshot (the snapshot-consistency invariant, design §2).
 
-        Returns ``(value, present)``. ``present`` is ``False`` when the key
-        resolves to neither an abtest hit nor a full-release value (single key
-        ⇒ default; get-all ⇒ omit). An empty-string value is a valid hit
+        PURE DATA (design §6): this method emits NO hit Info log — the
+        single-key hit log lives at the :meth:`get_config` call site
+        (:meth:`_log_get_config_hit`) so it never leaks into
+        :meth:`get_all_configs`. The ab→full fallback WARN + metric (a
+        degradation signal, not a hit log) stays here for both callers.
+
+        Returns a :class:`_KeyResolution`. ``present`` is ``False`` when the
+        key resolves to neither an abtest hit nor a full-release value (single
+        key ⇒ default; get-all ⇒ omit). An empty-string value is a valid hit
         (``present`` ``True``, design §10.5).
 
         Resolution order mirrors the single-key path exactly: abtest hit
@@ -535,43 +766,34 @@ class Client:
         """
         ks = snap.keys.get(key) if snap is not None else None
 
-        # abtest hit path: key present in config_flat_kv with a non-zero version.
+        # abtest hit path: key present in the locally merged key→versionId map
+        # with a non-zero version.
         ab_version = abresult.key_versions.get(key) if abresult else None
         if ab_version is not None and ab_version != 0:
             value = ks.versions.get(ab_version) if ks is not None else None
             if value is not None:
-                logger.info(
-                    "get_config hit (abtest)",
-                    extra={
-                        "ns": resolved_ns,
-                        "key": key,
-                        "version": ab_version,
-                        "uid": uid,
-                    },
-                )
-                return value, True
+                attr = abresult.attribution.get(key) if abresult else None
+                return _KeyResolution(value, True, _SOURCE_ABTEST, ab_version, attr)
             # ab → full fallback (design §B.3 / M6).
             self._metrics.inc_abtest_fallback(resolved_ns)
             logger.warning(
                 "tipsy_ab_config: ab version missing in local cache; falling back to full",
-                extra={"ns": resolved_ns, "key": key, "ab_version": ab_version},
+                extra={
+                    "ns": resolved_ns,
+                    "key": key,
+                    "ab_version": ab_version,
+                    "trace_id": trace_id,
+                },
             )
 
-        # Full-release fallback (M6): key not in config_flat_kv, or ab→full.
+        # Full-release fallback (M6): key not in the merged map, or ab→full.
         if ks is not None and ks.full_release_version is not None:
             value = ks.versions.get(ks.full_release_version)
             if value is not None:
-                logger.info(
-                    "get_config hit (full)",
-                    extra={
-                        "ns": resolved_ns,
-                        "key": key,
-                        "version": ks.full_release_version,
-                        "uid": uid,
-                    },
+                return _KeyResolution(
+                    value, True, _SOURCE_FULL, ks.full_release_version, None
                 )
-                return value, True
-        return None, False
+        return _KeyResolution(None, False, "", None, None)
 
     async def get_all_configs(
         self,
@@ -637,19 +859,16 @@ class Client:
 
         out: Dict[str, str] = {}
         ab_hits = 0
-        for key, ks in snap.keys.items():
-            ab_version = abresult.key_versions.get(key) if abresult else None
-            resolved_from_ab = (
-                ab_version is not None
-                and ab_version != 0
-                and ks.versions.get(ab_version) is not None
+        for key in snap.keys:
+            # Shared pure resolver (design §6): no per-key hit Info log is
+            # emitted here — get_all_configs keeps ONLY its aggregate Debug
+            # log below.
+            res = self._resolve_key_from_snapshot(
+                snap, key, abresult, resolved_ns, ctx.trace_id
             )
-            value, present = self._resolve_key_from_snapshot(
-                snap, key, abresult, resolved_ns, ctx.user_id
-            )
-            if present:
-                out[key] = value
-                if resolved_from_ab:
+            if res.present:
+                out[key] = res.value
+                if res.source == _SOURCE_ABTEST:
                     ab_hits += 1
 
         logger.debug(
@@ -1095,14 +1314,18 @@ class Client:
         user_attrs: Mapping[str, Any],
         trace_id: str,
     ) -> _ComputeResult:
-        """Fetch the config_version flat_kv result the get_config fast path uses.
+        """Fetch + locally merge the per-ns config_version result get_config uses.
 
-        Hardwires ``type=config_version`` + ``display=flat_kv`` (hence the
-        explicit name — distinct from the general-purpose public
-        :meth:`get_experiment_result`). On any error (missing abtest
-        connection, timeout, RPC failure) it bumps the per-ns fallback counter
-        and returns the empty result so the caller degrades to full release
-        silently (design 04 §B.3). Mirrors Go's
+        Hardwires ``type=config_version`` +
+        ``display=each_experiment_group``: the per-group response keeps the
+        attribution (experiment_id / group_id / release_id) that the
+        server-side flat_kv fold used to erase, and the SDK rebuilds the same
+        flat key→versionId map locally via :func:`_merge_per_group_result`
+        (design §1/§3). The method name keeps its historical "flat_kv"
+        spelling for API stability. On any error (missing abtest connection,
+        timeout, RPC failure) it bumps the per-ns fallback counter and returns
+        the empty result so the caller degrades to full release silently
+        (design 04 §B.3). Mirrors Go's
         ``fetchConfigVersionFlatKvForNamespace``.
 
         ``trace_id`` is forwarded verbatim onto the proto request so the SDK
@@ -1117,7 +1340,7 @@ class Client:
             user_id=user_id,
             user_attrs=_encode_user_attrs(user_attrs),
             experiment_type=abtest_pb2.ExperimentType.EXPERIMENT_TYPE_CONFIG_VERSION,
-            display_type=abtest_pb2.ResultDisplayType.RESULT_DISPLAY_TYPE_FLAT_KV,
+            display_type=abtest_pb2.ResultDisplayType.RESULT_DISPLAY_TYPE_EACH_EXPERIMENT_GROUP,
             trace_id=trace_id,
         )
         start = time.perf_counter()
@@ -1168,9 +1391,7 @@ class Client:
             dur_ms,
             extra={"ns": ns, "trace_id": trace_id, "duration_ms": dur_ms},
         )
-        return _ComputeResult(
-            key_versions={str(k): int(v) for k, v in resp.config_flat_kv.items()},
-        )
+        return _merge_per_group_result(resp, ns, trace_id)
 
     # ---- background loops ----
 

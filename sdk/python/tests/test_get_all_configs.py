@@ -30,7 +30,7 @@ from .conftest import (
     FakeAbtestServicer,
     FakeConfigServicer,
     issue_test_token,
-    make_exp_result,
+    make_per_group_result,
     make_snapshot,
 )
 
@@ -93,7 +93,7 @@ async def test_get_all_configs_resolution_matrix(
     cfg_servicer.set_pull_snapshot(_matrix_snapshot())
     # ab-hit → v2 (cached); ab-miss-cache → v99 (NOT cached, forces ab→full).
     ab_servicer.set_response(
-        "ns1", make_exp_result({"ab-hit": 2, "ab-miss-cache": 99})
+        "ns1", make_per_group_result({"ab-hit": 2, "ab-miss-cache": 99})
     )
     cli = await _init(cfg_addr, ab_addr)
     try:
@@ -127,7 +127,7 @@ async def test_get_all_configs_default_uses_default_namespace(
     cfg_servicer.set_pull_snapshot(
         make_snapshot("ns1", 1, 1, {"k": (1, {1: "full", 2: "ab2"})})
     )
-    ab_servicer.set_response("ns1", make_exp_result({"k": 2}))
+    ab_servicer.set_response("ns1", make_per_group_result({"k": 2}))
     cli = await _init(cfg_addr, ab_addr, default_namespace="ns1")
     try:
         abctx = cli.new_abtest_context("u1")
@@ -214,7 +214,7 @@ async def test_get_all_configs_cancellation_propagates(
     cfg_servicer.set_pull_snapshot(
         make_snapshot("ns1", 1, 1, {"k": (1, {1: "full", 2: "ab2"})})
     )
-    ab_servicer.set_response("ns1", make_exp_result({"k": 2}))
+    ab_servicer.set_response("ns1", make_per_group_result({"k": 2}))
     ab_servicer.delay = 5.0  # keep the in-flight RPC pending so we can cancel
     cli = await _init(cfg_addr, ab_addr)
     try:
@@ -269,7 +269,7 @@ async def test_get_config_then_get_all_configs_shares_one_rpc(
             },
         )
     )
-    ab_servicer.set_response("ns1", make_exp_result({"k1": 2}))
+    ab_servicer.set_response("ns1", make_per_group_result({"k1": 2}))
     cli = await _init(cfg_addr, ab_addr)
     try:
         abctx = cli.new_abtest_context("u1")
@@ -298,7 +298,7 @@ async def test_get_all_configs_all_false_flags_zero_rpc(
         )
     )
     # Arm a response that WOULD differ from full so a wrongly-issued RPC is loud.
-    ab_servicer.set_response("ns1", make_exp_result({"a": 1, "b": 2}))
+    ab_servicer.set_response("ns1", make_per_group_result({"a": 1, "b": 2}))
     cli = await _init(cfg_addr, ab_addr)
     try:
         abctx = cli.new_abtest_context("u1")
@@ -324,7 +324,7 @@ async def test_get_all_configs_no_user_uid_pure_full_release(
     # Arm a response whose ab values DIFFER from full release; the shortcut must
     # mean these are never applied (ab-hit would be "ab-v2" if the RPC fired).
     ab_servicer.set_response(
-        "ns1", make_exp_result({"ab-hit": 2, "ab-miss-cache": 99})
+        "ns1", make_per_group_result({"ab-hit": 2, "ab-miss-cache": 99})
     )
     cli = await _init(cfg_addr, ab_addr)
     try:
@@ -352,7 +352,7 @@ async def test_get_all_configs_normal_uid_still_issues_rpc(
     """Regression: a real uid ("1") still fires the RPC and applies ab hits."""
     cfg_addr, ab_addr = running_servers
     cfg_servicer.set_pull_snapshot(_matrix_snapshot())
-    ab_servicer.set_response("ns1", make_exp_result({"ab-hit": 2}))
+    ab_servicer.set_response("ns1", make_per_group_result({"ab-hit": 2}))
     cli = await _init(cfg_addr, ab_addr)
     try:
         abctx = cli.new_abtest_context("1")
@@ -432,7 +432,7 @@ async def test_get_all_configs_mixed_fast_path_one_rpc(
             has_dynamic_resolution={"pureF": False, "dyn": True},
         )
     )
-    ab_servicer.set_response("ns1", make_exp_result({"dyn": 3}))
+    ab_servicer.set_response("ns1", make_per_group_result({"dyn": 3}))
     cli = await _init(cfg_addr, ab_addr)
     try:
         abctx = cli.new_abtest_context("u1")
@@ -445,20 +445,20 @@ async def test_get_all_configs_mixed_fast_path_one_rpc(
 
 
 # ---------------------------------------------------------------------------
-# Plan 9 — config_flat_kv version == 0 is not a hit (no WARN / no fallback).
+# Plan 9 — merged abtest version == 0 is not a hit (no WARN / no fallback).
 # ---------------------------------------------------------------------------
 
 
-async def test_get_all_configs_flat_kv_zero_version_uses_full(
+async def test_get_all_configs_zero_version_uses_full(
     cfg_servicer, ab_servicer, running_servers
 ):
     cfg_addr, ab_addr = running_servers
     cfg_servicer.set_pull_snapshot(
         make_snapshot("ns1", 1, 1, {"k": (3, {3: "full3"})})
     )
-    # version 0 in flat_kv means "no experiment hit" — must resolve to full and
+    # A merged version of 0 means "no experiment hit" — must resolve to full and
     # must NOT bump the ab→full fallback metric.
-    ab_servicer.set_response("ns1", make_exp_result({"k": 0}))
+    ab_servicer.set_response("ns1", make_per_group_result({"k": 0}))
     cli = await _init(cfg_addr, ab_addr)
     try:
         abctx = cli.new_abtest_context("u1")
@@ -481,7 +481,7 @@ async def test_get_all_configs_none_ctx_uses_contextvar(
     cfg_servicer.set_pull_snapshot(
         make_snapshot("ns1", 1, 1, {"k": (1, {1: "full", 2: "ab2"})})
     )
-    ab_servicer.set_response("ns1", make_exp_result({"k": 2}))
+    ab_servicer.set_response("ns1", make_per_group_result({"k": 2}))
     cli = await _init(cfg_addr, ab_addr)
     try:
         # abtest_scope stashes the ctx in abtest_ctx_var for the block.

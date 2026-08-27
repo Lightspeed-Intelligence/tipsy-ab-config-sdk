@@ -22,7 +22,7 @@ from tipsy_ab_config.client import _parse_bool_lenient
 
 from .conftest import (
     issue_test_token,
-    make_exp_result,
+    make_per_group_result,
     make_snapshot,
 )
 
@@ -235,7 +235,7 @@ async def test_dynamic_bool_hit_miss_empty(cfg_servicer, ab_servicer, running_se
 async def test_dynamic_bool_abtest_hit(cfg_servicer, ab_servicer, running_servers):
     # b_true's ab version (2) resolves to "false"; prove the dynamic accessor
     # parses the ABTEST-resolved value, not the full release.
-    ab_servicer.set_response("ns1", make_exp_result({"b_true": 2}))
+    ab_servicer.set_response("ns1", make_per_group_result({"b_true": 2}))
     cli = await _client(cfg_servicer, running_servers)
     try:
         ctx = cli.new_abtest_context("u1", {"country": "US"})
@@ -282,7 +282,7 @@ async def test_dynamic_long_precision_lossless(cfg_servicer, ab_servicer, runnin
 
 
 async def test_dynamic_long_abtest_hit(cfg_servicer, ab_servicer, running_servers):
-    ab_servicer.set_response("ns1", make_exp_result({"l_42": 2}))
+    ab_servicer.set_response("ns1", make_per_group_result({"l_42": 2}))
     cli = await _client(cfg_servicer, running_servers)
     try:
         ctx = cli.new_abtest_context("u1", {"country": "US"})
@@ -333,7 +333,7 @@ async def test_dynamic_string_hit_miss_empty(cfg_servicer, ab_servicer, running_
 
 
 async def test_dynamic_string_abtest_hit(cfg_servicer, ab_servicer, running_servers):
-    ab_servicer.set_response("ns1", make_exp_result({"s_hello": 2}))
+    ab_servicer.set_response("ns1", make_per_group_result({"s_hello": 2}))
     cli = await _client(cfg_servicer, running_servers)
     try:
         ctx = cli.new_abtest_context("u1", {"country": "US"})
@@ -369,7 +369,7 @@ async def test_dynamic_json_hit_miss_empty_parsefail(
 
 
 async def test_dynamic_json_abtest_hit(cfg_servicer, ab_servicer, running_servers):
-    ab_servicer.set_response("ns1", make_exp_result({"j_obj": 2}))
+    ab_servicer.set_response("ns1", make_per_group_result({"j_obj": 2}))
     cli = await _client(cfg_servicer, running_servers)
     try:
         ctx = cli.new_abtest_context("u1", {"country": "US"})

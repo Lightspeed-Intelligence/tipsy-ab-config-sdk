@@ -60,6 +60,7 @@ from tipsy_ab_config._proto.tipsy.abtest.v1 import abtest_pb2
 from .conftest import (
     issue_test_token,
     make_exp_result,
+    make_per_group_result,
     make_snapshot,
 )
 
@@ -663,7 +664,8 @@ async def test_http_get_config_full_link(recorder):
     recorder.set_pull_snapshot(
         make_snapshot("ns1", 1, 1, {"k": (1, {1: "full", 2: "ab-v2"})})
     )
-    resp = make_exp_result({"k": 2})
+    # Internal fetch consumes the per-group shape (merged locally).
+    resp = make_per_group_result({"k": 2})
     recorder.set_abtest_response(resp)
     cli = await init(http_config(recorder, pull_interval=10.0))
     try:
@@ -681,8 +683,9 @@ async def test_http_get_config_ab_fallback_to_full(recorder):
     recorder.set_pull_snapshot(
         make_snapshot("ns1", 1, 1, {"k": (1, {1: "full-only"})})
     )
-    # Experiment says version 99 but the cache only has version 1.
-    recorder.set_abtest_response(make_exp_result({"k": 99}))
+    # Experiment says version 99 but the cache only has version 1 (per-group
+    # shape: the internal fetch merges the group locally before resolving).
+    recorder.set_abtest_response(make_per_group_result({"k": 99}))
     cli = await init(http_config(recorder, pull_interval=10.0))
     try:
         abctx = cli.new_abtest_context("u1")

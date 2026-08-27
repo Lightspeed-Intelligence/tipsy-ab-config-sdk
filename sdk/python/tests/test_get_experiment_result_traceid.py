@@ -14,6 +14,13 @@ We deliberately use the existing ``ab_servicer.last_req`` capture seam from
 ``conftest.FakeAbtestServicer`` rather than stubbing the transport directly:
 the seam already exists, exercises the real grpc.aio path, and is what the
 existing ``test_abtest_context.py`` / ``test_get_config.py`` files lean on.
+
+NOTE (actual-enrollment-log fixture migration): the canned responses here
+deliberately KEEP the flat ``make_exp_result`` shape — every call in this file
+drives the PUBLIC ``Client.get_experiment_result`` API (default FLAT_KV,
+response passed through untouched, content never consumed by assertions), not
+the internal per-ns fetch that switched to EACH_EXPERIMENT_GROUP. Do not
+"migrate" them to per-group.
 """
 
 from __future__ import annotations

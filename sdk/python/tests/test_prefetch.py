@@ -33,7 +33,7 @@ from .conftest import (
     FakeAbtestServicer,
     FakeConfigServicer,
     issue_test_token,
-    make_exp_result,
+    make_per_group_result,
     make_snapshot,
 )
 
@@ -71,7 +71,7 @@ async def test_construction_issues_zero_rpc_before_get_config(
     cfg_servicer.set_pull_snapshot(
         make_snapshot("ns1", 1, 1, {"k": (1, {1: "full", 2: "ab"})})
     )
-    ab_servicer.set_response("ns1", make_exp_result({"k": 2}))
+    ab_servicer.set_response("ns1", make_per_group_result({"k": 2}))
     cli = await _init_client(cfg_servicer, cfg_addr, ab_addr, default_namespace="ns1")
     try:
         before = ab_servicer.calls
@@ -99,7 +99,7 @@ async def test_prefetch_then_get_config_reuses_single_rpc(
     # Add latency so the prefetch genuinely outlives the synchronous call and
     # the awaiting get_config resolves the same in-flight task.
     ab_servicer.delay = 0.05
-    ab_servicer.set_response("ns1", make_exp_result({"k": 2}))
+    ab_servicer.set_response("ns1", make_per_group_result({"k": 2}))
     cli = await _init_client(
         cfg_servicer, cfg_addr, ab_addr, abtest_timeout=2.0
     )
@@ -133,7 +133,7 @@ async def test_prefetch_idempotent_same_ns_one_rpc(
         make_snapshot("ns1", 1, 1, {"k": (1, {1: "full", 2: "ab"})})
     )
     ab_servicer.delay = 0.05
-    ab_servicer.set_response("ns1", make_exp_result({"k": 2}))
+    ab_servicer.set_response("ns1", make_per_group_result({"k": 2}))
     cli = await _init_client(cfg_servicer, cfg_addr, ab_addr, abtest_timeout=2.0)
     try:
         before = ab_servicer.calls_by_ns.get("ns1", 0)
@@ -200,7 +200,7 @@ async def test_prefetch_rpc_carries_ctx_trace_id(
     cfg_servicer.set_pull_snapshot(
         make_snapshot("ns1", 1, 1, {"k": (1, {1: "full", 2: "ab"})})
     )
-    ab_servicer.set_response("ns1", make_exp_result({"k": 2}))
+    ab_servicer.set_response("ns1", make_per_group_result({"k": 2}))
     cli = await _init_client(cfg_servicer, cfg_addr, ab_addr)
     try:
         ctx = cli.new_abtest_context("u1", trace_id="prefetch-trace-xyz")
@@ -227,7 +227,7 @@ async def test_prefetch_and_get_config_race_one_rpc(
     )
     # Latency makes the concurrent first-accessors genuinely race in-flight.
     ab_servicer.delay = 0.08
-    ab_servicer.set_response("ns1", make_exp_result({"k": 2}))
+    ab_servicer.set_response("ns1", make_per_group_result({"k": 2}))
     cli = await _init_client(cfg_servicer, cfg_addr, ab_addr, abtest_timeout=2.0)
     try:
         before = ab_servicer.calls_by_ns.get("ns1", 0)
