@@ -16,10 +16,12 @@ dependency — zero new deps):
   The server emits snake_case (``UseProtoNames: true``); ``Parse`` accepts both
   field-name forms, so decoding is robust either way.
 
-Auth: ``Authorization: Bearer <token>`` where the token is read synchronously
-from :meth:`_TokenCache.current` (design Important Details — the Python path
-uses the cached value and never awaits the provider per request, matching the
-existing gRPC bearer auth interceptors).
+Auth: ``Authorization: SecretKey <secret>`` / ``Bearer <token>`` where the
+full header value is read synchronously from :meth:`_TokenCache.authorization`
+per request (issue #16: credential priority SecretKey > token_provider >
+token; design Important Details — the Python path uses the cached token value
+and never awaits the provider per request, matching the existing gRPC auth
+interceptors).
 
 These classes are internal implementation detail; only :func:`init` constructs
 them and only the gRPC/HTTP-uniform transport interface is used at the call
@@ -81,14 +83,17 @@ class _HttpTransport:
         self,
         base_url: str,
         client: "httpx.AsyncClient",
-        token_fn: Callable[[], str],
+        auth_fn: Callable[[], str],
         max_recv_message_size: int,
     ) -> None:
         # ``base_url`` is already validated (http(s):// prefix) and trailing
         # ``/`` stripped by ``init``; the fixed sub-path begins with ``/``.
         self._base_url = base_url
         self._client = client
-        self._token_fn = token_fn
+        # ``auth_fn`` yields the full Authorization value (scheme included) —
+        # ``_TokenCache.authorization`` — so this HTTP cut point stays in
+        # lockstep with the gRPC interceptors on credential priority.
+        self._auth_fn = auth_fn
         self._max_recv = max_recv_message_size
 
     async def _post_proto(self, path: str, req, response_cls):
@@ -103,7 +108,7 @@ class _HttpTransport:
         body = json_format.MessageToJson(req).encode("utf-8")
         headers = {
             "Content-Type": "application/json",
-            "Authorization": "Bearer " + self._token_fn(),
+            "Authorization": self._auth_fn(),
         }
         resp = await self._client.post(
             self._base_url + path,

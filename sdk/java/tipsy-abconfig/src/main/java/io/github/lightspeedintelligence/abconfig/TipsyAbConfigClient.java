@@ -3,6 +3,8 @@ package io.github.lightspeedintelligence.abconfig;
 import com.google.gson.Gson;
 import com.google.gson.JsonSyntaxException;
 import io.grpc.ManagedChannel;
+import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
 import io.github.lightspeedintelligence.abconfig.proto.abtest.v1.AbtestServiceGrpc;
 import io.github.lightspeedintelligence.abconfig.proto.abtest.v1.GetExperimentResultRequest;
 import io.github.lightspeedintelligence.abconfig.proto.abtest.v1.GetExperimentResultResponse;
@@ -163,9 +165,10 @@ public final class TipsyAbConfigClient implements AutoCloseable {
      * <p>Failure contract (mirrors Go {@code Init}):
      * <ul>
      *   <li>Parameter / address errors (empty namespaces, empty
-     *       {@code configServiceAddr}, neither token nor provider, an invalid
-     *       transport, a malformed gRPC target, a non-{@code http(s)} base URL)
-     *       always throw {@link ConfigValidationException} and are never absorbed
+     *       {@code configServiceAddr}, no credential (neither secretKey nor
+     *       token nor provider), an invalid transport, a malformed gRPC target,
+     *       a non-{@code http(s)} base URL) always throw
+     *       {@link ConfigValidationException} and are never absorbed
      *       by {@code startupFailOpen}.</li>
      *   <li>A failed startup PullAll throws {@link StartupPullFailedException}
      *       when {@code startupFailOpen} is false; when true it is absorbed
@@ -193,10 +196,11 @@ public final class TipsyAbConfigClient implements AutoCloseable {
             throw new ConfigValidationException("tipsyabconfig: ConfigServiceAddr must be set");
         }
 
-        // 4. token or tokenProvider at least one.
+        // 4. secretKey, token or tokenProvider: at least one credential.
+        boolean hasSecretKey = cfg.secretKey() != null && !cfg.secretKey().isEmpty();
         boolean hasToken = cfg.token() != null && !cfg.token().isEmpty();
-        if (!hasToken && cfg.tokenProvider() == null) {
-            throw new ConfigValidationException("tipsyabconfig: Token or TokenProvider must be set");
+        if (!hasSecretKey && !hasToken && cfg.tokenProvider() == null) {
+            throw new ConfigValidationException("tipsyabconfig: SecretKey, Token or TokenProvider must be set");
         }
 
         // 5. HTTP mode: validate + normalise base URL(s).
@@ -236,7 +240,7 @@ public final class TipsyAbConfigClient implements AutoCloseable {
         // Resolve the default namespace once (Config override > env > "").
         String defaultNamespace = resolveDefaultNamespace(cfg.defaultNamespace());
 
-        TokenSource tokenSource = TokenSource.of(cfg.token(), cfg.tokenProvider());
+        TokenSource tokenSource = TokenSource.of(cfg.secretKey(), cfg.token(), cfg.tokenProvider());
 
         Builder b = new Builder();
         b.cfg = cfg;
@@ -1418,6 +1422,12 @@ public final class TipsyAbConfigClient implements AutoCloseable {
                     if (closed.get()) {
                         return;
                     }
+                    if (isCancelled(e)) {
+                        // Caller-context cancellation (#15): expected
+                        // termination, not a fault — exit silently (no
+                        // pullFailure metric, no ERROR, no periodic_pull event).
+                        return;
+                    }
                     metrics.pullFailure.inc(ns);
                     LOG.error("tipsyabconfig: periodic PullAll failed (ns={})", ns, e);
                     fireBackgroundError(new BackgroundErrorEvent(
@@ -1430,8 +1440,9 @@ public final class TipsyAbConfigClient implements AutoCloseable {
     /**
      * Maintains a long-lived Subscribe stream with exponential backoff
      * (1s → ×2 → capped at 30s). A clean stream end resets the backoff and
-     * reconnects immediately; a cancellation (from {@link #close()}) exits; a
-     * real error bumps the disconnect metric, fires a {@code subscribe} event,
+     * reconnects immediately; a cancellation (from {@link #close()}, or any
+     * caller-context {@code CANCELLED} per {@link #isCancelled}) exits silently;
+     * a real error bumps the disconnect metric, fires a {@code subscribe} event,
      * and backs off before reconnecting.
      */
     private void runSubscribe() {
@@ -1446,6 +1457,13 @@ public final class TipsyAbConfigClient implements AutoCloseable {
             } catch (Exception e) {
                 if (closed.get()) {
                     return; // cancellation from close() — do not reconnect / count.
+                }
+                if (isCancelled(e)) {
+                    // Caller-context cancellation (#15): expected termination,
+                    // not a fault. Exit silently — no disconnect metric, no
+                    // ERROR, no subscribe event (which would flip
+                    // subscribeConnected false and misreport an outage).
+                    return;
                 }
                 cleanEnd = false;
                 for (String ns : subscribedNamespaces) {
@@ -1489,6 +1507,25 @@ public final class TipsyAbConfigClient implements AutoCloseable {
      */
     static long resetBackoffIfStable(long backoffMs, long uptimeMs, long thresholdMs) {
         return (thresholdMs > 0 && uptimeMs >= thresholdMs) ? 1000L : backoffMs;
+    }
+
+    /**
+     * Reports whether {@code t} is a caller-context cancellation surfaced by
+     * grpc-java as a {@code CANCELLED} {@link StatusRuntimeException} (upstream
+     * client disconnect, gRPC {@code Context.cancel()}, thread interrupt from an
+     * executor {@code shutdownNow()}). Such a termination is expected, NOT a
+     * fault: callers must not log ERROR, bump failure metrics, or fire a
+     * {@link BackgroundErrorEvent} for it (#15).
+     *
+     * <p>Deliberately narrow ({@code instanceof} on the exact runtime exception,
+     * no cause-chain walk — mirrors the Go SDK's {@code isContextCanceled}):
+     * {@code DeadlineExceeded} stays a real error, and {@code close()}'s
+     * {@code channel.shutdownNow()} surfaces {@code UNAVAILABLE}, which is
+     * covered by the existing {@code closed.get()} guards, not by this check.
+     */
+    static boolean isCancelled(Throwable t) {
+        return t instanceof StatusRuntimeException sre
+                && sre.getStatus().getCode() == Status.Code.CANCELLED;
     }
 
     /**

@@ -91,12 +91,29 @@ type Config struct {
 	// Phase "startup_pull" is fired.
 	StartupFailOpen bool
 
+	// SecretKey, when non-empty, authenticates every RPC with the shared
+	// service secret itself (the platform's TIPSY_SERVICE_SECRET), sent as
+	// `Authorization: SecretKey <secret>` — no JWT issuance involved. It
+	// takes precedence over TokenProvider and Token.
+	//
+	// Trust model: a valid SecretKey grants FULL access on the platform side
+	// (any namespace, equivalent to the internal_service role with "*"
+	// namespaces); role/namespace scoping does not apply. The secret travels
+	// on the wire with every request, so only use this mode inside a trust
+	// boundary the deployer accepts (e.g. a trusted intranet, or TLS).
+	//
+	// The SDK never reads it from the environment; callers pass it
+	// explicitly. At least one of SecretKey / TokenProvider / Token must be
+	// set.
+	SecretKey string
+
 	// Token is the static JWT used for both ConfigService and AbtestService
-	// per-RPC credentials. Required unless TokenProvider is set.
+	// per-RPC credentials. Required unless SecretKey or TokenProvider is set.
 	Token string
 
 	// TokenProvider, when non-nil, is consulted on every RPC for a fresh
-	// token. Useful for short-lived tokens. Takes precedence over Token.
+	// token. Useful for short-lived tokens. Takes precedence over Token
+	// (but SecretKey, when set, takes precedence over both).
 	TokenProvider func(ctx context.Context) (string, error)
 
 	// Logger is the structured logger; defaults to slog.Default().
@@ -263,9 +280,9 @@ type Client struct {
 //
 // Failure-return contract:
 //
-//   - Parameter errors (empty Namespaces, empty ConfigServiceAddr, neither
-//     Token nor TokenProvider set) ALWAYS return an error, regardless of
-//     StartupFailOpen.
+//   - Parameter errors (empty Namespaces, empty ConfigServiceAddr, none of
+//     SecretKey / Token / TokenProvider set) ALWAYS return an error,
+//     regardless of StartupFailOpen.
 //   - gRPC dial failures for ConfigService / AbtestService (i.e. target
 //     resolution errors; grpc.NewClient connects lazily) ALWAYS return an
 //     error and are NOT absorbed by StartupFailOpen.
@@ -299,8 +316,8 @@ func Init(ctx context.Context, cfg Config) (*Client, error) {
 	if cfg.ConfigServiceAddr == "" {
 		return nil, errors.New("tipsyabconfig: ConfigServiceAddr must be set")
 	}
-	if cfg.Token == "" && cfg.TokenProvider == nil {
-		return nil, errors.New("tipsyabconfig: Token or TokenProvider must be set")
+	if cfg.SecretKey == "" && cfg.Token == "" && cfg.TokenProvider == nil {
+		return nil, errors.New("tipsyabconfig: SecretKey, Token or TokenProvider must be set")
 	}
 
 	// In HTTP mode the addresses are base URLs. Validate (and normalise) the
@@ -662,12 +679,11 @@ func serviceConfigFor(dialTarget string) string {
 }
 
 // bearerCredentialsFromConfig returns the grpc.PerRPCCredentials matching
-// the static-token / dynamic-provider config knobs.
+// the secret-key / static-token / dynamic-provider config knobs. Precedence
+// (SecretKey > TokenProvider > Token) is resolved per request inside
+// GetRequestMetadata, not here.
 func bearerCredentialsFromConfig(cfg Config) tokenSource {
-	if cfg.TokenProvider != nil {
-		return tokenSource{dynamic: cfg.TokenProvider}
-	}
-	return tokenSource{static: cfg.Token}
+	return tokenSource{secret: cfg.SecretKey, dynamic: cfg.TokenProvider, static: cfg.Token}
 }
 
 // tokenSource implements grpc.PerRPCCredentials. We deliberately do not
@@ -675,11 +691,19 @@ func bearerCredentialsFromConfig(cfg Config) tokenSource {
 // internal/auth): TokenProvider needs the per-call ctx for token rotation
 // and auth.BearerCredentials carries only a fixed string.
 type tokenSource struct {
+	secret  string
 	static  string
 	dynamic func(ctx context.Context) (string, error)
 }
 
 func (t tokenSource) GetRequestMetadata(ctx context.Context, _ ...string) (map[string]string, error) {
+	// SecretKey mode wins over both token forms (issue #16 priority:
+	// SecretKey > TokenProvider > Token). The scheme literal is the wire
+	// contract: the SDK always sends exactly "SecretKey <v>"; the platform
+	// matches the scheme case-insensitively (RFC 7235).
+	if t.secret != "" {
+		return map[string]string{"authorization": "SecretKey " + t.secret}, nil
+	}
 	token := t.static
 	if t.dynamic != nil {
 		v, err := t.dynamic(ctx)

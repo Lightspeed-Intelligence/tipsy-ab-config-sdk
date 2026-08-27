@@ -8,6 +8,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — ctx-cancel 误报（issue #15）
+
+- **调用方上下文取消（gRPC `CANCELLED`）不再按故障处理**。此前上游客户端断连、
+  deadline 传播、`close()` 的 executor 中断等产生的
+  `StatusRuntimeException(CANCELLED)` 会打 ERROR/WARN、计失败指标并发
+  `BackgroundErrorEvent`。现在：
+  - Subscribe 流与周期 PullAll 循环命中 ctx-cancel 时**静默退出**——不 inc
+    `subscribeDisc`/`pullFailure`、不打 ERROR、不发 `subscribe`/`periodic_pull`
+    事件（`SubscribeConnected` 不再被误翻 false）。`close()` 经
+    `channel.shutdownNow()` 产生的 UNAVAILABLE 仍由原有 `closed` 兜底覆盖，行为不变。
+  - abtest 拉取（`GetExperimentResult`）命中 ctx-cancel 时降为 **INFO** 日志，
+    计入**新增指标 `sdk_abtest_canceled_total{namespace}`**
+    （`Metrics.abtestCanceledTotal(ns)`），不再计 `abtestFallback`。取值语义不变
+    （仍回落 full release / default）。
+  - 判定刻意收窄为 `StatusRuntimeException` + `Status.Code.CANCELLED`：
+    `DEADLINE_EXCEEDED` 等真错误路径行为不变（回归用例钉住）。
+  - 说明：Go 端同批修复（`isContextCanceled`）；**Python 无需改动**——实测
+    grpcio 的取消抛 `asyncio.CancelledError`（`BaseException`），现有代码已正确
+    处理，属三语言对齐规则的合理例外（论证见 issue #15）。
+
+### Added — secretKey 鉴权（issue #16）
+
+- **`Config.Builder.secretKey(String)`：仅配置 secretKey（即 `TIPSY_SERVICE_SECRET` 本身）
+  即可完成鉴权**，无需可信 issuer 签发 JWT。凭据优先级 **SecretKey > TokenProvider > Token**
+  （每请求在 `TokenSource.authHeaderValue()` 单取值点判定，gRPC metadata 与 HTTP header
+  两路径同源），发送形态为精确字面量 `Authorization: SecretKey <secret>`（服务端按 scheme
+  前缀分派，需平台侧 `feat/secretkey-auth` 配套）。Init 校验放宽为 secretKey / token /
+  tokenProvider 三者至少其一，缺失时错误文案三端统一：
+  `tipsyabconfig: SecretKey, Token or TokenProvider must be set`。
+  SDK 不读任何环境变量，secretKey 由业务方显式传入；secret 值不进入任何日志。
+  持有 secretKey 即等效全量访问（`internal_service` + `"*"`），信任边界见
+  `docs/usage-and-integration.md` §3。
+
 ### Added
 
 - **`getConfig` / `getConfigDefault` 命中日志新增结构化归因字段 `reason`**（4 值完备：

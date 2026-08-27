@@ -90,8 +90,8 @@ func (t *httpAbtestTransport) GetExperimentResult(ctx context.Context, req *abte
 	return resp, nil
 }
 
-// doProtoJSON marshals req to protojson, POSTs it to url with a fresh bearer
-// token, and unmarshals a 2xx response body into out. It mirrors the server
+// doProtoJSON marshals req to protojson, POSTs it to url with freshly acquired
+// credentials, and unmarshals a 2xx response body into out. It mirrors the server
 // publicread codec: protojson on the wire, DiscardUnknown on decode. The
 // response body is read with an explicit cap (maxRecvBytes+1) so an oversized
 // payload yields a clear error rather than a truncated decode.
@@ -106,9 +106,9 @@ func (t *httpTransport) doProtoJSON(ctx context.Context, url string, req proto.M
 		return fmt.Errorf("tipsyabconfig: marshal request: %w", err)
 	}
 
-	// Acquire the bearer token per request (static value or TokenProvider),
-	// matching the gRPC PerRPCCredentials timing. A TokenProvider error fails
-	// this request.
+	// Acquire the credentials per request (SecretKey, static Token, or
+	// TokenProvider — precedence resolved inside tokenSource), matching the
+	// gRPC PerRPCCredentials timing. A TokenProvider error fails this request.
 	md, err := t.tokenSource.GetRequestMetadata(ctx)
 	if err != nil {
 		return fmt.Errorf("tipsyabconfig: acquire token: %w", err)
@@ -120,7 +120,8 @@ func (t *httpTransport) doProtoJSON(ctx context.Context, url string, req proto.M
 	}
 	httpReq.Header.Set(httpContentTypeHeader, httpContentTypeJSON)
 	// tokenSource emits the lower-case "authorization" metadata key with a
-	// "Bearer <token>" value; forward it verbatim as the HTTP header.
+	// "SecretKey <secret>" or "Bearer <token>" value; forward it verbatim as
+	// the HTTP header so both transports send the identical credential form.
 	if authz := md["authorization"]; authz != "" {
 		httpReq.Header.Set(httpAuthorizationHeader, authz)
 	}

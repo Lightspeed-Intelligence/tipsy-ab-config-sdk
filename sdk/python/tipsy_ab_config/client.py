@@ -297,6 +297,13 @@ class Config:
     startup_fail_open: bool = False
     token: str = ""
     token_provider: Optional[Callable[[], Awaitable[str]]] = None
+    # ``secret_key`` enables the secretKey auth mode (issue #16): the value is
+    # sent as ``Authorization: SecretKey <secret>`` on every RPC (gRPC and HTTP
+    # alike) and the platform compares it against ``TIPSY_SERVICE_SECRET``
+    # (constant-time, full access on match). Credential priority per request:
+    # SecretKey > token_provider > token. The SDK never reads this from an
+    # environment variable — hosts pass it explicitly (user decision).
+    secret_key: Optional[str] = None
     max_recv_message_size: int = 512 * 1024 * 1024
     max_send_message_size: int = 512 * 1024 * 1024
     # ``default_namespace``, when non-empty, overrides the value read from the
@@ -344,25 +351,46 @@ class Config:
 class _TokenCache:
     """Holds the current bearer token + an optional async refresh provider.
 
-    Used by the bearer auth interceptors to inject
-    ``Authorization: Bearer <token>`` on every outgoing RPC (both unary and
+    Used by the auth interceptors / HTTP transport to inject the
+    ``Authorization`` header on every outgoing RPC (both unary and
     server-streaming).  For static-token deployments the cached value
     never changes; for dynamic tokens the host periodically calls
     :meth:`refresh` to update the cache (the interceptor never blocks).
+
+    When a ``secret_key`` is configured it wins over both token forms:
+    :meth:`authorization` — the single per-request credential resolution
+    point (issue #16) — returns ``SecretKey <secret>`` instead of
+    ``Bearer <token>`` (priority: SecretKey > token_provider > token).
     """
 
     def __init__(
         self,
         static_token: str,
         token_provider: Optional[Callable[[], Awaitable[str]]],
+        secret_key: Optional[str] = None,
     ) -> None:
         self._static = static_token
         self._provider = token_provider
         self._cached: Optional[str] = static_token or None
+        self._secret_key = secret_key or ""
         self._lock = asyncio.Lock()
 
     def current(self) -> str:
         return self._cached or self._static or ""
+
+    def authorization(self) -> str:
+        """Full ``Authorization`` header value, resolved per request.
+
+        Priority (issue #16): SecretKey > token_provider > token — the
+        provider/token ordering is already encoded in :meth:`current`
+        (``_cached`` holds the provider-refreshed value). The scheme literal
+        ``SecretKey`` is a wire contract with the platform verifier: the SDK
+        always sends this exact spelling (the server matches it
+        case-insensitively, RFC 7235).
+        """
+        if self._secret_key:
+            return "SecretKey " + self._secret_key
+        return "Bearer " + self.current()
 
     async def refresh(self) -> None:
         """Refresh the cached token from the async provider."""
@@ -1655,15 +1683,27 @@ async def _init_grpc(cfg: Config) -> Client:
     """gRPC-mode init (default; behaviour unchanged from before ST3)."""
     if not cfg.config_service_addr and cfg.channel_factory is None:
         raise ValueError("tipsy_ab_config: cfg.config_service_addr must be set")
-    if not cfg.token and cfg.token_provider is None and cfg.channel_factory is None:
-        raise ValueError("tipsy_ab_config: cfg.token or cfg.token_provider must be set")
+    # channel_factory exemption (unchanged semantics): a factory-built channel
+    # bypasses the SDK's auth instrumentation entirely (no interceptors are
+    # attached — secret_key does not attach either), so no credential is
+    # required on that path; the caller wires auth itself.
+    if (
+        not cfg.secret_key
+        and not cfg.token
+        and cfg.token_provider is None
+        and cfg.channel_factory is None
+    ):
+        raise ValueError(
+            "tipsy_ab_config: cfg.secret_key, cfg.token or cfg.token_provider "
+            "must be set"
+        )
 
     cache = ConfigCache()
     metrics = Metrics()
 
     auth_plugin: Optional[_TokenCache] = None
     if cfg.channel_factory is None:
-        auth_plugin = _TokenCache(cfg.token, cfg.token_provider)
+        auth_plugin = _TokenCache(cfg.token, cfg.token_provider, cfg.secret_key)
         if cfg.token_provider is not None:
             # Prime the cache.
             try:
@@ -1714,8 +1754,11 @@ async def _init_http(cfg: Config) -> Client:
             "tipsy_ab_config: HTTP mode requires cfg.config_service_addr "
             "(an http(s):// base URL)"
         )
-    if not cfg.token and cfg.token_provider is None:
-        raise ValueError("tipsy_ab_config: cfg.token or cfg.token_provider must be set")
+    if not cfg.secret_key and not cfg.token and cfg.token_provider is None:
+        raise ValueError(
+            "tipsy_ab_config: cfg.secret_key, cfg.token or cfg.token_provider "
+            "must be set"
+        )
 
     config_base = _normalize_http_base_url(
         cfg.config_service_addr, "config_service_addr"
@@ -1743,7 +1786,7 @@ async def _init_http(cfg: Config) -> Client:
     cache = ConfigCache()
     metrics = Metrics()
 
-    auth_plugin = _TokenCache(cfg.token, cfg.token_provider)
+    auth_plugin = _TokenCache(cfg.token, cfg.token_provider, cfg.secret_key)
     if cfg.token_provider is not None:
         try:
             await auth_plugin.refresh()
@@ -1762,14 +1805,14 @@ async def _init_http(cfg: Config) -> Client:
     config_tr = HttpConfigTransport(
         base_url=config_base,
         client=http_client,
-        token_fn=auth_plugin.current,
+        auth_fn=auth_plugin.authorization,
         max_recv_message_size=cfg.max_recv_message_size,
     )
     abtest_tr = (
         HttpAbtestTransport(
             base_url=abtest_base,
             client=http_client,
-            token_fn=auth_plugin.current,
+            auth_fn=auth_plugin.authorization,
             max_recv_message_size=cfg.max_recv_message_size,
         )
         if abtest_base
@@ -2106,7 +2149,7 @@ def _build_channel(
 
 
 class _AuthInterceptorBase:
-    """Shared token/metadata logic for the bearer interceptors.
+    """Shared credential/metadata logic for the auth interceptors.
 
     NOT a grpc interceptor subclass on purpose — see
     ``_AuthUnaryUnaryInterceptor`` / ``_AuthUnaryStreamInterceptor`` below for
@@ -2116,21 +2159,23 @@ class _AuthInterceptorBase:
     def __init__(self, cache: _TokenCache) -> None:
         self._cache = cache
 
-    def _token(self) -> str:
-        return self._cache.current()
+    def _authorization(self) -> str:
+        # Full header value, resolved per call (SecretKey > provider > token).
+        return self._cache.authorization()
 
 
 class _AuthUnaryUnaryInterceptor(
     _AuthInterceptorBase,
     grpc.aio.UnaryUnaryClientInterceptor,
 ):
-    """Bearer interceptor for unary-unary RPCs (PullAll, GetExperimentResult...).
+    """Auth interceptor for unary-unary RPCs (PullAll, GetExperimentResult...).
 
-    Attaches ``authorization: Bearer <token>`` to every outgoing unary call.
+    Attaches ``authorization: SecretKey <secret>`` / ``Bearer <token>`` to
+    every outgoing unary call.
     """
 
     async def intercept_unary_unary(self, continuation, client_call_details, request):
-        new_details = _append_auth(client_call_details, self._token())
+        new_details = _append_auth(client_call_details, self._authorization())
         return await continuation(new_details, request)
 
 
@@ -2138,7 +2183,7 @@ class _AuthUnaryStreamInterceptor(
     _AuthInterceptorBase,
     grpc.aio.UnaryStreamClientInterceptor,
 ):
-    """Bearer interceptor for server-streaming RPCs (ConfigService.Subscribe).
+    """Auth interceptor for server-streaming RPCs (ConfigService.Subscribe).
 
     Split from the unary-unary interceptor because grpcio registers
     interceptors through an if/elif chain over the four method kinds, so a
@@ -2149,13 +2194,13 @@ class _AuthUnaryStreamInterceptor(
     """
 
     async def intercept_unary_stream(self, continuation, client_call_details, request):
-        new_details = _append_auth(client_call_details, self._token())
+        new_details = _append_auth(client_call_details, self._authorization())
         return await continuation(new_details, request)
 
 
-def _append_auth(details, token: str):
+def _append_auth(details, authorization: str):
     md = list(details.metadata) if details.metadata is not None else []
-    md.append(("authorization", "Bearer " + token))
+    md.append(("authorization", authorization))
     return details._replace(metadata=md)
 
 

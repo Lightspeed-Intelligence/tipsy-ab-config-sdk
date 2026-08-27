@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `Config.secret_key`：仅配置 secretKey（即 `TIPSY_SERVICE_SECRET` 本身）即可完成鉴权（issue #16，
+  需平台侧配套 verifier）。凭据优先级 **SecretKey > token_provider > token**（每请求求值）；
+  发送形态为 `Authorization: SecretKey <secret>`（gRPC metadata 与 HTTP header 双路径一致，
+  SDK 恒发精确字面量，服务端按 RFC 7235 对 scheme 大小写不敏感匹配）。Init 校验放宽为
+  `secret_key / token / token_provider` 至少其一（`channel_factory` 豁免语义不变：工厂通道
+  绕开 SDK auth 插桩，secret_key 同样不附着，无需凭据）。SDK 不读任何环境变量，secretKey 由
+  业务方显式传入。secretKey 校验通过 = 全量访问（等效 `internal_service` + `"*"`），信任边界
+  见 `docs/usage-and-integration.md` §3。
 - `get_config` / `get_config_default` 命中日志（`get_config hit (abtest)` / `(full)`，msg 文本不变）
   新增结构化归因字段：恒定输出 `reason`（枚举 4 值：`full_release` / `experiment` /
   `gray_whitelist` / `abtest_unattributed`）与 `trace_id`（Python 端本次补齐，取自
