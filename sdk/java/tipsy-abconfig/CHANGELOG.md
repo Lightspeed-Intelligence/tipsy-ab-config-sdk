@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-08-27
+
 ### Fixed — ctx-cancel 误报（issue #15）
 
 - **调用方上下文取消（gRPC `CANCELLED`）不再按故障处理**。此前上游客户端断连、

@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-08-27
+
 ### Added
 - `Config.secret_key`：仅配置 secretKey（即 `TIPSY_SERVICE_SECRET` 本身）即可完成鉴权（issue #16，
   需平台侧配套 verifier）。凭据优先级 **SecretKey > token_provider > token**（每请求求值）；
