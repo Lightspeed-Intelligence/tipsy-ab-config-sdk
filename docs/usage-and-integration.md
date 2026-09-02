@@ -42,9 +42,9 @@ namespace 至多拉取一次。创建上下文本身不发 RPC；可显式 prefe
 
 | 模块 | 发布标识/坐标 | 当前仓库元数据 |
 |---|---|---|
-| Go | module path + `sdk/go/tipsyabconfig/vX.Y.Z` tag | `v0.14.0` |
-| Python | `python-sdk/vX.Y.Z` / `tipsy-ab-config` | `v0.15.0` |
-| Java | `io.github.lightspeed-intelligence:tipsy-abconfig` | `v0.11.0` |
+| Go | module path + `sdk/go/tipsyabconfig/vX.Y.Z` tag | `v0.15.0` |
+| Python | `python-sdk/vX.Y.Z` / `tipsy-ab-config` | `v0.16.0` |
+| Java | `io.github.lightspeed-intelligence:tipsy-abconfig` | `v0.12.0` |
 | Go proto | `api/gen/go/vX.Y.Z` | `v0.7.0` |
 
 版本入口：

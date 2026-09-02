@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-09-02
+
 ### Changed (BREAKING)
 - 动态配置 / 实验入参 `userId` 统一改名为 `experimentHashId`，让语义更直观：它是实验平台
   用来哈希分桶的稳定标识（可以是 uid，也可以是设备 id 等任意稳定主体键），线上协议字段
