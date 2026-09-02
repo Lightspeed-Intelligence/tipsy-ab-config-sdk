@@ -8,6 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed (BREAKING)
+- 动态配置 / 实验入参 `userId` 统一改名为 `experimentHashId`，让语义更直观：它是实验平台
+  用来哈希分桶的稳定标识（可以是 uid，也可以是设备 id 等任意稳定主体键），线上协议字段
+  仍为 `user_id`，运行时行为不变。涉及公开 API：
+  - `newAbtestContext` / `mockAbtestContext` / `UserInfo.of` /
+    `ExperimentResultRequest.Builder.userInfo(String, Map)` 的参数名（Java 按位置传参，
+    调用方无需改动）；
+  - `AbtestContext.userId()` → `AbtestContext.experimentHashId()`；
+  - `UserInfo.uid()` → `UserInfo.experimentHashId()`。
+  日志字段名 `uid` 保持不变，避免影响既有日志查询。
+
 ## [0.11.0] - 2026-08-27
 
 ### Fixed — ctx-cancel 误报（issue #15）

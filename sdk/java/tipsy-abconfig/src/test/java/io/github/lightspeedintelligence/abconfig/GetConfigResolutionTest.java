@@ -485,7 +485,7 @@ final class GetConfigResolutionTest {
     // ------------------------------------------------------------------
 
     @Test
-    @DisplayName("AbtestContext userId()/userInfo()/traceId() return the constructed values")
+    @DisplayName("AbtestContext experimentHashId()/userInfo()/traceId() return the constructed values")
     void contextAccessorsReturnConstructedValues() {
         try (AbtestTestSupport h = AbtestTestSupport.newBuilder()
                 .namespaces(NS)
@@ -494,8 +494,8 @@ final class GetConfigResolutionTest {
 
             AbtestContext ctx = h.client.newAbtestContext("u-42",
                     Map.of("country", "FR"), "trace-abc");
-            assertEquals("u-42", ctx.userId());
-            assertEquals("u-42", ctx.userInfo().uid());
+            assertEquals("u-42", ctx.experimentHashId());
+            assertEquals("u-42", ctx.userInfo().experimentHashId());
             assertEquals("FR", ctx.userInfo().attrs().get("country"));
             assertEquals("trace-abc", ctx.traceId());
             assertNotNull(ctx.userInfo());

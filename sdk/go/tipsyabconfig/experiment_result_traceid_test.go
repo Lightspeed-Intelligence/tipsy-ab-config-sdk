@@ -116,7 +116,7 @@ func TestGetExperimentResult_EmptyTraceID_GeneratesUUID(t *testing.T) {
 
 	_, err := cli.GetExperimentResult(context.Background(), ExperimentResultRequest{
 		Namespace: "ns1",
-		UserInfo:  UserInfo{UID: "u1"},
+		UserInfo:  UserInfo{ExperimentHashID: "u1"},
 		TraceID:   "",
 	})
 	if err != nil {
@@ -140,7 +140,7 @@ func TestGetExperimentResult_CallerTraceID_PassedThrough(t *testing.T) {
 	const caller = "caller-id"
 	_, err := cli.GetExperimentResult(context.Background(), ExperimentResultRequest{
 		Namespace: "ns1",
-		UserInfo:  UserInfo{UID: "u1"},
+		UserInfo:  UserInfo{ExperimentHashID: "u1"},
 		TraceID:   caller,
 	})
 	if err != nil {

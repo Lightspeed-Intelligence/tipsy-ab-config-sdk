@@ -696,7 +696,7 @@ class Client:
         if hdr_present and hdr_value is False:
             logger.debug(
                 "get_config fast path (no dynamic resolution; skipping abtest)",
-                extra={"ns": resolved_ns, "key": key, "uid": ctx.user_id},
+                extra={"ns": resolved_ns, "key": key, "uid": ctx.experiment_hash_id},
             )
             abresult: Optional[_ComputeResult] = None
         else:
@@ -736,7 +736,7 @@ class Client:
             "ns": resolved_ns,
             "key": key,
             "version": res.version,
-            "uid": ctx.user_id,
+            "uid": ctx.experiment_hash_id,
             "trace_id": ctx.trace_id,
         }
         if res.source == _SOURCE_ABTEST:
@@ -907,7 +907,7 @@ class Client:
                 "ab": ab_hits,
                 "full": len(out) - ab_hits,
                 "dropped": len(snap.keys) - len(out),
-                "uid": ctx.user_id,
+                "uid": ctx.experiment_hash_id,
                 "trace_id": ctx.trace_id,
             },
         )
@@ -1168,12 +1168,18 @@ class Client:
 
     def new_abtest_context(
         self,
-        user_id: str,
+        experiment_hash_id: str,
         user_attrs: Optional[Mapping[str, Any]] = None,
         *,
         trace_id: Optional[str] = None,
     ) -> AbtestContext:
         """Synchronously create an AbtestContext (pure create — NO RPC).
+
+        ``experiment_hash_id`` is the identifier the abtest platform hashes
+        to bucket this request into an experiment group (sent on the wire as
+        ``user_id``). Typically a uid, but any stable per-subject key (device
+        id, session id, ...) works; ``""`` / ``"0"`` means no identity and
+        short-circuits every namespace to full release without an RPC.
 
         Construction issues NO ``GetExperimentResult`` RPC: it only builds the
         per-request context. Every namespace is fetched lazily and memoised
@@ -1188,7 +1194,7 @@ class Client:
         verbatim and forwarded to the server.
         """
         return AbtestContext(
-            user_id=user_id,
+            experiment_hash_id=experiment_hash_id,
             user_attrs=user_attrs,
             owner=self,
             trace_id=trace_id,
@@ -1201,12 +1207,12 @@ class Client:
         ``get_config`` still works: every not-yet-resolved ns short-circuits to
         the empty result without a GetExperimentResult RPC (design 04 §B.2).
         """
-        return AbtestContext(user_id="", owner=self, empty=True)
+        return AbtestContext(experiment_hash_id="", owner=self, empty=True)
 
     @asynccontextmanager
     async def abtest_scope(
         self,
-        user_id: str,
+        experiment_hash_id: str,
         user_attrs: Optional[Mapping[str, Any]] = None,
         *,
         trace_id: Optional[str] = None,
@@ -1220,7 +1226,7 @@ class Client:
         :meth:`AbtestContext.prefetch_config_version_flat_kv_for_namespace` if
         desired.
         """
-        ctx = self.new_abtest_context(user_id, user_attrs, trace_id=trace_id)
+        ctx = self.new_abtest_context(experiment_hash_id, user_attrs, trace_id=trace_id)
         token = abtest_ctx_var.set(ctx)
         try:
             yield ctx
@@ -1229,7 +1235,7 @@ class Client:
 
     def mock_abtest_context(
         self,
-        user_id: str,
+        experiment_hash_id: str,
         key_versions_by_ns: Mapping[str, Mapping[str, int]],
     ) -> AbtestContext:
         """Test helper from abtest-platform-sdk.md §9.4.
@@ -1239,7 +1245,7 @@ class Client:
         (the ctx is marked empty, so the lazy path short-circuits without an
         RPC), matching the Go ``MockAbtestContext`` behaviour.
         """
-        ctx = AbtestContext(user_id=user_id, owner=self, empty=True)
+        ctx = AbtestContext(experiment_hash_id=experiment_hash_id, owner=self, empty=True)
         for ns, kv in key_versions_by_ns.items():
             ctx._seed_result(
                 ns,
@@ -1302,7 +1308,7 @@ class Client:
         tid = trace_id if trace_id else str(uuid.uuid4())
         req = abtest_pb2.GetExperimentResultRequest(
             namespace=ns,
-            user_id=ui.uid,
+            user_id=ui.experiment_hash_id,
             user_attrs=_encode_user_attrs(ui.attrs),
             layer_ids=list(layer_ids or []),
             experiment_type=experiment_type,
@@ -1338,7 +1344,7 @@ class Client:
     async def _fetch_config_version_flat_kv_for_ns(
         self,
         ns: str,
-        user_id: str,
+        experiment_hash_id: str,
         user_attrs: Mapping[str, Any],
         trace_id: str,
     ) -> _ComputeResult:
@@ -1365,7 +1371,7 @@ class Client:
             return _EMPTY_RESULT
         req = abtest_pb2.GetExperimentResultRequest(
             namespace=ns,
-            user_id=user_id,
+            user_id=experiment_hash_id,
             user_attrs=_encode_user_attrs(user_attrs),
             experiment_type=abtest_pb2.ExperimentType.EXPERIMENT_TYPE_CONFIG_VERSION,
             display_type=abtest_pb2.ResultDisplayType.RESULT_DISPLAY_TYPE_EACH_EXPERIMENT_GROUP,

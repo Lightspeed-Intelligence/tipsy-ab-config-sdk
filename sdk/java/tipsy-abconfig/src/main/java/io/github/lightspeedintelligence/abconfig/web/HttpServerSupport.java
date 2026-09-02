@@ -81,7 +81,7 @@ public final class HttpServerSupport {
     }
 
     /**
-     * Extracts the user identity ({@link UserInfo}: uid + attrs) for an inbound
+     * Extracts the user identity ({@link UserInfo}: experimentHashId + attrs) for an inbound
      * exchange. The surveyed consumer carries {@code user_id} in the JSON request
      * body's {@code common} map, so this provider receives the raw
      * {@link HttpExchange} and is free to read headers and/or buffer the body as
@@ -113,7 +113,7 @@ public final class HttpServerSupport {
      *   <li>invokes {@code provider} to obtain the {@link UserInfo} (a
      *       {@code null} provider, a thrown exception, or a {@code null} return
      *       degrades to {@link TipsyAbConfigClient#emptyAbtestContext()} + a
-     *       WARN; a present {@link UserInfo} — even one with an empty uid — is
+     *       WARN; a present {@link UserInfo} — even one with an empty experimentHashId — is
      *       passed through as-is);</li>
      *   <li>builds an {@link AbtestContext} via
      *       {@link TipsyAbConfigClient#newAbtestContext(String, java.util.Map, String)};</li>
@@ -176,6 +176,6 @@ public final class HttpServerSupport {
         if (user == null) {
             return client.emptyAbtestContext();
         }
-        return client.newAbtestContext(user.uid(), user.attrs(), traceId);
+        return client.newAbtestContext(user.experimentHashId(), user.attrs(), traceId);
     }
 }

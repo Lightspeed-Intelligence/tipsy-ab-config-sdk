@@ -169,7 +169,7 @@ async def test_abtest_scope_sets_contextvar(
         async with cli.abtest_scope("u1", {"country": "US"}):
             ctx = abtest_ctx_var.get()
             assert ctx is not None
-            assert ctx.user_id == "u1"
+            assert ctx.experiment_hash_id == "u1"
             val = await cli.get_config(None, "ns1", "k", "def")
             assert val == "full"
         # After scope exits the contextvar resets.
@@ -308,10 +308,10 @@ async def test_prefetch_no_user_uid_zero_rpc(
         await cli.aclose()
 
 
-async def test_abtest_context_none_user_id_normalises_and_shortcuts(
+async def test_abtest_context_none_experiment_hash_id_normalises_and_shortcuts(
     cfg_servicer, ab_servicer, running_servers
 ):
-    """AbtestContext(user_id=None) normalises to "" and takes the shortcut.
+    """AbtestContext(experiment_hash_id=None) normalises to "" and shortcuts.
 
     Guards the design §1 note: a None uid must normalise to the empty string
     (so proto encoding never sees None) AND fall into the no-user shortcut.
@@ -334,8 +334,8 @@ async def test_abtest_context_none_user_id_normalises_and_shortcuts(
         )
     )
     try:
-        abctx = AbtestContext(user_id=None, owner=cli)
-        assert abctx.user_id == ""
+        abctx = AbtestContext(experiment_hash_id=None, owner=cli)
+        assert abctx.experiment_hash_id == ""
         val = await cli.get_config(abctx, "ns1", "k", "def")
         assert val == "full"
         assert ab_servicer.calls == 0

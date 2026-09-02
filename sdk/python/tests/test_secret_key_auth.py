@@ -177,7 +177,7 @@ async def test_http_secret_key_only_init_and_exact_header():
     try:
         # Exercise the second HTTP endpoint too so both transport classes'
         # requests are captured.
-        await cli.get_experiment_result("ns1", UserInfo(uid="u1"))
+        await cli.get_experiment_result("ns1", UserInfo(experiment_hash_id="u1"))
         assert recorder.auth_headers, "no HTTP requests captured"
         for hdr in recorder.auth_headers:
             assert hdr == "SecretKey " + SECRET, f"bad auth header: {hdr!r}"

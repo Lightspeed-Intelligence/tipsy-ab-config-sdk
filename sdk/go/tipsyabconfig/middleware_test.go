@@ -33,7 +33,7 @@ func TestMiddleware_AttachesAbtestContext(t *testing.T) {
 			return
 		}
 		seenAbCtx = true
-		seenUID = abctx.UserID()
+		seenUID = abctx.ExperimentHashID()
 	}))
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -45,7 +45,7 @@ func TestMiddleware_AttachesAbtestContext(t *testing.T) {
 		t.Fatal("handler did not see AbtestContext on request ctx")
 	}
 	if seenUID != "u1" {
-		t.Fatalf("UserID() returned %q, want u1", seenUID)
+		t.Fatalf("ExperimentHashID() returned %q, want u1", seenUID)
 	}
 }
 
@@ -92,8 +92,8 @@ func TestMiddleware_ProviderErrorFallsToEmpty(t *testing.T) {
 		if abctx == nil {
 			t.Error("expected fallback EmptyAbtestContext")
 		}
-		if abctx != nil && abctx.UserID() != "" {
-			t.Errorf("expected empty UserID, got %q", abctx.UserID())
+		if abctx != nil && abctx.ExperimentHashID() != "" {
+			t.Errorf("expected empty ExperimentHashID, got %q", abctx.ExperimentHashID())
 		}
 	}))
 	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", "/", nil))
@@ -135,8 +135,8 @@ func TestGinMiddleware_ForwardsAbtestContext(t *testing.T) {
 	if !ok || abctx == nil {
 		t.Fatalf("expected Set('abtest_ctx', *AbtestContext); got %T", gc.setKeys["abtest_ctx"])
 	}
-	if abctx.UserID() != "u-gin" {
-		t.Fatalf("UserID mismatch: %q", abctx.UserID())
+	if abctx.ExperimentHashID() != "u-gin" {
+		t.Fatalf("ExperimentHashID mismatch: %q", abctx.ExperimentHashID())
 	}
 	// The new request must carry abctx on its context too.
 	if got := AbtestContextFromContext(gc.req.Context()); got == nil {

@@ -88,7 +88,7 @@ async def test_middleware_attaches_abtest_context(
 
     async def handler(request):
         ctx = abtest_ctx_var.get()
-        return JSONResponse({"uid": ctx.user_id if ctx else None})
+        return JSONResponse({"uid": ctx.experiment_hash_id if ctx else None})
 
     app = Starlette(routes=[Route("/u", handler)])
     app.add_middleware(AbtestMiddleware, sdk=cli, user_provider=user_provider)
@@ -125,7 +125,7 @@ async def test_middleware_no_user_provider_uses_empty_ctx(
 
     async def handler(request):
         ctx = abtest_ctx_var.get()
-        return JSONResponse({"has_ctx": ctx is not None, "uid": ctx.user_id if ctx else ""})
+        return JSONResponse({"has_ctx": ctx is not None, "uid": ctx.experiment_hash_id if ctx else ""})
 
     app = Starlette(routes=[Route("/u", handler)])
     app.add_middleware(AbtestMiddleware, sdk=cli, user_provider=None)
@@ -168,7 +168,7 @@ async def test_middleware_user_provider_error_falls_back_to_empty(
 
     async def handler(request):
         ctx = abtest_ctx_var.get()
-        return JSONResponse({"uid": ctx.user_id if ctx else None})
+        return JSONResponse({"uid": ctx.experiment_hash_id if ctx else None})
 
     app = Starlette(routes=[Route("/u", handler)])
     app.add_middleware(AbtestMiddleware, sdk=cli, user_provider=bad_provider)
@@ -242,7 +242,7 @@ async def _whitelist_app(cli, *, user_provider, prefetch_paths=None, route="/x")
 
     async def handler(request):
         ctx = abtest_ctx_var.get()
-        return JSONResponse({"uid": ctx.user_id if ctx else None})
+        return JSONResponse({"uid": ctx.experiment_hash_id if ctx else None})
 
     app = Starlette(routes=[Route(route, handler), Route("/other", handler)])
     app.add_middleware(

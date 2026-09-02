@@ -16,7 +16,9 @@ SDK 初始化时向 `ConfigService.PullAll` 拉取所订阅 namespace 的完整�
 上下文按 namespace 惰性调用 `AbtestService.GetExperimentResult`，同一个上下文中每个
 namespace 至多拉取一次。创建上下文本身不发 RPC；可显式 prefetch 以提前启动拉取。
 
-`user_id` 是被分流对象的稳定标识，不限定为自然人。`user_attrs` 是 admission 条件使用的
+`experimentHashId`（Go `experimentHashID` / Python `experiment_hash_id` / Java `experimentHashId`；
+线上协议字段仍为 `user_id`）是实验平台用来哈希分桶的稳定标识，不限定为自然人 uid，任何稳定的
+分流主体键（设备 id、会话 id 等）均可。`user_attrs` 是 admission 条件使用的
 标量属性，支持 string、integer、double 和 boolean。空字符串、`"0"`（Python 还包括
 `None`）表示无真实用户身份：三语言均跳过实验与白名单 RPC，只按 full release 解析。
 
@@ -234,7 +236,7 @@ client = await init(Config(
 ))
 
 ctx = client.new_abtest_context(
-    user_id="user-123",
+    experiment_hash_id="user-123",
     user_attrs={"country": "JP", "vip": True},
 )
 value = await client.get_config(ctx, "my-app", "feature_x", "off")

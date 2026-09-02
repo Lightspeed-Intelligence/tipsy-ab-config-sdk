@@ -73,7 +73,7 @@ async def test_get_experiment_result_explicit_trace_id_sent(
     try:
         resp = await cli.get_experiment_result(
             "ns1",
-            user_info=UserInfo(uid="u1", attrs={"country": "US"}),
+            user_info=UserInfo(experiment_hash_id="u1", attrs={"country": "US"}),
             trace_id="caller-id",
         )
         assert resp is not None
@@ -106,7 +106,7 @@ async def test_get_experiment_result_missing_trace_id_generates_uuid(
     try:
         await cli.get_experiment_result(
             "ns1",
-            user_info=UserInfo(uid="u1"),
+            user_info=UserInfo(experiment_hash_id="u1"),
             trace_id=None,
         )
         assert ab_servicer.last_req is not None
@@ -142,7 +142,7 @@ async def test_get_experiment_result_empty_string_trace_id_generates_uuid(
     try:
         await cli.get_experiment_result(
             "ns1",
-            user_info=UserInfo(uid="u1"),
+            user_info=UserInfo(experiment_hash_id="u1"),
             trace_id="",
         )
         assert ab_servicer.last_req is not None
@@ -180,7 +180,7 @@ async def test_get_experiment_result_default_omitted_kwarg(
     )
     try:
         # No trace_id kwarg at all — mirrors any pre-existing caller.
-        await cli.get_experiment_result("ns1", user_info=UserInfo(uid="u1"))
+        await cli.get_experiment_result("ns1", user_info=UserInfo(experiment_hash_id="u1"))
         assert ab_servicer.last_req is not None
         sent = ab_servicer.last_req.trace_id
         assert sent and _looks_like_uuid_v4(sent)

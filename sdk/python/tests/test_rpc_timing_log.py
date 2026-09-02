@@ -77,7 +77,7 @@ async def test_public_get_experiment_result_success_emits_one_timing_debug(
         with caplog.at_level(logging.DEBUG, logger="tipsy_ab_config"):
             resp = await cli.get_experiment_result(
                 "ns1",
-                user_info=UserInfo(uid="u1", attrs={"country": "US"}),
+                user_info=UserInfo(experiment_hash_id="u1", attrs={"country": "US"}),
                 trace_id="trace-success",
             )
         assert resp is not None
@@ -125,7 +125,7 @@ async def test_public_get_experiment_result_failure_emits_err_debug_and_propagat
             with pytest.raises(grpc.aio.AioRpcError):
                 await cli.get_experiment_result(
                     "ns1",
-                    user_info=UserInfo(uid="u1"),
+                    user_info=UserInfo(experiment_hash_id="u1"),
                     trace_id="trace-fail",
                 )
 
@@ -247,7 +247,7 @@ async def test_no_timing_records_at_info_level(
         with caplog.at_level(logging.INFO, logger="tipsy_ab_config"):
             resp = await cli.get_experiment_result(
                 "ns1",
-                user_info=UserInfo(uid="u1"),
+                user_info=UserInfo(experiment_hash_id="u1"),
                 trace_id="trace-info",
             )
         assert resp is not None

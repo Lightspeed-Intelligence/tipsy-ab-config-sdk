@@ -116,7 +116,7 @@ async def user_handler():
     ctx = abtest_ctx_var.get()
     value = await sdk.get_config(ctx, "tipsy-chat", "rerank.threshold", "0.5")
     return {
-        "uid": ctx.user_id if ctx is not None else "",
+        "uid": ctx.experiment_hash_id if ctx is not None else "",
         "trace_id": ctx.trace_id if ctx is not None else "",
         "key": "rerank.threshold",
         "value": value,

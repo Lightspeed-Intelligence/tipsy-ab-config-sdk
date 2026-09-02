@@ -423,13 +423,19 @@ public final class TipsyAbConfigClient implements AutoCloseable {
      * {@link AbtestContext#prefetchConfigVersionFlatKvForNamespace(String)}
      * (non-blocking).
      *
+     * <p>{@code experimentHashId} is the identifier the abtest platform hashes to
+     * bucket this request into an experiment group (sent on the wire as
+     * {@code user_id}). Typically a uid, but any stable per-subject key (device
+     * id, session id, ...) works; {@code ""} / {@code "0"} means no identity
+     * and short-circuits every namespace to full release without an RPC.
+     *
      * <p>{@code attrs} is converted to {@code abtestv1.Value} entries on the
      * wire. Supported concrete types: {@code String}, {@code Boolean},
      * {@code Integer}/{@code Long}/{@code Short}/{@code Byte},
      * {@code Float}/{@code Double}. Unsupported values are skipped with a WARN.
      */
-    public AbtestContext newAbtestContext(String userId, Map<String, Object> attrs) {
-        return newAbtestContextInternal(userId, attrs, "");
+    public AbtestContext newAbtestContext(String experimentHashId, Map<String, Object> attrs) {
+        return newAbtestContextInternal(experimentHashId, attrs, "");
     }
 
     /**
@@ -438,12 +444,12 @@ public final class TipsyAbConfigClient implements AutoCloseable {
      * &rArr; passed through verbatim. Every {@code GetExperimentResult} RPC
      * issued from this context carries this trace id.
      */
-    public AbtestContext newAbtestContext(String userId, Map<String, Object> attrs, String traceId) {
-        return newAbtestContextInternal(userId, attrs, traceId);
+    public AbtestContext newAbtestContext(String experimentHashId, Map<String, Object> attrs, String traceId) {
+        return newAbtestContextInternal(experimentHashId, attrs, traceId);
     }
 
     private AbtestContext newAbtestContextInternal(
-            String userId, Map<String, Object> attrs, String traceId) {
+            String experimentHashId, Map<String, Object> attrs, String traceId) {
         // trace_id: empty ⇒ generate locally so SDK-side and server-side log
         // lines for this request share the same id.
         String resolvedTraceId = (traceId == null || traceId.isEmpty())
@@ -453,7 +459,7 @@ public final class TipsyAbConfigClient implements AutoCloseable {
         // first dynamic getConfig (or an explicit
         // AbtestContext.prefetchConfigVersionFlatKvForNamespace call) lazily
         // fetches and memoises each ns.
-        return new AbtestContext(userId, attrs, this, resolvedTraceId, false, results);
+        return new AbtestContext(experimentHashId, attrs, this, resolvedTraceId, false, results);
     }
 
     /**
@@ -478,7 +484,7 @@ public final class TipsyAbConfigClient implements AutoCloseable {
      * mock-driven {@code getConfig} abtest hit logs
      * {@code reason=abtest_unattributed}.
      */
-    public AbtestContext mockAbtestContext(String userId, Map<String, Map<String, Long>> kvByNs) {
+    public AbtestContext mockAbtestContext(String experimentHashId, Map<String, Map<String, Long>> kvByNs) {
         Map<String, CompletableFuture<AbtestComputeResult>> results =
                 new HashMap<>(kvByNs == null ? 0 : kvByNs.size());
         if (kvByNs != null) {
@@ -489,7 +495,7 @@ public final class TipsyAbConfigClient implements AutoCloseable {
             }
         }
         return new AbtestContext(
-                userId, null, this, UUID.randomUUID().toString(), true, results);
+                experimentHashId, null, this, UUID.randomUUID().toString(), true, results);
     }
 
     /**
@@ -570,7 +576,7 @@ public final class TipsyAbConfigClient implements AutoCloseable {
             case FULL:
                 LOG.info("tipsyabconfig: get_config hit (full) "
                         + "reason=full_release, ns={}, key={}, version={}, uid={}, trace_id={}",
-                        resolvedNs, key, r.version, abctx.userId(), abctx.traceId());
+                        resolvedNs, key, r.version, abctx.experimentHashId(), abctx.traceId());
                 return r.value;
             default:
                 return defaultValue;
@@ -596,21 +602,21 @@ public final class TipsyAbConfigClient implements AutoCloseable {
                         + "reason=experiment, ns={}, key={}, version={}, "
                         + "experiment_id={}, group_id={}, uid={}, trace_id={}",
                         resolvedNs, key, r.version, attr.experimentId, attr.groupId,
-                        abctx.userId(), abctx.traceId());
+                        abctx.experimentHashId(), abctx.traceId());
                 break;
             case GRAY_WHITELIST:
                 LOG.info("tipsyabconfig: get_config hit (abtest) "
                         + "reason=gray_whitelist, ns={}, key={}, version={}, "
                         + "release_id={}, uid={}, trace_id={}",
                         resolvedNs, key, r.version, attr.releaseId,
-                        abctx.userId(), abctx.traceId());
+                        abctx.experimentHashId(), abctx.traceId());
                 break;
             default:
                 // UNATTRIBUTED: value valid, attribution unknown (empty-id
                 // group, release_id=0 gray hit, mock-seeded result).
                 LOG.info("tipsyabconfig: get_config hit (abtest) "
                         + "reason=abtest_unattributed, ns={}, key={}, version={}, uid={}, trace_id={}",
-                        resolvedNs, key, r.version, abctx.userId(), abctx.traceId());
+                        resolvedNs, key, r.version, abctx.experimentHashId(), abctx.traceId());
                 break;
         }
     }
@@ -816,7 +822,7 @@ public final class TipsyAbConfigClient implements AutoCloseable {
         LOG.debug("tipsyabconfig: get_all_configs "
                 + "(ns={}, keys={}, ab_hits={}, full_hits={}, omitted={}, uid={}, trace_id={})",
                 resolvedNs, snap.keys.size(), abHits, fullHits, omitted,
-                abctx.userId(), abctx.traceId());
+                abctx.experimentHashId(), abctx.traceId());
         return out;
     }
 
@@ -1204,7 +1210,7 @@ public final class TipsyAbConfigClient implements AutoCloseable {
         }
         GetExperimentResultRequest pbReq = GetExperimentResultRequest.newBuilder()
                 .setNamespace(ns)
-                .setUserId(userInfo.uid())
+                .setUserId(userInfo.experimentHashId())
                 .putAllUserAttrs(AbtestContext.encodeUserAttrs(userInfo.attrs(), LOG))
                 .addAllLayerIds(req.layerIds())
                 .setExperimentType(req.type().toProto())

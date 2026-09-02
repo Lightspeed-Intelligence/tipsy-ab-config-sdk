@@ -280,19 +280,19 @@ func TestUserInfo_Accessor(t *testing.T) {
 	attrs := map[string]any{"country": "US", "tier": 3}
 	abctx := cli.NewAbtestContext(context.Background(), "u42", attrs)
 	ui := abctx.UserInfo()
-	if ui.UID != "u42" {
-		t.Fatalf("UserInfo().UID = %q, want u42", ui.UID)
+	if ui.ExperimentHashID != "u42" {
+		t.Fatalf("UserInfo().ExperimentHashID = %q, want u42", ui.ExperimentHashID)
 	}
 	if ui.Attrs["country"] != "US" || ui.Attrs["tier"] != 3 {
 		t.Fatalf("UserInfo().Attrs = %+v, want country=US tier=3", ui.Attrs)
 	}
-	// UserID() must still work for back-compat.
-	if abctx.UserID() != "u42" {
-		t.Fatalf("UserID() = %q, want u42", abctx.UserID())
+	// ExperimentHashID() must still work for back-compat.
+	if abctx.ExperimentHashID() != "u42" {
+		t.Fatalf("ExperimentHashID() = %q, want u42", abctx.ExperimentHashID())
 	}
 	// Nil receiver yields zero value, not a panic.
 	var nilCtx *AbtestContext
-	if got := nilCtx.UserInfo(); got.UID != "" || got.Attrs != nil {
+	if got := nilCtx.UserInfo(); got.ExperimentHashID != "" || got.Attrs != nil {
 		t.Fatalf("nil UserInfo() = %+v, want zero", got)
 	}
 }
@@ -314,7 +314,7 @@ func TestGetExperimentResult_Client(t *testing.T) {
 
 	resp, err := cli.GetExperimentResult(context.Background(), ExperimentResultRequest{
 		Namespace:   "ns1",
-		UserInfo:    UserInfo{UID: "u1", Attrs: map[string]any{"country": "US"}},
+		UserInfo:    UserInfo{ExperimentHashID: "u1", Attrs: map[string]any{"country": "US"}},
 		LayerIds:    []string{"L1", "L2"},
 		Type:        ExperimentTypeCustomParams,
 		DisplayType: ResultDisplayEachExperimentGroup,

@@ -56,12 +56,12 @@ func (c *Client) GinMiddleware(gc GinLikeContext, provider UserProvider, opts ..
 	if provider == nil {
 		abctx = c.EmptyAbtestContext()
 	} else {
-		uid, attrs, err := provider(ctx, req)
+		experimentHashID, attrs, err := provider(ctx, req)
 		if err != nil {
 			c.logger.Error("tipsyabconfig: user provider failed; using empty abtest ctx", "err", err, "trace_id", traceID)
 			abctx = c.EmptyAbtestContext()
 		} else {
-			abctx = c.NewAbtestContextWithTraceID(ctx, uid, attrs, traceID)
+			abctx = c.NewAbtestContextWithTraceID(ctx, experimentHashID, attrs, traceID)
 			realUser = true
 		}
 	}

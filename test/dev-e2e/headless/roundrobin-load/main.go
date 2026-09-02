@@ -95,7 +95,7 @@ func main() {
 				callCtx, callCancel := context.WithTimeout(loadCtx, 2*time.Second)
 				_, err := sdk.GetExperimentResult(callCtx, tac.ExperimentResultRequest{
 					Namespace:   *ns,
-					UserInfo:    tac.UserInfo{UID: uid},
+					UserInfo:    tac.UserInfo{ExperimentHashID: uid},
 					Type:        tac.ExperimentTypeConfigVersion,
 					DisplayType: tac.ResultDisplayType(0),
 				})

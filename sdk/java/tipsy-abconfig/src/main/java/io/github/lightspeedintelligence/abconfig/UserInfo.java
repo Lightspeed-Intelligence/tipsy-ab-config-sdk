@@ -14,38 +14,44 @@ import java.util.Map;
  */
 public final class UserInfo {
 
-    private final String uid;
+    private final String experimentHashId;
     private final Map<String, Object> attrs;
 
-    UserInfo(String uid, Map<String, Object> attrs) {
-        this.uid = uid == null ? "" : uid;
+    UserInfo(String experimentHashId, Map<String, Object> attrs) {
+        this.experimentHashId = experimentHashId == null ? "" : experimentHashId;
         this.attrs = attrs == null
                 ? Collections.emptyMap()
                 : Collections.unmodifiableMap(attrs);
     }
 
     /**
-     * Builds a {@link UserInfo} from a user id and attribute map. This is the
+     * Builds a {@link UserInfo} from an experiment hash id and attribute map. This is the
      * public factory web-integration callers use to return a user identity from
      * a {@code io.github.lightspeedintelligence.abconfig.web.HttpServerSupport.AbtestUserProvider} (the
      * package-private constructor is reserved for {@link AbtestContext}).
      *
-     * <p>A {@code null} {@code uid} normalises to the empty string; a
+     * <p>A {@code null} {@code experimentHashId} normalises to the empty string; a
      * {@code null} {@code attrs} normalises to an empty map. The supplied
      * {@code attrs} map is aliased (wrapped unmodifiable), not copied, so callers
      * must not mutate it after handing it over.
      *
-     * @param uid   the user id (may be {@code null} → "")
-     * @param attrs the user attributes (may be {@code null} → empty)
+     * @param experimentHashId the identifier the abtest platform hashes for
+     *                         bucketing (typically a uid; sent on the wire as
+     *                         {@code user_id}; may be {@code null} → "")
+     * @param attrs            the user attributes (may be {@code null} → empty)
      * @return an immutable {@link UserInfo}
      */
-    public static UserInfo of(String uid, Map<String, Object> attrs) {
-        return new UserInfo(uid, attrs);
+    public static UserInfo of(String experimentHashId, Map<String, Object> attrs) {
+        return new UserInfo(experimentHashId, attrs);
     }
 
-    /** The user id this context was constructed with (never {@code null}). */
-    public String uid() {
-        return uid;
+    /**
+     * The experiment hash id this context was constructed with (never
+     * {@code null}). This is the identifier the abtest platform hashes to bucket
+     * the request into an experiment group (sent on the wire as {@code user_id}).
+     */
+    public String experimentHashId() {
+        return experimentHashId;
     }
 
     /**

@@ -40,7 +40,7 @@ import org.slf4j.LoggerFactory;
  *       {@link HttpServerSupport#wrap} to build a per-request
  *       {@link AbtestContext} from request headers, then resolves a dynamic key
  *       via {@link TipsyAbConfigClient#getConfig} and echoes
- *       {@code abctx.userId()} / {@code abctx.traceId()} / the value.</li>
+ *       {@code abctx.experimentHashId()} / {@code abctx.traceId()} / the value.</li>
  * </ul>
  *
  * <p>Run with (gRPC mode, the default):
@@ -159,7 +159,7 @@ public final class Main {
             }
             String value = client.getConfig(abctx, ns, DEMO_KEY, DEMO_DEFAULT);
             Map<String, Object> body = new LinkedHashMap<>();
-            body.put("uid", abctx.userId());
+            body.put("uid", abctx.experimentHashId());
             body.put("trace_id", abctx.traceId());
             body.put("key", DEMO_KEY);
             body.put("value", value);

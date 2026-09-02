@@ -415,7 +415,7 @@ func TestHTTP_GetExperimentResult_ExposuresRoundTrip(t *testing.T) {
 
 	res, err := cli.GetExperimentResult(context.Background(), ExperimentResultRequest{
 		Namespace: "ns1",
-		UserInfo:  UserInfo{UID: "u1", Attrs: map[string]any{"country": "US"}},
+		UserInfo:  UserInfo{ExperimentHashID: "u1", Attrs: map[string]any{"country": "US"}},
 	})
 	if err != nil {
 		t.Fatalf("GetExperimentResult (http): %v", err)
@@ -459,7 +459,7 @@ func TestHTTP_GetExperimentResult_GrayHitsRoundTrip(t *testing.T) {
 
 	res, err := cli.GetExperimentResult(context.Background(), ExperimentResultRequest{
 		Namespace: "ns1",
-		UserInfo:  UserInfo{UID: "u-gray", Attrs: map[string]any{"country": "US"}},
+		UserInfo:  UserInfo{ExperimentHashID: "u-gray", Attrs: map[string]any{"country": "US"}},
 	})
 	if err != nil {
 		t.Fatalf("GetExperimentResult (http): %v", err)
@@ -533,7 +533,7 @@ func TestHTTP_AuthorizationHeader_StaticToken(t *testing.T) {
 	// Force an abtest call so the header on that route is captured too.
 	_, _ = cli.GetExperimentResult(context.Background(), ExperimentResultRequest{
 		Namespace: "ns1",
-		UserInfo:  UserInfo{UID: "u1"},
+		UserInfo:  UserInfo{ExperimentHashID: "u1"},
 	})
 	if got := h.lastAbtestAuth(); got != want {
 		t.Fatalf("experiment_result Authorization = %q, want %q", got, want)
@@ -773,7 +773,7 @@ func TestHTTP_AddrValidation(t *testing.T) {
 		}
 		// The exported GetExperimentResult must report abtest not configured.
 		if _, err := cli.GetExperimentResult(context.Background(), ExperimentResultRequest{
-			Namespace: "ns1", UserInfo: UserInfo{UID: "u1"},
+			Namespace: "ns1", UserInfo: UserInfo{ExperimentHashID: "u1"},
 		}); err == nil {
 			t.Fatal("expected error from GetExperimentResult when AbtestServiceAddr empty (degraded)")
 		}
