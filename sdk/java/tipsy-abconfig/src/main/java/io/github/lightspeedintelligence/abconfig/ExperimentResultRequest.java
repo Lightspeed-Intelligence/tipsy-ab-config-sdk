@@ -43,7 +43,7 @@ public final class ExperimentResultRequest {
         return namespace;
     }
 
-    /** The user identity (uid + attrs) sent on the wire (never {@code null}). */
+    /** The user identity (experimentHashId + attrs) sent on the wire (never {@code null}). */
     public UserInfo userInfo() {
         return userInfo;
     }
@@ -88,15 +88,15 @@ public final class ExperimentResultRequest {
             return this;
         }
 
-        /** Sets the user identity (uid + attrs) sent on the wire. */
+        /** Sets the user identity (experimentHashId + attrs) sent on the wire. */
         public Builder userInfo(UserInfo userInfo) {
             this.userInfo = userInfo;
             return this;
         }
 
-        /** Convenience: builds the {@link UserInfo} from a uid + attrs map. */
-        public Builder userInfo(String uid, Map<String, Object> attrs) {
-            this.userInfo = new UserInfo(uid, attrs);
+        /** Convenience: builds the {@link UserInfo} from an experimentHashId + attrs map. */
+        public Builder userInfo(String experimentHashId, Map<String, Object> attrs) {
+            this.userInfo = new UserInfo(experimentHashId, attrs);
             return this;
         }
 

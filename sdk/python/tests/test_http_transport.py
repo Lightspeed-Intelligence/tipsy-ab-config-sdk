@@ -588,7 +588,7 @@ async def test_http_get_experiment_result(recorder):
     recorder.set_abtest_response(resp)
     cli = await init(http_config(recorder, pull_interval=10.0))
     try:
-        out = await cli.get_experiment_result("ns1", UserInfo(uid="u1"))
+        out = await cli.get_experiment_result("ns1", UserInfo(experiment_hash_id="u1"))
         assert out.config_flat_kv.get("k") == 7
         assert recorder.abtest_calls >= 1
         # The decoded request carried the namespace + user id over the wire.
@@ -619,7 +619,7 @@ async def test_http_get_experiment_result_exposures_round_trip(recorder):
     recorder.set_abtest_response(resp)
     cli = await init(http_config(recorder, pull_interval=10.0))
     try:
-        out = await cli.get_experiment_result("ns1", UserInfo(uid="u1"))
+        out = await cli.get_experiment_result("ns1", UserInfo(experiment_hash_id="u1"))
         # Backward-compat read: even though SDK no longer EMITS exposures,
         # the proto field bytes a legacy server might send must still decode.
         assert len(out.exposures) == 1
@@ -644,7 +644,7 @@ async def test_http_get_experiment_result_gray_hits_round_trip(recorder):
     recorder.set_abtest_response(resp)
     cli = await init(http_config(recorder, pull_interval=10.0))
     try:
-        out = await cli.get_experiment_result("ns1", UserInfo(uid="u-gray"))
+        out = await cli.get_experiment_result("ns1", UserInfo(experiment_hash_id="u-gray"))
         assert len(out.gray_hits) == 1, (
             f"expected 1 gray_hit; got {list(out.gray_hits)!r}"
         )
@@ -706,7 +706,7 @@ async def test_http_authorization_header_static_token(recorder):
     recorder.set_abtest_response(make_exp_result({"k": 1}))
     cli = await init(http_config(recorder, token=token, pull_interval=10.0))
     try:
-        await cli.get_experiment_result("ns1", UserInfo(uid="u1"))
+        await cli.get_experiment_result("ns1", UserInfo(experiment_hash_id="u1"))
         # Pull (startup) + abtest both carried the bearer.
         assert recorder.auth_headers, "no requests captured"
         for hdr in recorder.auth_headers:

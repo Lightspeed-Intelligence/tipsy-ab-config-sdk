@@ -359,11 +359,11 @@ async def test_user_info_accessor(
         attrs = {"country": "US", "tier": 3}
         abctx = cli.new_abtest_context("u42", attrs)
         ui = abctx.user_info
-        assert ui.uid == "u42"
+        assert ui.experiment_hash_id == "u42"
         assert ui.attrs["country"] == "US"
         assert ui.attrs["tier"] == 3
-        # user_id back-compat still works.
-        assert abctx.user_id == "u42"
+        # Scalar accessor mirrors the UserInfo field.
+        assert abctx.experiment_hash_id == "u42"
     finally:
         await cli.aclose()
 
@@ -390,7 +390,7 @@ async def test_get_experiment_result_client(
     try:
         resp = await cli.get_experiment_result(
             "ns1",
-            user_info=UserInfo(uid="u1", attrs={"country": "US"}),
+            user_info=UserInfo(experiment_hash_id="u1", attrs={"country": "US"}),
             layer_ids=["L1", "L2"],
             experiment_type=abtest_pb2.ExperimentType.EXPERIMENT_TYPE_CUSTOM_PARAMS,
             display_type=abtest_pb2.ResultDisplayType.RESULT_DISPLAY_TYPE_EACH_EXPERIMENT_GROUP,

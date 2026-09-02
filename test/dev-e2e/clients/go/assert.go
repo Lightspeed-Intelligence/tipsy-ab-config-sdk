@@ -191,7 +191,7 @@ func assertCustom(cx context.Context, cli *tac.Client, client string, e Expectat
 	}
 	resp, err := cli.GetExperimentResult(cx, tac.ExperimentResultRequest{
 		Namespace:   e.NS,
-		UserInfo:    tac.UserInfo{UID: e.UserID, Attrs: rawAttrs(e.UserAttrs)},
+		UserInfo:    tac.UserInfo{ExperimentHashID: e.UserID, Attrs: rawAttrs(e.UserAttrs)},
 		Type:        tac.ExperimentTypeCustomParams,
 		DisplayType: tac.ResultDisplayFlatKv,
 		// Explicit trace_id so the SDK call, the server compute log and any

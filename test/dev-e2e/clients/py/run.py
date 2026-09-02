@@ -201,7 +201,7 @@ async def assert_expectation(cli, client_tag, exp, r: Results, tac, abtest_pb2) 
         try:
             resp = await cli.get_experiment_result(
                 ns,
-                user_info=tac.UserInfo(uid=uid, attrs=attrs),
+                user_info=tac.UserInfo(experiment_hash_id=uid, attrs=attrs),
                 experiment_type=abtest_pb2.ExperimentType.EXPERIMENT_TYPE_CUSTOM_PARAMS,
                 display_type=abtest_pb2.ResultDisplayType.RESULT_DISPLAY_TYPE_FLAT_KV,
             )

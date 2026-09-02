@@ -102,7 +102,7 @@ final class NoUserUidShortcutTest {
                 .build()) {
 
             AbtestContext ctx = h.client.newAbtestContext(null, Map.of());
-            assertEquals("", ctx.userId(), "null uid is normalised to the empty string");
+            assertEquals("", ctx.experimentHashId(), "null uid is normalised to the empty string");
             assertEquals("blue", h.client.getConfig(ctx, NS, "color", "DEF"));
             assertEquals(Map.of("color", "blue"), h.client.getAllConfigs(ctx, NS));
             assertEquals(0, h.abtest.totalCalls.get(),

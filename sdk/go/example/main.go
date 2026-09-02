@@ -101,7 +101,7 @@ func main() {
 			return
 		}
 		writeJSON(w, map[string]any{
-			"uid":      abctx.UserID(),
+			"uid":      abctx.ExperimentHashID(),
 			"trace_id": abctx.TraceID(),
 			"key":      "rerank.threshold",
 			"value":    val,
@@ -128,7 +128,7 @@ func main() {
 			return
 		}
 		writeJSON(w, map[string]any{
-			"uid":      abctx.UserID(),
+			"uid":      abctx.ExperimentHashID(),
 			"trace_id": abctx.TraceID(),
 			"key":      "rerank.threshold",
 			"value":    val,

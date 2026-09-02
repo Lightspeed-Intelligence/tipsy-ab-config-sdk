@@ -125,7 +125,7 @@ func (c *Client) getConfigResolved(ctx context.Context, abctx *AbtestContext, ns
 	case reasonGrayWhitelist:
 		attrs = append(attrs, "release_id", res.attribution.releaseID)
 	}
-	attrs = append(attrs, "uid", abctx.userID, "trace_id", abctx.traceID)
+	attrs = append(attrs, "uid", abctx.experimentHashID, "trace_id", abctx.traceID)
 	c.logger.Info(msg, attrs...)
 	return res.value, nil
 }

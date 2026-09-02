@@ -8,6 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed (BREAKING)
+- 动态配置 / 实验入参 `user_id` 统一改名为 `experiment_hash_id`，让语义更直观：它是实验平台
+  用来哈希分桶的稳定标识（可以是 uid，也可以是设备 id 等任意稳定主体键），线上协议字段
+  仍为 `user_id`，运行时行为不变。涉及公开 API：
+  - `Client.new_abtest_context` / `abtest_scope` / `mock_abtest_context` 与
+    `AbtestContext.__init__` 的首个参数名（位置传参不受影响；`user_id=` 关键字传参需改为
+    `experiment_hash_id=`）；
+  - `AbtestContext.user_id` 属性 → `AbtestContext.experiment_hash_id`；
+  - `UserInfo.uid` 字段 → `UserInfo.experiment_hash_id`（`UserInfo(uid=...)` 需改为
+    `UserInfo(experiment_hash_id=...)`）。
+  日志字段名 `uid` 保持不变，避免影响既有日志查询。
+
 ## [0.15.0] - 2026-08-27
 
 ### Added

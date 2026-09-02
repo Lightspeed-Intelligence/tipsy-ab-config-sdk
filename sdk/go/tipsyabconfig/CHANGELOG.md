@@ -20,6 +20,17 @@ bump first, then an SDK tag bump.
 
 ## [Unreleased]
 
+### Changed (BREAKING)
+- 动态配置 / 实验入参 `userID` 统一改名为 `experimentHashID`，让语义更直观：它是实验平台
+  用来哈希分桶的稳定标识（可以是 uid，也可以是设备 id 等任意稳定主体键），线上协议字段
+  仍为 `user_id`，运行时行为不变。涉及公开 API：
+  - `NewAbtestContext` / `NewAbtestContextWithTraceID` / `MockAbtestContext` 的参数名
+    （Go 按位置传参，调用方无需改动）；
+  - `AbtestContext.UserID()` → `AbtestContext.ExperimentHashID()`；
+  - `UserInfo.UID` 字段 → `UserInfo.ExperimentHashID`；
+  - `UserProvider` 返回值命名 `uid` → `experimentHashID`（仅命名，签名类型不变）。
+  日志字段名 `uid` 保持不变，避免影响既有日志查询。
+
 ## [0.14.0] - 2026-08-27
 
 ### Added

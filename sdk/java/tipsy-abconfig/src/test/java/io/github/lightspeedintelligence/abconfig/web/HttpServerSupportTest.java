@@ -170,7 +170,7 @@ final class HttpServerSupportTest {
 
             AbtestContext seen = insideHandler.get();
             assertNotNull(seen, "the handler sees a bound context");
-            assertEquals("user-42", seen.userId(), "the context carries the provider's uid");
+            assertEquals("user-42", seen.experimentHashId(), "the context carries the provider's uid");
             assertEquals("trace-wrap-1", seen.traceId(),
                     "the inbound X-Trace-Id is propagated into the context");
 
@@ -217,7 +217,7 @@ final class HttpServerSupportTest {
             wrapped.handle(FakeHttpExchange.withHeaders(h -> { }));
 
             assertNotNull(seen.get(), "even with no provider a context is bound");
-            assertEquals("", seen.get().userId(),
+            assertEquals("", seen.get().experimentHashId(),
                     "a null provider yields an identity-less (empty) context");
             assertNull(AbtestContextHolder.get(), "cleared after the handler");
         } finally {
@@ -237,7 +237,7 @@ final class HttpServerSupportTest {
             wrapped.handle(FakeHttpExchange.withHeaders(h -> { }));
 
             assertNotNull(seen.get());
-            assertEquals("", seen.get().userId(),
+            assertEquals("", seen.get().experimentHashId(),
                     "a null-returning provider degrades to an empty context");
         } finally {
             AbtestContextHolder.clear();
@@ -260,7 +260,7 @@ final class HttpServerSupportTest {
             wrapped.handle(FakeHttpExchange.withHeaders(h -> { }));
 
             assertNotNull(seen.get(), "the request is still served with an empty context");
-            assertEquals("", seen.get().userId(),
+            assertEquals("", seen.get().experimentHashId(),
                     "a thrown provider exception degrades to an empty context, not a failed request");
         } finally {
             AbtestContextHolder.clear();
@@ -289,7 +289,7 @@ final class HttpServerSupportTest {
         HttpServerSupport.AbtestUserProvider provider =
                 ex -> UserInfo.of("x", Map.of("k", Integer.valueOf(1)));
         UserInfo u = provider.provide(FakeHttpExchange.withHeaders(h -> { }));
-        assertEquals("x", u.uid());
+        assertEquals("x", u.experimentHashId());
         assertEquals(Integer.valueOf(1), u.attrs().get("k"));
     }
 

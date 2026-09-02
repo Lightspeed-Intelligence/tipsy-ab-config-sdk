@@ -50,7 +50,8 @@ type ExperimentResultRequest struct {
 	// ErrNamespaceNotSubscribed.
 	Namespace string
 
-	// UserInfo carries the user identity (uid + attrs) sent on the wire.
+	// UserInfo carries the user identity (experimentHashID + attrs) sent on the
+	// wire; ExperimentHashID maps to the user_id field.
 	UserInfo UserInfo
 
 	// LayerIds optionally restricts the computation to specific layers; empty
@@ -121,7 +122,7 @@ func (c *Client) GetExperimentResult(ctx context.Context, req ExperimentResultRe
 	}
 	pbReq := &abtestv1.GetExperimentResultRequest{
 		Namespace:      ns,
-		UserId:         req.UserInfo.UID,
+		UserId:         req.UserInfo.ExperimentHashID,
 		UserAttrs:      encodeUserAttrs(req.UserInfo.Attrs, c.logger),
 		LayerIds:       req.LayerIds,
 		ExperimentType: abtestv1.ExperimentType(req.Type),

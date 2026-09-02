@@ -132,7 +132,7 @@ func TestGetExperimentResult_RPCTimingDebugLog_Success(t *testing.T) {
 
 	if _, err := cli.GetExperimentResult(context.Background(), ExperimentResultRequest{
 		Namespace: "ns1",
-		UserInfo:  UserInfo{UID: "u1"},
+		UserInfo:  UserInfo{ExperimentHashID: "u1"},
 	}); err != nil {
 		t.Fatalf("GetExperimentResult: %v", err)
 	}
@@ -171,7 +171,7 @@ func TestGetExperimentResult_RPCTimingDebugLog_ErrAttrOnFailure(t *testing.T) {
 
 	if _, err := cli.GetExperimentResult(context.Background(), ExperimentResultRequest{
 		Namespace: "ns1",
-		UserInfo:  UserInfo{UID: "u1"},
+		UserInfo:  UserInfo{ExperimentHashID: "u1"},
 	}); err == nil {
 		t.Fatal("expected GetExperimentResult to fail (fake server returns Internal)")
 	}
@@ -240,7 +240,7 @@ func TestRPCTimingLog_SilentAtInfoLevel(t *testing.T) {
 
 	if _, err := cli.GetExperimentResult(context.Background(), ExperimentResultRequest{
 		Namespace: "ns1",
-		UserInfo:  UserInfo{UID: "u1"},
+		UserInfo:  UserInfo{ExperimentHashID: "u1"},
 	}); err != nil {
 		t.Fatalf("GetExperimentResult: %v", err)
 	}

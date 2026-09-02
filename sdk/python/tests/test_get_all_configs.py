@@ -366,7 +366,7 @@ async def test_get_all_configs_normal_uid_still_issues_rpc(
 async def test_get_all_configs_mock_ctx_empty_uid_seeded_wins(
     cfg_servicer, ab_servicer, running_servers
 ):
-    """mock_abtest_context(uid="") pre-seeded per-ns result still resolves.
+    """mock_abtest_context("") pre-seeded per-ns result still resolves.
 
     The uid shortcut only affects the *unresolved* lazy path; a seeded ns slot
     is used as-is (no RPC either, since mock ctx never fetches).

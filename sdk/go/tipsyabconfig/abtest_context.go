@@ -29,8 +29,8 @@ import (
 // the same request: the per-ns lazy fetch deduplicates concurrent first-access
 // via a shared computeStatus done channel (exactly one RPC, the rest wait).
 type AbtestContext struct {
-	userID    string
-	userAttrs map[string]any
+	experimentHashID string
+	userAttrs        map[string]any
 
 	// parentCtx is the request ctx captured at construction. Lazy per-ns
 	// fetches (resultFor) inherit its deadline / cancellation so a request
@@ -63,13 +63,15 @@ type AbtestContext struct {
 }
 
 // UserInfo is the SDK-stable view of the user identity carried by an
-// AbtestContext. Business code retrieves it via
-// AbtestContextFromContext(ctx).UserInfo() (design 04 §B.4). Attrs is the same
-// map the AbtestContext was constructed with (may be nil); callers MUST treat
-// it as read-only.
+// AbtestContext. ExperimentHashID is the identifier the abtest platform hashes
+// to bucket this request into an experiment group (sent on the wire as
+// user_id; typically a uid, device id or any other stable per-subject key).
+// Business code retrieves it via AbtestContextFromContext(ctx).UserInfo()
+// (design 04 §B.4). Attrs is the same map the AbtestContext was constructed
+// with (may be nil); callers MUST treat it as read-only.
 type UserInfo struct {
-	UID   string
-	Attrs map[string]any
+	ExperimentHashID string
+	Attrs            map[string]any
 }
 
 // computeStatus is the shared result slot for one (request, namespace) pair.
@@ -143,10 +145,15 @@ var emptyAbtestResult = &abtestComputeResult{keyVersions: map[string]int64{}}
 // warm a specific namespace ahead of time, call the opt-in
 // PrefetchConfigVersionFlatKvForNamespace.
 //
-// No-user uid: when userID is "" or "0" the ctx is treated as identity-less —
-// every not-yet-resolved namespace short-circuits to the empty result without
-// an RPC (equivalent to EmptyAbtestContext), so GetConfig / GetAllConfigs
-// resolve purely from full release. A real uid keeps the lazy per-ns fetch.
+// experimentHashID is the identifier the abtest platform hashes to bucket this
+// request into an experiment group (sent on the wire as user_id). Typically a
+// uid, but any stable per-subject key (device id, session id, ...) works.
+//
+// No-user id: when experimentHashID is "" or "0" the ctx is treated as
+// identity-less — every not-yet-resolved namespace short-circuits to the empty
+// result without an RPC (equivalent to EmptyAbtestContext), so GetConfig /
+// GetAllConfigs resolve purely from full release. A real id keeps the lazy
+// per-ns fetch.
 //
 // parentCtx is the parent ctx whose deadline / cancel signal propagates to
 // every lazy per-ns GetExperimentResult RPC (and any explicit prefetch). Pass
@@ -155,8 +162,8 @@ var emptyAbtestResult = &abtestComputeResult{keyVersions: map[string]int64{}}
 // userAttrs is converted to abtestv1.Value entries on the wire. Supported
 // concrete types: string, int, int32, int64, float32, float64, bool.
 // Unsupported values are skipped with a WARN log.
-func (c *Client) NewAbtestContext(parentCtx context.Context, userID string, userAttrs map[string]any) *AbtestContext {
-	return c.newAbtestContext(parentCtx, userID, userAttrs, "")
+func (c *Client) NewAbtestContext(parentCtx context.Context, experimentHashID string, userAttrs map[string]any) *AbtestContext {
+	return c.newAbtestContext(parentCtx, experimentHashID, userAttrs, "")
 }
 
 // NewAbtestContextWithTraceID is NewAbtestContext with an explicit per-request
@@ -167,11 +174,11 @@ func (c *Client) NewAbtestContext(parentCtx context.Context, userID string, user
 //
 // Use this in Gin / net/http middleware to propagate an inbound X-Trace-Id /
 // X-Request-Id from the upstream request; see Middleware / GinMiddleware.
-func (c *Client) NewAbtestContextWithTraceID(parentCtx context.Context, userID string, userAttrs map[string]any, traceID string) *AbtestContext {
-	return c.newAbtestContext(parentCtx, userID, userAttrs, traceID)
+func (c *Client) NewAbtestContextWithTraceID(parentCtx context.Context, experimentHashID string, userAttrs map[string]any, traceID string) *AbtestContext {
+	return c.newAbtestContext(parentCtx, experimentHashID, userAttrs, traceID)
 }
 
-func (c *Client) newAbtestContext(parentCtx context.Context, userID string, userAttrs map[string]any, traceID string) *AbtestContext {
+func (c *Client) newAbtestContext(parentCtx context.Context, experimentHashID string, userAttrs map[string]any, traceID string) *AbtestContext {
 	if parentCtx == nil {
 		parentCtx = context.Background()
 	}
@@ -185,12 +192,12 @@ func (c *Client) newAbtestContext(parentCtx context.Context, userID string, user
 	// at construction; the first dynamic GetConfig (or an explicit
 	// PrefetchConfigVersionFlatKvForNamespace) lazily fetches the needed ns.
 	return &AbtestContext{
-		userID:    userID,
-		userAttrs: userAttrs,
-		parentCtx: parentCtx,
-		results:   make(map[string]*computeStatus, 1),
-		owner:     c,
-		traceID:   traceID,
+		experimentHashID: experimentHashID,
+		userAttrs:        userAttrs,
+		parentCtx:        parentCtx,
+		results:          make(map[string]*computeStatus, 1),
+		owner:            c,
+		traceID:          traceID,
 	}
 }
 
@@ -220,13 +227,13 @@ func (c *Client) EmptyAbtestContext() *AbtestContext {
 //
 // A fresh trace_id is generated so any downstream log / report channel stays
 // internally consistent (sdk-trace-id §4).
-func (c *Client) MockAbtestContext(userID string, keyVersionsByNS map[string]map[string]int64) *AbtestContext {
+func (c *Client) MockAbtestContext(experimentHashID string, keyVersionsByNS map[string]map[string]int64) *AbtestContext {
 	ctx := &AbtestContext{
-		userID:  userID,
-		results: make(map[string]*computeStatus, len(keyVersionsByNS)),
-		owner:   c,
-		empty:   true, // unspecified namespaces resolve to empty, no RPC.
-		traceID: uuid.New().String(),
+		experimentHashID: experimentHashID,
+		results:          make(map[string]*computeStatus, len(keyVersionsByNS)),
+		owner:            c,
+		empty:            true, // unspecified namespaces resolve to empty, no RPC.
+		traceID:          uuid.New().String(),
 	}
 	for ns, kv := range keyVersionsByNS {
 		st := &computeStatus{done: make(chan struct{}), result: &abtestComputeResult{keyVersions: kv}}
@@ -236,22 +243,23 @@ func (c *Client) MockAbtestContext(userID string, keyVersionsByNS map[string]map
 	return ctx
 }
 
-// UserID returns the user_id this ctx was constructed with.
-func (a *AbtestContext) UserID() string {
+// ExperimentHashID returns the experiment hash id this ctx was constructed
+// with (sent on the wire as user_id).
+func (a *AbtestContext) ExperimentHashID() string {
 	if a == nil {
 		return ""
 	}
-	return a.userID
+	return a.experimentHashID
 }
 
-// UserInfo returns the full user identity (uid + attrs) this ctx was
-// constructed with (design 04 §B.4). Attrs aliases the constructor map and is
-// read-only. Returns the zero UserInfo for a nil receiver.
+// UserInfo returns the full user identity (experimentHashID + attrs) this ctx
+// was constructed with (design 04 §B.4). Attrs aliases the constructor map and
+// is read-only. Returns the zero UserInfo for a nil receiver.
 func (a *AbtestContext) UserInfo() UserInfo {
 	if a == nil {
 		return UserInfo{}
 	}
-	return UserInfo{UID: a.userID, Attrs: a.userAttrs}
+	return UserInfo{ExperimentHashID: a.experimentHashID, Attrs: a.userAttrs}
 }
 
 // TraceID returns the per-request trace id this ctx propagates to every
@@ -267,13 +275,13 @@ func (a *AbtestContext) TraceID() string {
 	return a.traceID
 }
 
-// isNoUserUID reports whether uid denotes "no real user identity". Both the
-// empty string and the string zero "0" mean identity-less: neither can be
-// bucketed into an experiment or matched against a whitelist server-side, so
-// the SDK skips the GetExperimentResult RPC entirely and resolves statically
-// (full release / default), matching an EmptyAbtestContext.
-func isNoUserUID(uid string) bool {
-	return uid == "" || uid == "0"
+// isNoUserExperimentHashID reports whether id denotes "no real user identity".
+// Both the empty string and the string zero "0" mean identity-less: neither
+// can be bucketed into an experiment or matched against a whitelist
+// server-side, so the SDK skips the GetExperimentResult RPC entirely and
+// resolves statically (full release / default), matching an EmptyAbtestContext.
+func isNoUserExperimentHashID(id string) bool {
+	return id == "" || id == "0"
 }
 
 // ensureFetch guarantees that ns is being fetched (at most once) into this
@@ -301,14 +309,14 @@ func (a *AbtestContext) ensureFetch(ns string) *computeStatus {
 		// Identity-less / mock ctx: resolve to empty without an RPC.
 		st.result = emptyAbtestResult
 		close(st.done)
-	case isNoUserUID(a.userID):
+	case isNoUserExperimentHashID(a.experimentHashID):
 		// No-user uid ("" / "0"): identity-less, resolve statically without an
 		// RPC (same effect as an EmptyAbtestContext). This is a deliberate
 		// short-circuit, NOT a degraded fallback, so it does not bump the
 		// abtestFallback metric. owner is non-nil here (the arm above catches
 		// owner == nil), so logging never dereferences a nil owner.
 		a.owner.logger.Debug("tipsyabconfig: skip abtest: no-user uid",
-			"ns", ns, "uid", a.userID, "trace_id", a.traceID)
+			"ns", ns, "uid", a.experimentHashID, "trace_id", a.traceID)
 		st.result = emptyAbtestResult
 		close(st.done)
 	case !a.owner.isSubscribed(ns):
@@ -324,7 +332,7 @@ func (a *AbtestContext) ensureFetch(ns string) *computeStatus {
 			parent = context.Background()
 		}
 		go func() {
-			st.result, st.err = a.owner.fetchConfigVersionFlatKvForNamespace(parent, ns, a.userID, a.userAttrs, a.traceID)
+			st.result, st.err = a.owner.fetchConfigVersionFlatKvForNamespace(parent, ns, a.experimentHashID, a.userAttrs, a.traceID)
 			close(st.done)
 		}()
 	}
@@ -422,7 +430,7 @@ func (a *AbtestContext) WaitForAbtest(ctx context.Context, ns string) (*abtestCo
 // constructors); empty here is technically valid wire-wise (server-side
 // normalisation generates one), but the AbtestContext constructors never leave
 // it empty.
-func (c *Client) fetchConfigVersionFlatKvForNamespace(parentCtx context.Context, ns, userID string, userAttrs map[string]any, traceID string) (*abtestComputeResult, error) {
+func (c *Client) fetchConfigVersionFlatKvForNamespace(parentCtx context.Context, ns, experimentHashID string, userAttrs map[string]any, traceID string) (*abtestComputeResult, error) {
 	if c.abtestTr == nil {
 		c.metrics.abtestFallback.inc(ns)
 		return emptyAbtestResult, errors.New("abtest service not configured")
@@ -431,7 +439,7 @@ func (c *Client) fetchConfigVersionFlatKvForNamespace(parentCtx context.Context,
 	defer cancel()
 	req := &abtestv1.GetExperimentResultRequest{
 		Namespace:      ns,
-		UserId:         userID,
+		UserId:         experimentHashID,
 		UserAttrs:      encodeUserAttrs(userAttrs, c.logger),
 		ExperimentType: abtestv1.ExperimentType_EXPERIMENT_TYPE_CONFIG_VERSION,
 		DisplayType:    abtestv1.ResultDisplayType_RESULT_DISPLAY_TYPE_EACH_EXPERIMENT_GROUP,

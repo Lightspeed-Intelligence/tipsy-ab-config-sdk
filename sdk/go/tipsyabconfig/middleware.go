@@ -16,7 +16,7 @@ import (
 // The signature is the neutral one called out in abtest-platform-sdk.md
 // §3.2: ctx + *http.Request. Framework-specific adapters (gin / echo) wrap
 // this signature with a thin glue layer.
-type UserProvider func(ctx context.Context, r *http.Request) (uid string, attrs map[string]any, err error)
+type UserProvider func(ctx context.Context, r *http.Request) (experimentHashID string, attrs map[string]any, err error)
 
 // abtestCtxKey is the unexported key used to stash the AbtestContext on the
 // request ctx. Use AbtestContextFromContext to extract it from handlers.
@@ -95,7 +95,7 @@ func (mc middlewareConfig) shouldPrefetch(path string) bool {
 
 // Middleware returns a net/http compatible middleware that:
 //
-//  1. Invokes the UserProvider to extract (uid, attrs). On error, builds an
+//  1. Invokes the UserProvider to extract (experimentHashID, attrs). On error, builds an
 //     EmptyAbtestContext.
 //  2. Attaches the AbtestContext to the request ctx. Construction issues NO
 //     GetExperimentResult RPC; namespaces are fetched lazily on first dynamic
@@ -122,12 +122,12 @@ func (c *Client) Middleware(provider UserProvider, opts ...MiddlewareOption) fun
 			if provider == nil {
 				abctx = c.EmptyAbtestContext()
 			} else {
-				uid, attrs, err := provider(ctx, r)
+				experimentHashID, attrs, err := provider(ctx, r)
 				if err != nil {
 					c.logger.Error("tipsyabconfig: user provider failed; using empty abtest ctx", "err", err, "trace_id", traceID)
 					abctx = c.EmptyAbtestContext()
 				} else {
-					abctx = c.NewAbtestContextWithTraceID(ctx, uid, attrs, traceID)
+					abctx = c.NewAbtestContextWithTraceID(ctx, experimentHashID, attrs, traceID)
 					realUser = true
 				}
 			}

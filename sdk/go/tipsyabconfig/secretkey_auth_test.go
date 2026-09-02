@@ -123,7 +123,7 @@ func TestInit_SecretKeyOnly_GRPC(t *testing.T) {
 	// Abtest RPC works under secretKey-only auth too.
 	if _, err := cli.GetExperimentResult(context.Background(), ExperimentResultRequest{
 		Namespace: "ns1",
-		UserInfo:  UserInfo{UID: "u1"},
+		UserInfo:  UserInfo{ExperimentHashID: "u1"},
 	}); err != nil {
 		t.Fatalf("GetExperimentResult (secretKey only): %v", err)
 	}
@@ -184,7 +184,7 @@ func TestHTTP_AuthorizationHeader_SecretKeyOnly(t *testing.T) {
 	// Force an abtest call so the header on that route is captured too.
 	_, _ = cli.GetExperimentResult(context.Background(), ExperimentResultRequest{
 		Namespace: "ns1",
-		UserInfo:  UserInfo{UID: "u1"},
+		UserInfo:  UserInfo{ExperimentHashID: "u1"},
 	})
 	if got := h.lastAbtestAuth(); got != want {
 		t.Fatalf("experiment_result Authorization = %q, want %q (exact literal)", got, want)
@@ -229,7 +229,7 @@ func TestSecretKey_NeverLogged_AtDebugLevel(t *testing.T) {
 		}
 		_, _ = cli.GetExperimentResult(context.Background(), ExperimentResultRequest{
 			Namespace: "ns1",
-			UserInfo:  UserInfo{UID: "u1"},
+			UserInfo:  UserInfo{ExperimentHashID: "u1"},
 		})
 		cli.Close()
 

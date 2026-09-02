@@ -13,7 +13,7 @@ import "context"
 // the project default namespace; if none is configured GetAllConfigs returns
 // ErrNamespaceRequired, and a resolved-but-unsubscribed ns returns
 // ErrNamespaceNotSubscribed. abctx must be non-nil (pass EmptyAbtestContext()
-// when there is no user identity); a no-user uid ("" / "0") resolves every key
+// when there is no user identity); a no-user experimentHashID ("" / "0") resolves every key
 // statically without a GetExperimentResult RPC.
 //
 // The whole namespace is resolved against ONE cache snapshot captured up front,
@@ -49,7 +49,7 @@ func (c *Client) GetAllConfigs(ctx context.Context, abctx *AbtestContext, ns str
 	if snap == nil {
 		// Subscribed but not yet pulled: empty map, no RPC (design §2 step 3).
 		c.logger.Debug("tipsyabconfig: get_all_configs (no snapshot)",
-			"ns", resolvedNs, "uid", abctx.userID, "trace_id", abctx.traceID)
+			"ns", resolvedNs, "uid", abctx.experimentHashID, "trace_id", abctx.traceID)
 		return out, nil
 	}
 
@@ -82,7 +82,7 @@ func (c *Client) GetAllConfigs(ctx context.Context, abctx *AbtestContext, ns str
 	c.logger.Debug("tipsyabconfig: get_all_configs",
 		"ns", resolvedNs, "total_keys", len(snap.Keys), "ab_hits", abHits,
 		"full_hits", fullHits, "dropped", len(snap.Keys)-len(out),
-		"uid", abctx.userID, "trace_id", abctx.traceID)
+		"uid", abctx.experimentHashID, "trace_id", abctx.traceID)
 	return out, nil
 }
 

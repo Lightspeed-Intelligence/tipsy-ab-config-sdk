@@ -67,7 +67,7 @@ final class EnumsAndValueTypesTest {
         Map<String, Object> attrs = new LinkedHashMap<>();
         attrs.put("k", "v");
         UserInfo ui = new UserInfo("u-1", attrs);
-        assertEquals("u-1", ui.uid());
+        assertEquals("u-1", ui.experimentHashId());
         assertEquals("v", ui.attrs().get("k"));
 
         assertThrows(UnsupportedOperationException.class, () -> ui.attrs().put("x", "y"),
@@ -75,10 +75,10 @@ final class EnumsAndValueTypesTest {
 
         UserInfo nullAttrs = new UserInfo("u-2", null);
         assertTrue(nullAttrs.attrs().isEmpty(), "null attrs -> empty map (never null)");
-        assertEquals("u-2", nullAttrs.uid());
+        assertEquals("u-2", nullAttrs.experimentHashId());
 
         UserInfo nullUid = new UserInfo(null, null);
-        assertEquals("", nullUid.uid(), "null uid -> empty string (never null)");
+        assertEquals("", nullUid.experimentHashId(), "null uid -> empty string (never null)");
     }
 
     // ------------------------------------------------------------------
@@ -90,7 +90,7 @@ final class EnumsAndValueTypesTest {
     void requestBuilderDefaults() {
         ExperimentResultRequest req = ExperimentResultRequest.builder().build();
         assertEquals("", req.namespace());
-        assertEquals("", req.userInfo().uid());
+        assertEquals("", req.userInfo().experimentHashId());
         assertTrue(req.userInfo().attrs().isEmpty());
         assertTrue(req.layerIds().isEmpty());
         assertEquals(io.github.lightspeedintelligence.abconfig.ExperimentType.UNSPECIFIED, req.type());
@@ -112,7 +112,7 @@ final class EnumsAndValueTypesTest {
                 .build();
 
         assertEquals("checkout", req.namespace());
-        assertEquals("u-7", req.userInfo().uid());
+        assertEquals("u-7", req.userInfo().experimentHashId());
         assertEquals("FR", req.userInfo().attrs().get("country"));
         assertEquals(List.of("L1", "L2"), req.layerIds());
         assertSame(io.github.lightspeedintelligence.abconfig.ExperimentType.ALL, req.type());

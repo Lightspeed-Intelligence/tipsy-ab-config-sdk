@@ -114,12 +114,15 @@ _EMPTY_RESULT = _ComputeResult()
 class UserInfo:
     """SDK-stable view of the user identity carried by an AbtestContext.
 
-    Business code retrieves it via ``ctx.user_info`` (design 04 §B.4).
+    ``experiment_hash_id`` is the identifier the abtest platform hashes to
+    bucket the request into an experiment group (sent on the wire as
+    ``user_id``; typically a uid, device id or any other stable per-subject
+    key). Business code retrieves it via ``ctx.user_info`` (design 04 §B.4).
     ``attrs`` aliases the constructor map (may be empty) and is read-only.
-    Mirrors the Go ``UserInfo{UID, Attrs}`` struct.
+    Mirrors the Go ``UserInfo{ExperimentHashID, Attrs}`` struct.
     """
 
-    uid: str = ""
+    experiment_hash_id: str = ""
     attrs: Mapping[str, Any] = field(default_factory=dict)
 
 
@@ -159,17 +162,19 @@ class AbtestContext:
 
     def __init__(
         self,
-        user_id: str = "",
+        experiment_hash_id: str = "",
         user_attrs: Optional[Mapping[str, Any]] = None,
         owner: "Optional[Client]" = None,
         empty: bool = False,
         trace_id: Optional[str] = None,
     ) -> None:
-        # Normalise a None uid to "" (parity with the Java constructor's
-        # null → "" at AbtestContext.java:84). A None would otherwise bypass
-        # the no-user shortcut in _ensure_fetch and break proto encoding
-        # downstream (user_id must be a str on the wire).
-        self.user_id = user_id if user_id is not None else ""
+        # Normalise a None experiment_hash_id to "" (parity with the Java
+        # constructor's null → "" at AbtestContext.java:84). A None would
+        # otherwise bypass the no-user shortcut in _ensure_fetch and break
+        # proto encoding downstream (user_id must be a str on the wire).
+        self.experiment_hash_id = (
+            experiment_hash_id if experiment_hash_id is not None else ""
+        )
         self.user_attrs: Dict[str, Any] = dict(user_attrs or {})
         # trace_id is the request-scoped identifier shared by every RPC this
         # ctx issues (design 04 §B.2 + sdk-trace-id §5). Empty / None on input
@@ -192,12 +197,15 @@ class AbtestContext:
 
     @property
     def user_info(self) -> UserInfo:
-        """Full user identity (uid + attrs) this ctx was constructed with.
+        """Full user identity (experiment_hash_id + attrs) this ctx was
+        constructed with.
 
         Mirrors Go's ``UserInfo()`` accessor (design 04 §B.4). ``attrs``
         aliases the constructor map and is read-only.
         """
-        return UserInfo(uid=self.user_id, attrs=self.user_attrs)
+        return UserInfo(
+            experiment_hash_id=self.experiment_hash_id, attrs=self.user_attrs
+        )
 
     # ---- per-ns memoised result ----
 
@@ -212,14 +220,14 @@ class AbtestContext:
         and :meth:`prefetch_config_version_flat_kv_for_namespace`. Looks up the
         per-ns ``_NsResult`` slot; when absent it either short-circuits to the
         empty result (identity-less / mock / owner-less / unsubscribed ns, or a
-        no-user uid ``""`` / ``"0"`` — NO RPC) or spawns the single
+        no-user experiment_hash_id ``""`` / ``"0"`` — NO RPC) or spawns the single
         ``GetExperimentResult`` task and memoises its slot. Idempotent: an
         already-present ns returns the existing slot without spawning a new
         task, preserving at-most-once.
 
         A pre-seeded slot (mock via :meth:`_seed_result`) always wins: the slot
         lookup precedes the short-circuit condition, so a
-        ``MockAbtestContext(user_id="", …)`` still serves its seeded per-ns
+        ``MockAbtestContext(experiment_hash_id="", …)`` still serves its seeded per-ns
         result rather than the empty short-circuit.
 
         Synchronous and lock-free: the lookup-then-create section crosses no
@@ -229,16 +237,16 @@ class AbtestContext:
         """
         slot = self._results.get(ns)
         if slot is None:
-            no_user = self.user_id in ("", "0")
+            no_user = self.experiment_hash_id in ("", "0")
             if (
                 self._empty
                 or self._owner is None
                 or no_user
                 or not self._owner.is_subscribed(ns)
             ):
-                # Identity-less / mock / no-user uid / unsubscribed ns: resolve
-                # to empty without an RPC. A uid of "" or "0" carries no real
-                # user identity, so it never participates in experiment /
+                # Identity-less / mock / no-user id / unsubscribed ns: resolve
+                # to empty without an RPC. An experiment_hash_id of "" or "0"
+                # carries no real user identity, so it never participates in experiment /
                 # whitelist logic — it short-circuits here (no abtestFallback
                 # metric: this is a deliberate skip, not a degradation).
                 # (Dynamic get_config rejects unsubscribed ns earlier via
@@ -248,7 +256,7 @@ class AbtestContext:
                         "tipsy_ab_config: skip abtest: no-user uid",
                         extra={
                             "ns": ns,
-                            "uid": self.user_id,
+                            "uid": self.experiment_hash_id,
                             "trace_id": self.trace_id,
                         },
                     )
@@ -256,7 +264,7 @@ class AbtestContext:
             else:
                 task = asyncio.ensure_future(
                     self._owner._fetch_config_version_flat_kv_for_ns(
-                        ns, self.user_id, self.user_attrs, self.trace_id
+                        ns, self.experiment_hash_id, self.user_attrs, self.trace_id
                     )
                 )
                 slot = _NsResult(task=task)
