@@ -20,6 +20,8 @@ bump first, then an SDK tag bump.
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-09-02
+
 ### Changed (BREAKING)
 - 动态配置 / 实验入参 `userID` 统一改名为 `experimentHashID`，让语义更直观：它是实验平台
   用来哈希分桶的稳定标识（可以是 uid，也可以是设备 id 等任意稳定主体键），线上协议字段
