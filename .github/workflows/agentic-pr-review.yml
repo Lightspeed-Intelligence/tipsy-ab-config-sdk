@@ -2,7 +2,7 @@ name: Agentic PR Review
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened]
+    types: [opened, synchronize, reopened, ready_for_review]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
@@ -30,4 +30,5 @@ jobs:
       PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
       FEISHU_WEBHOOK_TOKEN: ${{ secrets.FEISHU_WEBHOOK_TOKEN }}
     with:
+      business_reference: .github/review/core-conversion.md
       use_feishu_notify: true
