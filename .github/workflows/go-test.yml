@@ -80,13 +80,29 @@ jobs:
   # v0.6.0+ (undefined: configv1.ConfigUpdateEvent_Heartbeat for consumers).
   # A failure here usually means: publish the dependency tag first (e.g.
   # api/gen/go/vX.Y.Z), then bump the go.mod pin — see AGENTS.md.
+  #
+  # This repository is private, so its own tags are not on the public proxy or
+  # checksum DB. GOPRIVATE sends this repo's modules to git directly, and the
+  # global insteadOf lends the job's GITHUB_TOKEN to the clones `go` makes in
+  # the module cache (actions/checkout only configures the checked-out repo).
+  # Other deps keep resolving through proxy.golang.org.
   consumer-path:
     runs-on: ubuntu-latest
+    permissions: { contents: read }
+    env:
+      GOPRIVATE: github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version: '1.25.0'
+      - name: git credentials for this repo's modules
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config --global \
+            url."https://x-access-token:${GH_TOKEN}@github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk".insteadOf \
+            "https://github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk"
       - name: GOWORK=off build+test published modules
         env:
           GOWORK: off

@@ -20,6 +20,12 @@ bump first, then an SDK tag bump.
 
 ## [Unreleased]
 
+### Changed
+- GitHub 仓库转为私有：新 tag 不再进入公共 Go 代理与 checksum 数据库。消费方需设置
+  `GOPRIVATE=github.com/Lightspeed-Intelligence/*`，并提供能读取本仓库的 git 凭证；镜像内
+  （`docker build`）无凭证的 `go mod download` 需改为外层编译或 vendor。已缓存于公共代理的历史版本
+  可能仍可取到，但不应依赖。
+
 ## [0.15.0] - 2026-09-02
 
 ### Changed (BREAKING)

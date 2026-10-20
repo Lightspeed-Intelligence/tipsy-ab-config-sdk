@@ -1,6 +1,6 @@
 # Tipsy AB-config SDK
 
-Tipsy 配置中心与 A/B 实验平台的公开 SDK monorepo。业务服务通过 SDK 拉取 namespace
+Tipsy 配置中心与 A/B 实验平台的 SDK monorepo（GitHub 私有仓库）。业务服务通过 SDK 拉取 namespace
 快照，在进程内缓存配置，并按用户解析实验、灰度和全量发布结果；SDK 不直接访问平台数据库。
 
 ## 模块
@@ -37,11 +37,17 @@ Headless Service 的 `dns:///<service>.<namespace>.svc.cluster.local:<port>` tar
 
 ## 安装
 
-Go：
+Go：仓库为私有，Go module 不经公共代理分发。接入方先配置一次 `GOPRIVATE` 和
+能读取本仓库的 git 凭证，再 `go get`：
 
 ```bash
+go env -w GOPRIVATE='github.com/Lightspeed-Intelligence/*'
+gh auth setup-git   # 或 git config --global url."git@github.com:".insteadOf "https://github.com/"
 go get github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk/sdk/go/tipsyabconfig@latest
 ```
+
+CI 与镜像构建的凭证配置见[集成手册](docs/usage-and-integration.md)。Python 从
+PyPI 安装（`tipsy-ab-config`），Java 从 Maven Central 安装，均不需要 GitHub 访问权限。
 
 Python 和 Java 的安装源、版本发现与依赖要求分别见：
 

@@ -54,13 +54,25 @@ namespace 至多拉取一次。创建上下文本身不发 RPC；可显式 prefe
 - [Python CHANGELOG](../sdk/python/CHANGELOG.md)
 - [Java CHANGELOG](../sdk/java/tipsy-abconfig/CHANGELOG.md)
 
-Go：
+Go：仓库为私有，`go get` 需要 `GOPRIVATE` 和能读取本仓库的 git 凭证：
 
 ```bash
-go get github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk/sdk/go/tipsyabconfig@v0.13.1
+go env -w GOPRIVATE='github.com/Lightspeed-Intelligence/*'
+go get github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk/sdk/go/tipsyabconfig@v0.15.0
 ```
 
-Python 和 Java 的安装源与完整依赖要求分别见
+构建环境的凭证要求：
+
+- 云效流水线：代码源服务连接的 GitHub 凭证会写入构建容器的 git 配置，在容器内直接
+  `go build` 即可，前提是该服务连接的账号能读本仓库。`docker build` 内部拿不到这份
+  凭证；镜像内不要 `go mod download`，改为在外层编译或 `go mod vendor` 后 COPY。
+- GitHub Actions：默认 `GITHUB_TOKEN` 只能读当前仓库。跨仓库读取时，用有本仓库
+  `Contents: Read` 权限的 GitHub App token（或 fine-grained PAT）配置
+  `url."https://x-access-token:<token>@github.com/Lightspeed-Intelligence/".insteadOf`。
+- 已缓存在公共 Go 代理中的历史版本仍可能被直接取到，这不代表凭证配置正确；新版本
+  只能经 git 直连获取。
+
+Python 从 PyPI 安装（`tipsy-ab-config==X.Y.Z`），Java 从 Maven Central 安装。两者的完整依赖要求分别见
 [Python README](../sdk/python/README.md) 和 [Java README](../sdk/java/README.md)。Python
 当前要求 Python 3.10+、`grpcio>=1.66.2,<2`、`protobuf>=5.29.1,<7`；HTTP transport
 还需安装 `http` extra。Java 当前要求 Java 21。

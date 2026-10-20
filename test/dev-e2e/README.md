@@ -62,12 +62,12 @@ and makes an SDK-driver run non-successful even if HTTP assertions continue.
 - Database access for the operator running `sql/seed.sql` and
   `sql/teardown.sql`.
 
-The SDK repository is public. Released Go modules can be fetched through the
-public Go proxy, Python releases through public Git tags over HTTPS, and Java
-releases through Maven Central. No `GOPRIVATE` or GitHub credential is required
-for those public release paths. The checked-in Python `SDK_MODE=backend`
-bootstrap is a legacy exception: it installs its pinned tag through
-`git+ssh://` and therefore requires working GitHub SSH access.
+The SDK repository is private. Released Go modules require
+`GOPRIVATE=github.com/Lightspeed-Intelligence/*` and a git credential that can
+read this repository. Python releases install from PyPI and Java releases from
+Maven Central; neither needs GitHub access. The checked-in Python
+`SDK_MODE=backend` bootstrap installs its pinned tag through `git+ssh://` and
+therefore requires working GitHub SSH access.
 
 ## Run against a deployment
 

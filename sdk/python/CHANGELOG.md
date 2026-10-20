@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- 分发渠道改为 PyPI：`pip install "tipsy-ab-config==X.Y.Z"`。GitHub 仓库转为私有后，
+  `git+https://…tipsy-ab-config-sdk.git@python-sdk/vX.Y.Z` 形式的依赖需要 GitHub 读权限，
+  不再是受支持的安装方式。0.15.0、0.16.0 由各自 GitHub Release 的原始 wheel/sdist 回填到 PyPI，
+  已锁定这两个版本的消费方只需改依赖声明，无需升级。
+
 ## [0.16.0] - 2026-09-02
 
 ### Changed (BREAKING)
