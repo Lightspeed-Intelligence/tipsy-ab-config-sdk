@@ -20,6 +20,17 @@ bump first, then an SDK tag bump.
 
 ## [Unreleased]
 
+### Fixed
+- **服务端或代理发来的 `codes.Canceled` 不再让后台循环永久停掉**。0.14.0（#15）起，
+  `runSubscribe` 和周期 PullAll 循环用 `isContextCanceled(err)` 判断是否退出，它同时匹配
+  对端发来的 `codes.Canceled`，于是一次远端取消就让本 Client 从此不再订阅或拉取（拉取时
+  所有 namespace 一起停），缓存冻结，而且没有 ERROR、指标或 `BackgroundErrorEvent`，
+  `Health.SubscribeConnected` 也一直是 true。
+  - 现在是否退出只看 `rootCtx.Err()`：`Close()` 仍静默退出；rootCtx 存活时收到的
+    `codes.Canceled` 按故障处理——Subscribe 计 `subscribeDisc`、打 ERROR、发 `subscribe`
+    事件并退避重连；周期拉取计 `pullFailure`、打 ERROR、发 `periodic_pull` 事件并继续下一轮。
+  - abtest 拉取的 `Canceled` 分级（Info + `abtestCanceled`）不变。
+
 ### Changed
 - GitHub 仓库转为私有：新 tag 不再进入公共 Go 代理与 checksum 数据库。消费方需设置
   `GOPRIVATE=github.com/Lightspeed-Intelligence/*`，并提供能读取本仓库的 git 凭证；镜像内

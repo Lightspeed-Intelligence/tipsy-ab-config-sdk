@@ -8,6 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **服务端或代理发来的 `CANCELLED` 不再让后台循环永久停掉**。0.11.0（#15）起，Subscribe
+  循环和周期 PullAll 循环收到 `StatusRuntimeException(CANCELLED)` 就直接退出、不再重连。
+  但这两个线程跑在 ROOT gRPC Context 上，本地只有 `close()` 会取消它们（已由 `closed` 判断
+  覆盖），所以真收到的 `CANCELLED` 只可能来自远端。结果是一次远端取消就让本进程从此不再
+  订阅或拉取，缓存冻结，而且没有 ERROR、指标或 `BackgroundErrorEvent`，
+  `subscribeConnected` 也一直是 true。
+  - 现在是否退出只看 `closed`：`close()` 仍静默退出；未关闭时收到的 `CANCELLED` 按故障
+    处理——Subscribe 计 `subscribeDisc`、打 ERROR、发 `subscribe` 事件并退避重连；周期拉取计
+    `pullFailure`、打 ERROR、发 `periodic_pull` 事件并继续下一轮。
+  - abtest 拉取的 `CANCELLED` 分级（INFO + `abtestCanceled`）不变。
+
 ## [0.12.0] - 2026-09-02
 
 ### Changed (BREAKING)

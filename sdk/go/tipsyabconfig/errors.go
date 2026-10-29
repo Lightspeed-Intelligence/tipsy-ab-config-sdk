@@ -77,6 +77,11 @@ var ErrNamespaceNotSubscribed = errors.New("tipsyabconfig: namespace not subscri
 // is deliberately treated the same way — from the caller's perspective both
 // mean "this call was cancelled" (issue #15 建议改法). DeadlineExceeded is
 // explicitly NOT matched: a real timeout stays an error.
+//
+// It only classifies a single call (log level / which counter). Background
+// loops MUST NOT use it to decide whether to exit: because it matches a
+// server-sent codes.Canceled, a remote cancel would look like SDK shutdown and
+// end the loop permanently. They check c.rootCtx.Err() instead.
 func isContextCanceled(err error) bool {
 	return errors.Is(err, context.Canceled) || status.Code(err) == codes.Canceled
 }

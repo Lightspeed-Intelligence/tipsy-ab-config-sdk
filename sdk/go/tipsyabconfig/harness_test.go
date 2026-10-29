@@ -39,6 +39,9 @@ type fakeConfigServer struct {
 	pullResponses map[string]*configv1.NamespaceSnapshot // ns -> snapshot
 	pullErr       error
 	pullCalls     int
+	// pullGate, when non-nil, parks every PullAll until it is closed or the
+	// call's ctx ends — used to have a pull in flight at a chosen moment.
+	pullGate chan struct{}
 	// pullReqs records every PullAllRequest received (used to verify fields
 	// like env/trace_id land on the wire). Mirrors subscribeReqs.
 	pullReqs []*configv1.PullAllRequest
@@ -77,6 +80,14 @@ func (f *fakeConfigServer) SetPullError(err error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.pullErr = err
+}
+
+// SetPullGate makes subsequent PullAll calls block until gate is closed or the
+// call's ctx ends (nil restores immediate replies).
+func (f *fakeConfigServer) SetPullGate(gate chan struct{}) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.pullGate = gate
 }
 
 func (f *fakeConfigServer) PullCalls() int {
@@ -147,6 +158,7 @@ func (f *fakeConfigServer) PullAll(ctx context.Context, req *configv1.PullAllReq
 		}
 	}
 	pullErr := f.pullErr
+	gate := f.pullGate
 	out := []*configv1.NamespaceSnapshot{}
 	for _, ns := range req.GetNamespaces() {
 		if snap, ok := f.pullResponses[ns]; ok {
@@ -154,6 +166,13 @@ func (f *fakeConfigServer) PullAll(ctx context.Context, req *configv1.PullAllReq
 		}
 	}
 	f.mu.Unlock()
+	if gate != nil {
+		select {
+		case <-gate:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
 	if pullErr != nil {
 		return nil, pullErr
 	}
