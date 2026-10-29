@@ -1425,13 +1425,14 @@ public final class TipsyAbConfigClient implements AutoCloseable {
                     Thread.currentThread().interrupt();
                     return;
                 } catch (Exception e) {
+                    // Only the SDK's own shutdown (close() sets closed first) is
+                    // an expected termination: exit silently (#15). Decide on
+                    // closed, NOT on the status code: this thread runs on the
+                    // ROOT gRPC Context, so a CANCELLED here was sent by the
+                    // server or a proxy and is a fault. Exiting on it used to end
+                    // this loop for good with no log, metric or event — do not
+                    // reintroduce an isCancelled(e) exit.
                     if (closed.get()) {
-                        return;
-                    }
-                    if (isCancelled(e)) {
-                        // Caller-context cancellation (#15): expected
-                        // termination, not a fault — exit silently (no
-                        // pullFailure metric, no ERROR, no periodic_pull event).
                         return;
                     }
                     metrics.pullFailure.inc(ns);
@@ -1446,10 +1447,9 @@ public final class TipsyAbConfigClient implements AutoCloseable {
     /**
      * Maintains a long-lived Subscribe stream with exponential backoff
      * (1s → ×2 → capped at 30s). A clean stream end resets the backoff and
-     * reconnects immediately; a cancellation (from {@link #close()}, or any
-     * caller-context {@code CANCELLED} per {@link #isCancelled}) exits silently;
-     * a real error bumps the disconnect metric, fires a {@code subscribe} event,
-     * and backs off before reconnecting.
+     * reconnects immediately; {@link #close()} exits silently; any other error
+     * (including a server- or proxy-sent {@code CANCELLED}) bumps the disconnect
+     * metric, fires a {@code subscribe} event, and backs off before reconnecting.
      */
     private void runSubscribe() {
         long backoffMs = 1000L;
@@ -1464,13 +1464,12 @@ public final class TipsyAbConfigClient implements AutoCloseable {
                 if (closed.get()) {
                     return; // cancellation from close() — do not reconnect / count.
                 }
-                if (isCancelled(e)) {
-                    // Caller-context cancellation (#15): expected termination,
-                    // not a fault. Exit silently — no disconnect metric, no
-                    // ERROR, no subscribe event (which would flip
-                    // subscribeConnected false and misreport an outage).
-                    return;
-                }
+                // Not closed: any error — including a CANCELLED sent by the
+                // server or a proxy (this thread runs on the ROOT gRPC Context,
+                // so nothing local cancels it) — is a fault and reconnects
+                // below. Exiting on CANCELLED used to stop this loop for good
+                // with subscribeConnected still true; do not reintroduce an
+                // isCancelled(e) exit.
                 cleanEnd = false;
                 for (String ns : subscribedNamespaces) {
                     metrics.subscribeDisc.inc(ns);
@@ -1528,6 +1527,12 @@ public final class TipsyAbConfigClient implements AutoCloseable {
      * {@code DeadlineExceeded} stays a real error, and {@code close()}'s
      * {@code channel.shutdownNow()} surfaces {@code UNAVAILABLE}, which is
      * covered by the existing {@code closed.get()} guards, not by this check.
+     *
+     * <p>It classifies a single call (log level / which counter) only. The
+     * background pull and subscribe loops MUST NOT use it to decide whether to
+     * exit: they run on the ROOT Context, so a CANCELLED they see came from the
+     * server or a proxy, and exiting on it would stop the loop for good. They
+     * check {@code closed.get()} instead.
      */
     static boolean isCancelled(Throwable t) {
         return t instanceof StatusRuntimeException sre

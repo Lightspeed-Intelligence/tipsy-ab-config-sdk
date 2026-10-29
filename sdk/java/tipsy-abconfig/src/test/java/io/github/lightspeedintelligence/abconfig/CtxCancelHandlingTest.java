@@ -33,10 +33,14 @@ import org.slf4j.LoggerFactory;
  *       {@code UNAVAILABLE} — the shape {@code close()}'s
  *       {@code channel.shutdownNow()} produces — stays false and remains
  *       covered by the {@code closed.get()} guards).</li>
- *   <li>subscribe / periodic-pull loops: an injected CANCELLED exits silently —
- *       no ERROR log, failure-counter delta == 0, no
- *       {@link BackgroundErrorEvent} (so {@code subscribeConnected} is never
- *       misreported false).</li>
+ *   <li>subscribe / periodic-pull loops: only the SDK's own {@code close()}
+ *       is a silent exit (no ERROR log, failure-counter delta == 0, no
+ *       {@link BackgroundErrorEvent}). The loops run on the ROOT Context, so a
+ *       CANCELLED they receive was sent by the server or a proxy: it is a
+ *       fault — reported, and the loop keeps reconnecting / ticking. (Until
+ *       2026-10 the loops exited on it, stopping pull/subscribe for the
+ *       process lifetime with no signal; the {@code *RemoteCancelled*} tests
+ *       pin the fix.)</li>
  *   <li>abtest fetch: CANCELLED logs at INFO, bumps the NEW
  *       {@code abtestCanceled} counter, does NOT bump {@code abtestFallback},
  *       and the value semantics are unchanged (degrade to full release).</li>
@@ -168,16 +172,16 @@ final class CtxCancelHandlingTest {
     }
 
     // ------------------------------------------------------------------
-    // Subscribe loop: CANCELLED exits silently.
+    // Subscribe loop: a server-sent CANCELLED is a fault -> report + reconnect.
     // ------------------------------------------------------------------
 
     @Test
-    @DisplayName("subscribe CANCELLED: silent exit — no ERROR, no metric, no event")
-    void subscribeCancelled_exitsSilently() {
+    @DisplayName("subscribe remote CANCELLED: reported (ERROR, metric, event) and reconnects")
+    void subscribeRemoteCancelled_reportsAndReconnects() {
         harness.setPullHandler(req -> InProcessConfigServiceHarness.pullResponse(
                 InProcessConfigServiceHarness.snapshot(NS, 1, 0, "color", 11, "blue")));
         harness.setSubscribeHandler((req, obs) -> obs.onError(
-                Status.CANCELLED.withDescription("upstream context cancelled").asRuntimeException()));
+                Status.CANCELLED.withDescription("server/proxy cancelled the stream").asRuntimeException()));
 
         ConcurrentLinkedQueue<BackgroundErrorEvent> events = new ConcurrentLinkedQueue<>();
         try (LogCapture cap = new LogCapture()) {
@@ -186,44 +190,28 @@ final class CtxCancelHandlingTest {
                     .onBackgroundError(events::add)
                     .build());
 
-            // The stream must have been attempted, then the loop must EXIT
-            // (silent return), not reconnect.
+            // Reconnect after the initial 1s backoff (pre-fix: the loop
+            // returned and subscribeCalls stayed at 1 forever).
             assertTrue(InProcessConfigServiceHarness.awaitTrue(
-                            () -> harness.subscribeCalls.get() >= 1, POLL_BUDGET_MS),
-                    "the subscribe stream must have been attempted");
-            assertTrue(InProcessConfigServiceHarness.awaitTrue(
-                            () -> aliveThreadsNamed("tipsyabconfig-subscribe", preexistingThreads).isEmpty(),
-                            POLL_BUDGET_MS),
-                    "a ctx-cancelled subscribe loop must exit (silent return)");
-
-            // No reconnect was scheduled (a mis-classified real error would back
-            // off 1s then redial — the thread would still be alive above, and
-            // the call count would grow here).
-            assertEquals(1, harness.subscribeCalls.get(),
-                    "no reconnect after a ctx-cancel");
-            // Failure surface: all three channels must stay silent.
-            assertEquals(0L, client.metrics().subscribeDisconnectTotal(NS),
-                    "ctx-cancel must not count as a disconnect");
-            assertTrue(events.stream().noneMatch(e -> "subscribe".equals(e.phase())),
-                    "ctx-cancel must not fire a subscribe BackgroundErrorEvent");
-            assertTrue(client.health().lastSubscribeErr().isEmpty(),
-                    "ctx-cancel must not record lastSubscribeErr");
-            assertTrue(client.health().subscribeConnected(),
-                    "ctx-cancel must not misreport subscribeConnected=false");
-            List<ILoggingEvent> errors = cap.atLevel(Level.ERROR);
-            assertTrue(errors.isEmpty(),
-                    "ctx-cancel must not log ERROR, got: " + errors.stream()
-                            .map(ILoggingEvent::getFormattedMessage).collect(Collectors.toList()));
+                            () -> harness.subscribeCalls.get() >= 2, POLL_BUDGET_MS),
+                    "a remote CANCELLED must not stop the subscribe loop (calls="
+                            + harness.subscribeCalls.get() + ")");
+            assertTrue(client.metrics().subscribeDisconnectTotal(NS) > 0,
+                    "a remote CANCELLED must count as a disconnect");
+            assertTrue(events.stream().anyMatch(e -> "subscribe".equals(e.phase())),
+                    "a remote CANCELLED must fire a subscribe BackgroundErrorEvent");
+            assertFalse(cap.atLevel(Level.ERROR).isEmpty(),
+                    "a remote CANCELLED must log the reconnect ERROR");
         }
     }
 
     // ------------------------------------------------------------------
-    // Periodic pull loop: CANCELLED exits silently.
+    // Periodic pull loop: a server-sent CANCELLED is a fault -> report + tick on.
     // ------------------------------------------------------------------
 
     @Test
-    @DisplayName("periodic pull CANCELLED: silent exit — no ERROR, no metric, no event")
-    void periodicPullCancelled_exitsSilently() {
+    @DisplayName("periodic pull remote CANCELLED: reported (ERROR, metric, event) and keeps ticking")
+    void periodicPullRemoteCancelled_reportsAndKeepsTicking() {
         PullAllResponseHolder ok = new PullAllResponseHolder();
         InProcessConfigServiceHarness.SwitchablePullHandler handler =
                 new InProcessConfigServiceHarness.SwitchablePullHandler(req -> ok.response);
@@ -238,32 +226,79 @@ final class CtxCancelHandlingTest {
                     .pullTimeout(Duration.ofMillis(500))
                     .onBackgroundError(events::add)
                     .build());
-            int startupPulls = harness.pullCalls.get();
 
-            // Break the backend with a ctx-cancel-shaped failure.
             handler.set(req -> {
-                throw Status.CANCELLED.withDescription("caller context canceled").asRuntimeException();
+                throw Status.CANCELLED.withDescription("server/proxy cancelled the call").asRuntimeException();
             });
 
-            // One tick must land on the CANCELLED handler, then the loop exits.
             assertTrue(InProcessConfigServiceHarness.awaitTrue(
-                            () -> harness.pullCalls.get() > startupPulls, POLL_BUDGET_MS),
-                    "a periodic tick must have hit the CANCELLED handler");
+                            () -> client.metrics().pullFailureTotal(NS) > 0, POLL_BUDGET_MS),
+                    "a remote CANCELLED must count as a pull failure");
+            // The loop must keep ticking (pre-fix: it returned after one hit).
+            int afterFirstFailure = harness.pullCalls.get();
             assertTrue(InProcessConfigServiceHarness.awaitTrue(
-                            () -> aliveThreadsNamed("tipsyabconfig-pull", preexistingThreads).isEmpty(),
-                            POLL_BUDGET_MS),
-                    "a ctx-cancelled pull loop must exit (silent return)");
+                            () -> harness.pullCalls.get() > afterFirstFailure + 2, POLL_BUDGET_MS),
+                    "the pull loop must keep ticking after a remote CANCELLED");
+            assertFalse(aliveThreadsNamed("tipsyabconfig-pull", preexistingThreads).isEmpty(),
+                    "the pull thread must still be alive");
+            assertTrue(events.stream().anyMatch(e -> "periodic_pull".equals(e.phase())),
+                    "a remote CANCELLED must fire a periodic_pull BackgroundErrorEvent");
+            assertFalse(cap.atLevel(Level.ERROR).isEmpty(),
+                    "a remote CANCELLED must log the periodic PullAll ERROR");
+        }
+    }
 
-            assertEquals(0L, client.metrics().pullFailureTotal(NS),
-                    "ctx-cancel must not count as a pull failure");
-            assertTrue(events.stream().noneMatch(e -> "periodic_pull".equals(e.phase())),
-                    "ctx-cancel must not fire a periodic_pull BackgroundErrorEvent");
-            assertTrue(client.health().lastPullErr().isEmpty(),
-                    "ctx-cancel must not record lastPullErr");
+    // ------------------------------------------------------------------
+    // close() with a pull in flight and the stream attached: silent exit.
+    // ------------------------------------------------------------------
+
+    @Test
+    @DisplayName("close() mid-pull with stream attached: both loops exit silently")
+    void closeMidFlight_exitsSilently() throws Exception {
+        PullAllResponseHolder ok = new PullAllResponseHolder();
+        InProcessConfigServiceHarness.SwitchablePullHandler handler =
+                new InProcessConfigServiceHarness.SwitchablePullHandler(req -> ok.response);
+        harness.setPullHandler(handler);
+        harness.setSubscribeHandler((req, obs) -> { /* keep open */ });
+
+        ConcurrentLinkedQueue<BackgroundErrorEvent> events = new ConcurrentLinkedQueue<>();
+        java.util.concurrent.CountDownLatch entered = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+        try (LogCapture cap = new LogCapture()) {
+            client = TipsyAbConfigClient.create(cfg(NS)
+                    .pullInterval(Duration.ofMillis(120))
+                    .pullTimeout(Duration.ofSeconds(5))
+                    .onBackgroundError(events::add)
+                    .build());
+            assertTrue(InProcessConfigServiceHarness.awaitTrue(
+                            () -> harness.subscribeCalls.get() >= 1, POLL_BUDGET_MS),
+                    "the subscribe stream must be attached");
+
+            // Park the next periodic pull on the server so close() lands mid-call.
+            handler.set(req -> {
+                entered.countDown();
+                try {
+                    release.await(5, java.util.concurrent.TimeUnit.SECONDS);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                }
+                return ok.response;
+            });
+            assertTrue(entered.await(POLL_BUDGET_MS, java.util.concurrent.TimeUnit.MILLISECONDS),
+                    "a periodic pull must be in flight");
+
+            client.close();
+            release.countDown();
+
+            assertEquals(0L, client.metrics().pullFailureTotal(NS), "close() is not a pull failure");
+            assertEquals(0L, client.metrics().subscribeDisconnectTotal(NS), "close() is not a disconnect");
+            assertTrue(events.isEmpty(), "close() must not fire BackgroundErrorEvents, got: " + events);
             List<ILoggingEvent> errors = cap.atLevel(Level.ERROR);
             assertTrue(errors.isEmpty(),
-                    "ctx-cancel must not log ERROR, got: " + errors.stream()
+                    "close() must not log ERROR, got: " + errors.stream()
                             .map(ILoggingEvent::getFormattedMessage).collect(Collectors.toList()));
+        } finally {
+            release.countDown();
         }
     }
 

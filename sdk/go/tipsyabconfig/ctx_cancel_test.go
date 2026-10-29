@@ -8,10 +8,14 @@ package tipsyabconfig
 // was blind to real gRPC cancellations. The fix routes both shapes through
 // isContextCanceled and, on a hit:
 //
-//   - subscribe / periodic pull: silent return — no ERROR log, no
-//     subscribeDisc/pullFailure inc, no BackgroundErrorEvent (user decision
-//     2026-08-27: ctx-cancel fires NO event, so SubscribeConnected is never
-//     falsely flipped).
+//   - subscribe / periodic pull: only the SDK's OWN shutdown (Close → rootCtx
+//     canceled) is a silent exit — no ERROR log, no subscribeDisc/pullFailure
+//     inc, no BackgroundErrorEvent (user decision 2026-08-27). The loops decide
+//     on rootCtx.Err(), not on the error code: a codes.Canceled sent by the
+//     server or a proxy while rootCtx is alive is a FAULT — reported, and the
+//     loop keeps going. (Until 2026-10 the loops exited on any Canceled code,
+//     so one remote cancel stopped pulling/subscribing for the process
+//     lifetime with no signal; the *_RemoteCanceled_* tests pin the fix.)
 //   - abtest per-ns fetch: Info log (ns + trace_id) + abtestCanceled inc
 //     (new counter, per user decision: observability moves OUT of
 //     abtestFallback instead of being erased), abtestFallback NOT inc'd,
@@ -94,16 +98,13 @@ func TestIsContextCanceled_Table(t *testing.T) {
 	}
 }
 
-// TestSubscribe_CtxCancelStatus_Silent: the Subscribe stream dying with the
-// grpc Canceled status shape is a silent exit — no subscribeDisc inc, no ERROR
-// log, no "subscribe" BackgroundErrorEvent, and NO reconnect attempt (the
-// pre-fix behaviour was all four, with the loop only exiting a round later via
-// rootCtx.Err()). SubscribeCalls > 1 inside the observation window would mean
-// the hit was treated as "clean EOF, reconnect immediately" — also a bug.
-func TestSubscribe_CtxCancelStatus_Silent(t *testing.T) {
+// TestSubscribe_LocalClose_Silent: Close() while the stream is attached ends
+// runSubscribe silently — the in-flight Recv fails with the Canceled status,
+// rootCtx is done, and nothing is reported (no subscribeDisc, no ERROR log, no
+// "subscribe" event).
+func TestSubscribe_LocalClose_Silent(t *testing.T) {
 	h := newHarness(t)
 	h.cfgServer.SetPullSnapshot(makeSnapshot("ns1", 1, 1, nil))
-	h.cfgServer.SetSubscribeErrFn(grpcCanceledErr)
 
 	sink := &recordingErrSink{}
 	cfg, rec := recordingConfig(h, []string{"ns1"})
@@ -115,33 +116,54 @@ func TestSubscribe_CtxCancelStatus_Silent(t *testing.T) {
 	if !waitFor(t, 2*time.Second, func() bool { return h.cfgServer.SubscribeCalls() >= 1 }) {
 		t.Fatal("subscribe never attached")
 	}
-	// Push one frame: the fake server sends it, then errFn returns the
-	// canceled-status error and the stream dies. Waiting for the cache to
-	// reflect the frame pins "the error has reached the client" (the error
-	// follows the frame on the same stream).
-	h.cfgServer.PushSnapshot(makeSnapshot("ns1", 5, 5, nil))
-	if !waitFor(t, 2*time.Second, func() bool {
-		s := cli.cache.snapshot("ns1")
-		return s != nil && s.BusinessSnapshotSeq == 5
-	}) {
-		t.Fatal("pushed frame never reached the client")
-	}
+	_ = cli.Close() // returns after runSubscribe has exited (wg.Wait)
 
-	// Absence window: on the pre-fix (fault) path every one of these fires
-	// within milliseconds of the Recv error; on a wrong "clean EOF" reading
-	// the reconnect lands immediately. waitFor returning true = violation.
-	violated := func() bool {
-		return cli.Metrics().SubscribeDisconnectTotal("ns1") != 0 ||
-			len(sink.byPhase("subscribe")) != 0 ||
-			len(findRecordByMsg(rec, subscribeErrorMsg)) != 0 ||
-			h.cfgServer.SubscribeCalls() > 1
+	if d := cli.Metrics().SubscribeDisconnectTotal("ns1"); d != 0 {
+		t.Fatalf("Close counted as a subscribe disconnect: disc=%d", d)
 	}
-	if waitFor(t, 700*time.Millisecond, violated) {
-		t.Fatalf("ctx-cancel on subscribe was treated as a fault: disc=%d, events=%d, errorLogs=%d, subscribeCalls=%d",
-			cli.Metrics().SubscribeDisconnectTotal("ns1"),
-			len(sink.byPhase("subscribe")),
-			len(findRecordByMsg(rec, subscribeErrorMsg)),
-			h.cfgServer.SubscribeCalls())
+	if n := len(sink.byPhase("subscribe")); n != 0 {
+		t.Fatalf("Close fired %d subscribe BackgroundErrorEvent(s)", n)
+	}
+	if n := len(findRecordByMsg(rec, subscribeErrorMsg)); n != 0 {
+		t.Fatalf("Close logged the subscribe ERROR line %d time(s)", n)
+	}
+}
+
+// TestSubscribe_RemoteCanceled_ReportsAndReconnects: the stream dying with a
+// codes.Canceled sent by the SERVER (rootCtx alive) is a fault — subscribeDisc
+// inc, ERROR log, "subscribe" event — and the loop reconnects. Before the fix
+// it was taken for shutdown: runSubscribe returned and never reconnected.
+func TestSubscribe_RemoteCanceled_ReportsAndReconnects(t *testing.T) {
+	h := newHarness(t)
+	h.cfgServer.SetPullSnapshot(makeSnapshot("ns1", 1, 1, nil))
+	h.cfgServer.SetSubscribeErrFn(grpcCanceledErr)
+
+	sink := &recordingErrSink{}
+	cfg, rec := recordingConfig(h, []string{"ns1"})
+	cfg.AbtestServiceAddr = ""
+	cfg.PullInterval = time.Hour
+	cfg.OnBackgroundError = sink.cb
+	cli := initClient(t, cfg)
+
+	if !waitFor(t, 2*time.Second, func() bool { return h.cfgServer.SubscribeCalls() >= 1 }) {
+		t.Fatal("subscribe never attached")
+	}
+	// The fake server sends this frame, then errFn ends the stream with the
+	// Canceled status.
+	h.cfgServer.PushSnapshot(makeSnapshot("ns1", 5, 5, nil))
+
+	// Reconnect after the initial 1s backoff.
+	if !waitFor(t, 4*time.Second, func() bool { return h.cfgServer.SubscribeCalls() >= 2 }) {
+		t.Fatalf("subscribe did not reconnect after a remote Canceled (calls=%d)", h.cfgServer.SubscribeCalls())
+	}
+	if d := cli.Metrics().SubscribeDisconnectTotal("ns1"); d == 0 {
+		t.Fatal("remote Canceled did not bump subscribeDisc")
+	}
+	if n := len(sink.byPhase("subscribe")); n == 0 {
+		t.Fatal("remote Canceled did not fire a subscribe BackgroundErrorEvent")
+	}
+	if n := len(findRecordByMsg(rec, subscribeErrorMsg)); n == 0 {
+		t.Fatal("remote Canceled did not log the subscribe ERROR line")
 	}
 }
 
@@ -181,11 +203,11 @@ func TestSubscribe_RealError_StillReports(t *testing.T) {
 	}
 }
 
-// TestPullLoop_CtxCancelStatus_Silent: a periodic PullAll failing with the
-// grpc Canceled status shape exits the loop silently — no pullFailure inc, no
-// ERROR log, no "periodic_pull" event, and no further pull ticks (the loop
-// returns; pre-fix it kept ticking and reporting until rootCtx caught up).
-func TestPullLoop_CtxCancelStatus_Silent(t *testing.T) {
+// TestPullLoop_LocalClose_Silent: Close() while a periodic PullAll is in
+// flight ends the loop silently — the call fails with the Canceled status,
+// rootCtx is done, and nothing is reported (no pullFailure, no ERROR log, no
+// "periodic_pull" event).
+func TestPullLoop_LocalClose_Silent(t *testing.T) {
 	h := newHarness(t)
 	h.cfgServer.SetPullSnapshot(makeSnapshot("ns1", 1, 1, nil))
 
@@ -195,32 +217,56 @@ func TestPullLoop_CtxCancelStatus_Silent(t *testing.T) {
 	cfg.OnBackgroundError = sink.cb // PullInterval stays 50ms from baseConfig
 	cli := initClient(t, cfg)
 
-	// Let the startup pull settle, then flip the server to canceled-status
-	// errors: the next periodic tick hits it.
+	// Park the next periodic pull on the server so Close lands mid-call.
 	base := h.cfgServer.PullCalls()
-	h.cfgServer.SetPullError(grpcCanceledErr())
+	h.cfgServer.SetPullGate(make(chan struct{}))
 	if !waitFor(t, 3*time.Second, func() bool { return h.cfgServer.PullCalls() > base }) {
-		t.Fatal("no periodic pull tick reached the erroring server")
+		t.Fatal("no periodic pull tick reached the server")
 	}
+	_ = cli.Close() // returns after runPullLoop has exited (wg.Wait)
 
-	violated := func() bool {
-		return cli.Metrics().PullFailureTotal("ns1") != 0 ||
-			len(sink.byPhase("periodic_pull")) != 0 ||
-			len(findRecordByMsg(rec, pullErrorMsg)) != 0
+	if f := cli.Metrics().PullFailureTotal("ns1"); f != 0 {
+		t.Fatalf("Close counted as a pull failure: pullFailure=%d", f)
 	}
-	if waitFor(t, 500*time.Millisecond, violated) {
-		t.Fatalf("ctx-cancel on periodic pull was treated as a fault: pullFailure=%d, events=%d, errorLogs=%d",
-			cli.Metrics().PullFailureTotal("ns1"),
-			len(sink.byPhase("periodic_pull")),
-			len(findRecordByMsg(rec, pullErrorMsg)))
+	if n := len(sink.byPhase("periodic_pull")); n != 0 {
+		t.Fatalf("Close fired %d periodic_pull BackgroundErrorEvent(s)", n)
 	}
-	// Loop-exit half: after the first canceled tick the loop must RETURN, not
-	// continue. With the 50ms interval a still-alive loop racks up ~10 more
-	// server calls across 500ms; allow 1 for a tick in flight at observation.
+	if n := len(findRecordByMsg(rec, pullErrorMsg)); n != 0 {
+		t.Fatalf("Close logged the periodic pull ERROR line %d time(s)", n)
+	}
+}
+
+// TestPullLoop_RemoteCanceled_ReportsAndKeepsTicking: a periodic PullAll
+// failing with a codes.Canceled sent by the SERVER (rootCtx alive) is a fault
+// — pullFailure inc, ERROR log, "periodic_pull" event — and the loop keeps
+// ticking. Before the fix the loop returned on it and never pulled again.
+func TestPullLoop_RemoteCanceled_ReportsAndKeepsTicking(t *testing.T) {
+	h := newHarness(t)
+	h.cfgServer.SetPullSnapshot(makeSnapshot("ns1", 1, 1, nil))
+
+	sink := &recordingErrSink{}
+	cfg, rec := recordingConfig(h, []string{"ns1"})
+	cfg.AbtestServiceAddr = ""
+	cfg.OnBackgroundError = sink.cb // PullInterval stays 50ms from baseConfig
+	cli := initClient(t, cfg)
+
+	h.cfgServer.SetPullError(grpcCanceledErr())
+	if !waitFor(t, 3*time.Second, func() bool {
+		return cli.Metrics().PullFailureTotal("ns1") > 0
+	}) {
+		t.Fatal("remote Canceled on periodic pull did not bump pullFailure")
+	}
+	if !waitFor(t, 2*time.Second, func() bool { return len(sink.byPhase("periodic_pull")) >= 1 }) {
+		t.Fatal("remote Canceled on periodic pull did not fire a periodic_pull event")
+	}
+	if len(findRecordByMsg(rec, pullErrorMsg)) == 0 {
+		t.Fatal("remote Canceled on periodic pull did not log the ERROR line")
+	}
+	// The loop must keep ticking: with a 50ms interval a live loop racks up
+	// several more calls quickly.
 	c1 := h.cfgServer.PullCalls()
-	time.Sleep(500 * time.Millisecond)
-	if c2 := h.cfgServer.PullCalls(); c2 > c1+1 {
-		t.Fatalf("pull loop kept running after ctx-cancel: calls %d -> %d", c1, c2)
+	if !waitFor(t, 2*time.Second, func() bool { return h.cfgServer.PullCalls() > c1+2 }) {
+		t.Fatalf("pull loop stopped after a remote Canceled (calls stuck at %d)", c1)
 	}
 }
 

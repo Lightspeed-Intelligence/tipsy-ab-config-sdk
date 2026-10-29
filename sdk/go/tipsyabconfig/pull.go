@@ -101,13 +101,15 @@ func (c *Client) runPullLoop() {
 					return
 				}
 				if err := c.pullOnce(c.rootCtx, ns); err != nil {
-					// Ctx cancellation is an expected termination (issue #15):
-					// exit silently — no pullFailure inc, no ERROR, no event.
-					// isContextCanceled also catches the grpc status error
-					// carrying codes.Canceled, which does NOT wrap the
-					// context.Canceled sentinel; the rootCtx.Err() check above
-					// stays as the backstop.
-					if isContextCanceled(err) {
+					// Only the SDK's own shutdown (Close → rootCtx canceled) is
+					// an expected termination: exit silently — no pullFailure
+					// inc, no ERROR, no event (issue #15). Decide on rootCtx,
+					// NOT on the error's code: a codes.Canceled sent by the
+					// server or an edge proxy while rootCtx is alive is a
+					// fault, and treating it as shutdown used to end this
+					// loop for good — the cache froze with no log, metric or
+					// event. Do not reintroduce an isContextCanceled(err) exit.
+					if c.rootCtx.Err() != nil {
 						return
 					}
 					c.metrics.pullFailure.inc(ns)

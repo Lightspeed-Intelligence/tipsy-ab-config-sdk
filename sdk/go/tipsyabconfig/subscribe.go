@@ -42,21 +42,23 @@ func (c *Client) runSubscribe() {
 		}
 		start := time.Now()
 		err := c.subscribeOnce(c.rootCtx)
-		if err == nil || isContextCanceled(err) || errors.Is(err, io.EOF) {
-			// Server closed cleanly; reconnect immediately on EOF, exit
-			// silently on a ctx cancellation (issue #15: cancellation is an
-			// expected termination — no disc metric, no ERROR, no event; the
-			// rootCtx.Err() check at the top of the loop stays as the
-			// backstop). isContextCanceled catches BOTH the bare sentinel and
-			// the grpc status error carrying codes.Canceled, which does NOT
-			// wrap the sentinel.
-			if isContextCanceled(err) {
-				return
-			}
+		if c.rootCtx.Err() != nil {
+			// SDK shutdown (Close → rootCtx canceled) is an expected
+			// termination: exit silently — no disc metric, no ERROR, no event
+			// (issue #15). Decide on rootCtx, NOT on the error's code: a
+			// codes.Canceled sent by the server or an edge proxy while rootCtx
+			// is alive is a fault and must reconnect below; exiting on it used
+			// to stop this loop for good with Health still reporting
+			// connected. Do not reintroduce an isContextCanceled(err) exit.
+			return
+		}
+		if err == nil || errors.Is(err, io.EOF) {
+			// Server closed cleanly; reconnect immediately.
 			backoff = initialSubscribeBackoff
 			continue
 		}
-		// Real error path: bump disconnect metric and back off. Reset the
+		// Real error path (incl. a remote codes.Canceled while rootCtx is
+		// alive): bump disconnect metric and back off. Reset the
 		// backoff BEFORE sleeping when the just-ended connection was healthy,
 		// so the logged backoff matches the actual time.After wait below.
 		backoff = resetBackoffIfStable(backoff, time.Since(start), c.stableResetThreshold)
