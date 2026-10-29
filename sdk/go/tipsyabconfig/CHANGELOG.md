@@ -20,6 +20,8 @@ bump first, then an SDK tag bump.
 
 ## [Unreleased]
 
+## [0.15.1] - 2026-10-29
+
 ### Fixed
 - **服务端或代理发来的 `codes.Canceled` 不再让后台循环永久停掉**。0.14.0（#15）起，
   `runSubscribe` 和周期 PullAll 循环用 `isContextCanceled(err)` 判断是否退出，它同时匹配
