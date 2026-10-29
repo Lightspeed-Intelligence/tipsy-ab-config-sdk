@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.1] - 2026-10-29
+
 ### Fixed
 - **服务端或代理发来的 `CANCELLED` 不再让后台循环永久停掉**。0.11.0（#15）起，Subscribe
   循环和周期 PullAll 循环收到 `StatusRuntimeException(CANCELLED)` 就直接退出、不再重连。
