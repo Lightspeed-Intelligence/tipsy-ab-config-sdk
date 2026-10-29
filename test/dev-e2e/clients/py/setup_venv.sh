@@ -26,7 +26,7 @@ case "$SDK_MODE" in
 	editable)
 		VENV="$HERE/.venv"
 		# Resolve the SDK repo root: walk up until we find sdk/python/pyproject.toml
-		# (this is the public SDK repo's root marker; there is no top-level go.mod).
+		# (this is the SDK repo's root marker; there is no top-level go.mod).
 		REPO_ROOT="$HERE"
 		while [ "$REPO_ROOT" != "/" ] && [ ! -f "$REPO_ROOT/sdk/python/pyproject.toml" ]; do
 			REPO_ROOT="$(dirname "$REPO_ROOT")"
@@ -81,11 +81,10 @@ if [ "$SDK_MODE" = "editable" ]; then
 	"$VENV/bin/python" -m pip install -e "${SDK_DIR}[http]"
 else
 	# True backend pattern: install the released v0.5.0 from git+ssh at the
-	# tagged commit on the PUBLIC SDK repo. Auth uses the same SSH key that
+	# tagged commit on the (private) SDK repo. Auth uses the same SSH key that
 	# already works for `git clone git@github.com:Lightspeed-Intelligence/tipsy-ab-config-sdk.git`.
-	# The README (sdk/python/README.md) documents the equivalent git+https +
-	# ${GH_PAT} form for CI environments. As the SDK repo is public, plain
-	# git+https with no token also works.
+	# v0.5.0 predates PyPI distribution, so it is only reachable through git
+	# and needs GitHub read access; current releases install from PyPI.
 	"$VENV/bin/python" -m pip install \
 		'tipsy-ab-config[http] @ git+ssh://git@github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk.git@python-sdk/v0.5.0#subdirectory=sdk/python'
 	"$VENV/bin/python" -c "import tipsy_ab_config as p; print('SDK version:', p.__version__)"

@@ -8,12 +8,12 @@ The package is asynchronous and requires Python 3.10 or newer.
 
 ## Install
 
-Published versions are tagged `python-sdk/vX.Y.Z` in
-[GitHub Releases](https://github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk/releases).
-Choose a released tag and pin it; do not deploy from `main` or a floating ref.
+Releases are published to [PyPI](https://pypi.org/project/tipsy-ab-config/)
+as `tipsy-ab-config`. Pin an exact released version; installation needs no
+GitHub access or token.
 
 ```text
-tipsy-ab-config @ git+https://github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk.git@python-sdk/vX.Y.Z#subdirectory=sdk/python
+tipsy-ab-config==X.Y.Z
 ```
 
 Optional extras:
@@ -24,23 +24,20 @@ Optional extras:
 For example:
 
 ```text
-tipsy-ab-config[http,fastapi] @ git+https://github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk.git@python-sdk/vX.Y.Z#subdirectory=sdk/python
+tipsy-ab-config[http,fastapi]==X.Y.Z
 ```
 
-The repository is public, so installation does not require a GitHub token. The
-current package version is declared in `pyproject.toml` and
-`tipsy_ab_config.__version__`; release changes are recorded in
-[CHANGELOG.md](./CHANGELOG.md).
+The current package version is declared in `pyproject.toml` and
+`tipsy_ab_config.__version__`; release changes are recorded in the SDK
+`CHANGELOG.md`. Internal artifact mirrors can proxy or cache PyPI directly.
 
-For an internal artifact mirror, download the wheel or sdist attached to the
-matching GitHub Release and install that immutable artifact.
+### Deprecated Git-URL install
 
-### Deprecated private-repository install
-
-Consumers still pinned to a pre-0.3.0 tag in the former private
-`tipsy-ab-config` monorepo must migrate to the public URL above when upgrading.
-The old credential-bearing URL is a compatibility path, not an installation
-method for current releases.
+Earlier instructions installed from a
+`git+https://github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk.git@python-sdk/vX.Y.Z#subdirectory=sdk/python`
+URL, and pre-0.3.0 tags from the former `tipsy-ab-config` monorepo. Both
+require read access to the GitHub repository. Migrate to the PyPI requirement
+above; the Git URLs are not an installation method for current releases.
 
 ## Quick start
 
@@ -205,17 +202,19 @@ Prefetching is opt-in and exact-path matched. Trace selection is
 - Python 3.10–3.13.
 - `grpcio>=1.66.2,<2`.
 - `protobuf>=5.29.1,<7`.
-- Distribution is currently through public Git tags and GitHub Release assets,
-  not PyPI.
+- Distribution is through PyPI (`tipsy-ab-config`). Releases published before
+  the PyPI move are backfilled from their GitHub Release assets.
 - The package ships `py.typed` but no separate `.pyi` stubs.
 
 ## Troubleshooting
 
-- Installation cannot find a version: confirm that the `python-sdk/vX.Y.Z` tag
-  exists and that the consumer can reach GitHub. Mirror a release asset where
-  direct access is unavailable.
-- `No module named 'tipsy'`: remove the stale installation and reinstall from a
-  current public tag.
+- Installation cannot find a version: confirm that the version is listed on
+  [PyPI](https://pypi.org/project/tipsy-ab-config/#history) and that the
+  consumer's package index (or mirror) can reach it.
+- A Git-URL requirement fails with an authentication error: the GitHub
+  repository is private. Replace it with `tipsy-ab-config==X.Y.Z`.
+- `No module named 'tipsy'`: remove the stale installation and reinstall a
+  current release from PyPI.
 - Protobuf runtime mismatch: remove an incompatible application pin and resolve
   `protobuf>=5.29.1,<7`.
 - Generated gRPC code requires a newer runtime: resolve

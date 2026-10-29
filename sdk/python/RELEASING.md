@@ -1,15 +1,24 @@
 # Releasing the Tipsy AB-config Python SDK
 
-This SDK is distributed as a public Git-installable release. Each release
-ships a sdist + wheel built on CI. Business consumers install via a
-`git+https://github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk.git@<tag>#subdirectory=sdk/python`
-URL pinned to a tag, or via the two-step Release-asset download path.
+This SDK is distributed through [PyPI](https://pypi.org/project/tipsy-ab-config/)
+as `tipsy-ab-config`. Each release ships a sdist + wheel built on CI, attached
+to the GitHub Release and uploaded to PyPI by Trusted Publishing (OIDC; no API
+token is stored). Business consumers pin `tipsy-ab-config==X.Y.Z`.
 
-> **Migration note.** Old installs using
-> `git+https://${GH_PAT}@github.com/Lightspeed-Intelligence/tipsy-ab-config.git@python-sdk/v0.2.0#subdirectory=sdk/python`
-> continue to work via the legacy tag preserved on the ab-config repo,
-> but new releases live here. Do not rewrite that legacy tag's git
-> history.
+The GitHub repository is private, so `git+https://…tipsy-ab-config-sdk.git@<tag>`
+requirements need GitHub read access and are not a supported install path.
+
+> **Legacy note.** Pre-0.3.0 tags live on the former `tipsy-ab-config`
+> monorepo and are reachable only through its credential-bearing Git URL. Do not
+> rewrite that legacy tag's git history.
+
+## One-time setup (already done once per repository)
+
+- pypi.org → Publishing: a trusted publisher for project `tipsy-ab-config`,
+  owner `Lightspeed-Intelligence`, repository `tipsy-ab-config-sdk`, workflow
+  `python-sdk.yml`, environment `pypi`. Keep at least two PyPI owners with 2FA.
+- GitHub → Settings → Environments → `pypi`: deployment tags/branches limited to
+  `python-sdk/v*` and `main` (the backfill job runs on `main`).
 
 ## Release steps
 
@@ -56,15 +65,28 @@ URL pinned to a tag, or via the two-step Release-asset download path.
    - Runs the 3.10–3.13 matrix tests + proto-drift check on push to `main`
      and on PRs.
    - On a `python-sdk/v*` tag with a `.` in it (filters out
-     `python-sdk/vexperimental`-style typos), runs the build job and
-     publishes the artefacts as a GitHub Release.
+     `python-sdk/vexperimental`-style typos), runs the build job, publishes
+     the artefacts as a GitHub Release, and uploads the same files to PyPI.
+
+   Verify the upload: `pip download tipsy-ab-config==X.Y.Z --no-deps` and a
+   clean-venv `pip install "tipsy-ab-config[http]==X.Y.Z"` that imports.
+
+   **Backfill** (a release whose Release assets exist but which is missing on
+   PyPI, e.g. versions released before the PyPI move): run the workflow
+   manually from `main` with the tag as input. It downloads the Release's
+   original wheel + sdist and uploads them unchanged; an already-present
+   version is skipped.
+
+   ```bash
+   gh workflow run python-sdk.yml --ref main -f tag=python-sdk/vX.Y.Z
+   ```
 
 5. **Notify business consumers**
 
-   - Post the new tag and the install URL snippet to the relevant
-     internal channel. The canonical install line is:
+   - Post the new version and the install line to the relevant internal
+     channel. The canonical install line is:
      ```text
-     pip install "git+https://github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk.git@python-sdk/vX.Y.Z#subdirectory=sdk/python"
+     pip install "tipsy-ab-config==X.Y.Z"
      ```
    - Bump the SDK pin in tipsy-studio's `requirements.txt` /
      `pyproject.toml` in a follow-up PR.
@@ -74,10 +96,12 @@ URL pinned to a tag, or via the two-step Release-asset download path.
 - **Soft rollback** (recommended): publish a patch release `X.Y.(Z+1)`
   reverting the breaking change. Consumers move forward; the broken
   release stays on the Releases page for traceability.
-- **Hard rollback**: delete the GitHub Release **but keep the tag** — pip
-  consumers that already pinned `X.Y.Z` via `git+https` still resolve
-  (tags are git refs; deleting the Release only removes the asset bundle).
-  Then publish `X.Y.(Z+1)`.
+- **Hard rollback**: on PyPI, **yank** `X.Y.Z` (never delete). A yanked
+  version is skipped by resolvers unless pinned exactly, so existing `==X.Y.Z`
+  pins keep installing. Keep the git tag and GitHub Release. Then publish
+  `X.Y.(Z+1)`.
+- PyPI versions are immutable: a deleted `X.Y.Z` can never be uploaded again,
+  so a fix always ships as a new version.
 
 ## TODO
 

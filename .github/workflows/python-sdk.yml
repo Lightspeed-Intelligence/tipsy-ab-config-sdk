@@ -9,6 +9,14 @@ on:
   push:
     branches: [main]
     tags: ['python-sdk/v*']
+  # Manual backfill only: re-publish an existing GitHub Release's CI-built
+  # wheel + sdist to PyPI (see the backfill-pypi job). Run it from main.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing release tag to backfill to PyPI, e.g. python-sdk/v0.15.0'
+        required: true
+        type: string
 
 jobs:
   # Skip non-release jobs for unrelated pushes to main. Tag-pushes are NOT
@@ -90,7 +98,9 @@ jobs:
     # Tag-push: build runs unconditionally so release has artifacts.
     # R2-F3: tag pattern tightened with `contains(github.ref, '.')` so an
     # accidental `python-sdk/vexperimental` won't auto-release.
-    if: always() && ((needs.test.result == 'success' && needs.proto-drift.result == 'success') || (startsWith(github.ref, 'refs/tags/python-sdk/v') && contains(github.ref, '.')))
+    # workflow_dispatch is excluded so a manual run on a tag ref can never
+    # rebuild and re-release (release/publish-pypi gate on this job).
+    if: always() && github.event_name != 'workflow_dispatch' && ((needs.test.result == 'success' && needs.proto-drift.result == 'success') || (startsWith(github.ref, 'refs/tags/python-sdk/v') && contains(github.ref, '.')))
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -159,3 +169,52 @@ jobs:
           # for every release including stable v0.1.0. Use the SemVer suffix
           # only (e.g. `0.1.0` vs `0.1.0rc1`).
           prerelease: ${{ contains(github.ref_name, 'rc') || contains(github.ref_name, 'alpha') || contains(github.ref_name, 'beta') }}
+
+  publish-pypi:
+    # Same tag gate as release. Uses PyPI Trusted Publishing (OIDC): no API
+    # token is stored in the repo. The pending/trusted publisher on pypi.org
+    # must name this repo, workflow file `python-sdk.yml`, and environment
+    # `pypi`; the `pypi` environment must allow `python-sdk/v*` tags and the
+    # `main` branch (backfill-pypi runs on main). PyPI versions are immutable —
+    # a published X.Y.Z can never be re-uploaded, even after deletion.
+    if: always() && needs.build.result == 'success' && startsWith(github.ref, 'refs/tags/python-sdk/v') && contains(github.ref, '.')
+    needs: [build]
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/tipsy-ab-config/
+    permissions: { id-token: write }
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { name: dist, path: dist }
+      - uses: pypa/gh-action-pypi-publish@release/v1
+
+  backfill-pypi:
+    # Publish the wheel + sdist already attached to an existing GitHub Release.
+    # The artifacts are the originals CI built at tag time — nothing is rebuilt,
+    # so PyPI serves byte-identical files to the Release. skip-existing makes a
+    # re-run of an already-backfilled tag a no-op instead of a failure.
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/tipsy-ab-config/
+    permissions: { id-token: write, contents: read }
+    steps:
+      - name: download release artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          [[ "$TAG" =~ ^python-sdk/v([0-9]+\.[0-9]+\.[0-9]+([abrc][0-9a-z.]*)?)$ ]] \
+            || { echo "::error::tag must look like python-sdk/vX.Y.Z, got '$TAG'"; exit 1; }
+          version="${BASH_REMATCH[1]}"
+          gh release download "$TAG" -R "$GITHUB_REPOSITORY" -D dist \
+            -p "tipsy_ab_config-${version}-*.whl" -p "tipsy_ab_config-${version}.tar.gz"
+          ls -l dist
+          [ "$(ls dist/*.whl | wc -l)" -ge 1 ] && [ -f "dist/tipsy_ab_config-${version}.tar.gz" ] \
+            || { echo "::error::release $TAG lacks a wheel or sdist for $version"; exit 1; }
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          skip-existing: true
