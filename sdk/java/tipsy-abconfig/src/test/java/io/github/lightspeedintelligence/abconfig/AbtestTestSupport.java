@@ -67,6 +67,14 @@ final class AbtestTestSupport implements AutoCloseable {
          * called with that explicit value.
          */
         final Map<String, Boolean> hasDynamicResolution = new java.util.LinkedHashMap<>();
+        /**
+         * Keys whose proto {@code full_release_version} is SET to {@code 0}
+         * (field present, value 0) instead of left unset. {@link #key} with
+         * {@code fullReleaseVersion=0} leaves the field unset; this distinguishes
+         * the two wire shapes for the real-enrollment part-c §C6 "absent vs 0"
+         * pair.
+         */
+        final java.util.Set<String> explicitZeroFullRelease = new java.util.HashSet<>();
 
         NsCache(long businessSeq, long experimentSeq) {
             this.businessSeq = businessSeq;
@@ -98,6 +106,15 @@ final class AbtestTestSupport implements AutoCloseable {
         NsCache versionOnly(String key, long versionId, String value) {
             versions.computeIfAbsent(key, k -> new java.util.LinkedHashMap<>()).put(versionId, value);
             fullRelease.putIfAbsent(key, 0L);
+            return this;
+        }
+
+        /**
+         * Marks an already-added key's proto {@code full_release_version} as
+         * explicitly set to {@code 0} (see {@link #explicitZeroFullRelease}).
+         */
+        NsCache fullReleaseExplicitZero(String key) {
+            explicitZeroFullRelease.add(key);
             return this;
         }
     }
@@ -295,6 +312,8 @@ final class AbtestTestSupport implements AutoCloseable {
             long frv = nc.fullRelease.getOrDefault(key, 0L);
             if (frv != 0L) {
                 ks.setFullReleaseVersion(frv);
+            } else if (nc.explicitZeroFullRelease.contains(key)) {
+                ks.setFullReleaseVersion(0L);
             }
             // Presence-aware: only call the setter when the test explicitly set a
             // flag for this key; otherwise the proto field stays absent (the cache

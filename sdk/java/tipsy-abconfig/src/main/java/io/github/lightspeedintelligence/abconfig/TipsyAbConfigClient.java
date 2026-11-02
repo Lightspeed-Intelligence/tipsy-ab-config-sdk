@@ -522,7 +522,9 @@ public final class TipsyAbConfigClient implements AutoCloseable {
      *   <li>Full-release fallback: a key absent from the abtest map is the common
      *       "no experiment hit" case and resolves to the full-release version,
      *       NOT the default. The default is only returned when neither an abtest
-     *       hit nor a full-release version exists.</li>
+     *       hit nor a full-release version exists; that return still emits one
+     *       Info line {@code tipsyabconfig: get_config hit (default)} with
+     *       {@code reason=default} and a {@code default_cause}.</li>
      * </ul>
      *
      * <p>A single-ns abtest failure degrades silently (full-release fallback +
@@ -579,8 +581,79 @@ public final class TipsyAbConfigClient implements AutoCloseable {
                         resolvedNs, key, r.version, abctx.experimentHashId(), abctx.traceId());
                 return r.value;
             default:
+                // Nothing resolved: the caller's default is served. Same FIXED
+                // template family as the hit lines above, reason=default plus
+                // default_cause; never version / experiment_id / group_id /
+                // release_id, nor the default value itself.
+                LOG.info("tipsyabconfig: get_config hit (default) "
+                        + "reason=default, ns={}, key={}, default_cause={}, uid={}, trace_id={}",
+                        resolvedNs, key, defaultCause(ks, key, abresult, abctx.experimentHashId()),
+                        abctx.experimentHashId(), abctx.traceId());
                 return defaultValue;
         }
+    }
+
+    // default_cause values for the reason=default line, in the order
+    // defaultCause tests them (first match wins). Downstream real-enrollment
+    // counts only no_full_release: abtest was evaluated, the user's groups do
+    // not configure the key, and the key has no full release.
+    /** No snapshot for the ns yet, or the key is not in it. */
+    static final String DEFAULT_CAUSE_UNKNOWN_KEY = "unknown_key";
+    /** {@code has_dynamic_resolution} explicitly false: abtest was skipped. */
+    static final String DEFAULT_CAUSE_FAST_PATH = "fast_path";
+    /** experimentHashId is {@code ""} or {@code "0"}. */
+    static final String DEFAULT_CAUSE_NO_USER = "no_user";
+    /** The abtest result IS the {@link AbtestComputeResult#EMPTY_RESULT} sentinel. */
+    static final String DEFAULT_CAUSE_ABTEST_UNAVAILABLE = "abtest_unavailable";
+    /** Merged ab version not in the local cache, and no full release. */
+    static final String DEFAULT_CAUSE_AB_VERSION_MISSING = "ab_version_missing";
+    /** Key not in the merged result (or version 0), and no full release. */
+    static final String DEFAULT_CAUSE_NO_FULL_RELEASE = "no_full_release";
+    /** Full-release id set but its value is absent from the snapshot. */
+    static final String DEFAULT_CAUSE_FULL_RELEASE_VALUE_MISSING = "full_release_value_missing";
+
+    /**
+     * Classifies why {@link #getConfig} is returning the caller's default.
+     * Precondition: {@link #resolveKeyFromSnapshot} resolved nothing for
+     * {@code key}, so a non-zero ab version in {@code abresult} is necessarily
+     * missing from the snapshot, and a full-release version (if any) has no
+     * value there. Pure: reads only its arguments.
+     *
+     * <p>{@code ks} is the key's state in the captured snapshot ({@code null}
+     * when there is no snapshot or the key is absent). The fast path is decided
+     * from {@code hasDynamicResolution} itself (the same gate {@code getConfig}
+     * used to skip abtest), never from {@code abresult}: on the fast path
+     * {@code abresult} is the {@code EMPTY_RESULT} placeholder, the same object
+     * an RPC failure yields. "abtest evaluated" means {@code abresult} is neither
+     * {@code null} nor {@code EMPTY_RESULT}, compared by reference: a successful
+     * merge always allocates a fresh result, so an evaluated-but-empty result
+     * (the user only lands in empty-param groups) yields {@code no_full_release},
+     * never {@code abtest_unavailable}. "No full release" is
+     * {@code fullReleaseVersion == 0}.
+     */
+    static String defaultCause(
+            KeyState ks, String key, AbtestComputeResult abresult, String experimentHashId) {
+        if (ks == null) {
+            return DEFAULT_CAUSE_UNKNOWN_KEY;
+        }
+        if (Boolean.FALSE.equals(ks.hasDynamicResolution)) {
+            return DEFAULT_CAUSE_FAST_PATH;
+        }
+        if (AbtestContext.isNoUserExperimentHashId(experimentHashId)) {
+            return DEFAULT_CAUSE_NO_USER;
+        }
+        if (abresult == null || abresult == AbtestComputeResult.EMPTY_RESULT) {
+            return DEFAULT_CAUSE_ABTEST_UNAVAILABLE;
+        }
+        boolean noFullRelease = ks.fullReleaseVersion == 0L;
+        Long abVersion = abresult.keyVersions.get(key);
+        if (abVersion != null && abVersion != 0L && noFullRelease) {
+            return DEFAULT_CAUSE_AB_VERSION_MISSING;
+        }
+        if (noFullRelease) {
+            return DEFAULT_CAUSE_NO_FULL_RELEASE;
+        }
+        return DEFAULT_CAUSE_FULL_RELEASE_VALUE_MISSING;
     }
 
     /**

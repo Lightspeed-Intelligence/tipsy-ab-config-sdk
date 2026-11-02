@@ -22,8 +22,10 @@ package tipsyabconfig
 // transposition; do NOT use this helper to construct conflict expectations.
 
 import (
+	"bytes"
 	"context"
 	"log/slog"
+	"strings"
 	"sync"
 	"testing"
 
@@ -53,12 +55,16 @@ func perGroupResponse(kv map[string]int64) *abtestv1.GetExperimentResultResponse
 	}
 }
 
-// capturedRecord is one slog record captured by logRecorder: message, level and
-// a flat attr map (Value.Any() per key).
+// capturedRecord is one slog record captured by logRecorder: message, level, a
+// flat attr map (Value.Any() per key) and the record rendered as one
+// slog.TextHandler line without the time attr. text is the byte-exact form the
+// SLS ingestion parses (part-c §C4 parses only Go's format), so asserting on it
+// pins message, attr ORDER and values at once — the map loses the order.
 type capturedRecord struct {
 	level slog.Level
 	msg   string
 	attrs map[string]any
+	text  string
 }
 
 // logRecorder is a minimal slog.Handler that records every log line the Client
@@ -75,15 +81,29 @@ type logRecorder struct {
 
 func (r *logRecorder) Enabled(context.Context, slog.Level) bool { return true }
 
-func (r *logRecorder) Handle(_ context.Context, rec slog.Record) error {
+func (r *logRecorder) Handle(ctx context.Context, rec slog.Record) error {
 	attrs := make(map[string]any, rec.NumAttrs())
 	rec.Attrs(func(a slog.Attr) bool {
 		attrs[a.Key] = a.Value.Any()
 		return true
 	})
+	var buf bytes.Buffer
+	th := slog.NewTextHandler(&buf, &slog.HandlerOptions{
+		Level: slog.LevelDebug,
+		ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
+			if len(groups) == 0 && a.Key == slog.TimeKey {
+				return slog.Attr{}
+			}
+			return a
+		},
+	})
+	if err := th.Handle(ctx, rec); err != nil {
+		return err
+	}
+	text := strings.TrimSuffix(buf.String(), "\n")
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.recs = append(r.recs, capturedRecord{level: rec.Level, msg: rec.Message, attrs: attrs})
+	r.recs = append(r.recs, capturedRecord{level: rec.Level, msg: rec.Message, attrs: attrs, text: text})
 	return nil
 }
 
@@ -110,20 +130,30 @@ func recordingConfig(h *testHarness, namespaces []string) (Config, *logRecorder)
 }
 
 const (
-	hitMsgAbtest = "tipsyabconfig: get_config hit (abtest)"
-	hitMsgFull   = "tipsyabconfig: get_config hit (full)"
+	hitMsgAbtest  = "tipsyabconfig: get_config hit (abtest)"
+	hitMsgFull    = "tipsyabconfig: get_config hit (full)"
+	hitMsgDefault = "tipsyabconfig: get_config hit (default)"
 )
 
-// findConfigHit returns THE single get_config hit record (full or abtest
-// variant) whose "key" attr equals key. Zero or multiple matches fatal: zero
-// means the observation point is dead (a silently-mis-scoped recorder must not
-// let the omit-assertions below pass trivially), multiple means the fixture is
-// ambiguous.
+// isConfigHitMsg reports whether msg is any of the three get_config hit
+// variants (abtest / full / default, part-c §C1).
+func isConfigHitMsg(msg string) bool {
+	return msg == hitMsgAbtest || msg == hitMsgFull || msg == hitMsgDefault
+}
+
+// findConfigHit returns THE single get_config hit record — of ANY variant,
+// abtest / full / default — whose "key" attr equals key. Zero or multiple
+// matches fatal: zero means the observation point is dead (a
+// silently-mis-scoped recorder must not let the omit-assertions below pass
+// trivially), multiple means the fixture is ambiguous or the SDK emitted an
+// extra line. Counting the default variant too is deliberate: a value hit that
+// ALSO emitted a `(default)` line is a regression the existing-reason tests must
+// catch (part-c §C1: the default line is only for "no value resolved").
 func findConfigHit(t *testing.T, r *logRecorder, key string) capturedRecord {
 	t.Helper()
 	var out []capturedRecord
 	for _, rec := range r.all() {
-		if (rec.msg == hitMsgAbtest || rec.msg == hitMsgFull) && rec.attrs["key"] == key {
+		if isConfigHitMsg(rec.msg) && rec.attrs["key"] == key {
 			out = append(out, rec)
 		}
 	}
@@ -131,6 +161,27 @@ func findConfigHit(t *testing.T, r *logRecorder, key string) capturedRecord {
 		t.Fatalf("expected exactly 1 get_config hit record for key %q, got %d (records=%+v)", key, len(out), r.all())
 	}
 	return out[0]
+}
+
+// countConfigHits returns how many get_config hit records (any variant) the
+// recorder holds, regardless of key.
+func countConfigHits(r *logRecorder) int {
+	n := 0
+	for _, rec := range r.all() {
+		if isConfigHitMsg(rec.msg) {
+			n++
+		}
+	}
+	return n
+}
+
+// requireText asserts the record's rendered slog text line (time dropped) is
+// byte-identical to want: message, attr order and values together.
+func requireText(t *testing.T, rec capturedRecord, want string) {
+	t.Helper()
+	if rec.text != want {
+		t.Fatalf("rendered line mismatch\n got: %s\nwant: %s", rec.text, want)
+	}
 }
 
 // findRecordByMsg returns all captured records with the given message.

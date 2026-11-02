@@ -47,7 +47,9 @@ func (c *Client) GetConfigStatic(ns, key, defaultValue string) (string, bool) {
 // full-release fallback. A key absent from the map is the common
 // "no experiment hit" case and resolves to the full-release version, NOT the
 // default. The default is only returned when neither an abtest hit nor a
-// full-release version exists.
+// full-release version exists; that return still emits one Info hit line
+// (reason=default + default_cause, see defaultCauseFor) and stays
+// (defaultValue, nil).
 func (c *Client) GetConfig(ctx context.Context, abctx *AbtestContext, ns, key, defaultValue string) (string, error) {
 	return c.getConfigResolved(ctx, abctx, ns, key, defaultValue)
 }
@@ -98,13 +100,22 @@ func (c *Client) getConfigResolved(ctx context.Context, abctx *AbtestContext, ns
 
 	res := c.resolveKeyFromSnapshot(snap, resolvedNs, key, abresult, abctx.traceID)
 	if res.source == keySourceNone {
+		// Default hit log (SLS contract): nothing resolved, so the caller's
+		// default is served. Same msg family as the hit lines below with
+		// reason=default plus default_cause; it never carries version /
+		// experiment_id / group_id / release_id, nor the default value itself.
+		c.logger.Info("tipsyabconfig: get_config hit (default)",
+			"ns", resolvedNs, "key", key, "reason", reasonDefault,
+			"default_cause", defaultCauseFor(snap, key, abresult, abctx.experimentHashID),
+			"uid", abctx.experimentHashID, "trace_id", abctx.traceID)
 		return defaultValue, nil
 	}
 	// Hit log (SLS contract, design §4): msg text unchanged; `reason` is always
-	// present (4-value enum); experiment_id/group_id/release_id are conditional
-	// fields with omit semantics — when absent the key is not emitted at all
-	// (never an empty-string placeholder). Downstream picks the conditional
-	// fields to read based on reason.
+	// present (one of the four resolved-value reasons here; the fifth,
+	// reason=default, is emitted by the default branch above); experiment_id/
+	// group_id/release_id are conditional fields with omit semantics — when
+	// absent the key is not emitted at all (never an empty-string placeholder).
+	// Downstream picks the conditional fields to read based on reason.
 	msg := "tipsyabconfig: get_config hit (full)"
 	reason := reasonFullRelease
 	if res.source == keySourceAbtest {
@@ -131,7 +142,7 @@ func (c *Client) getConfigResolved(ctx context.Context, abctx *AbtestContext, ns
 }
 
 // reason enum for the getConfig hit log (SLS contract, design §4). Complete —
-// exactly these four values are ever emitted:
+// exactly these five values are ever emitted:
 //
 //   - full_release: value came from the full-release branch (incl. the
 //     fast-path and the ab→full fallback — the served value really is the
@@ -143,6 +154,9 @@ func (c *Client) getConfigResolved(ctx context.Context, abctx *AbtestContext, ns
 //   - abtest_unattributed: abtest hit whose attribution is unknown (empty-id
 //     group, release_id=0, MockAbtestContext seed) — value valid, attribution
 //     missing.
+//   - default: nothing resolved and the caller's default was returned
+//     ("get_config hit (default)"); the line carries default_cause and has no
+//     version.
 //
 // The contract covers dynamic GetConfig / GetConfigDefault only;
 // GetConfigStatic keeps its unchanged source=full_static line with no reason.
@@ -151,7 +165,62 @@ const (
 	reasonExperiment         = "experiment"
 	reasonGrayWhitelist      = "gray_whitelist"
 	reasonAbtestUnattributed = "abtest_unattributed"
+	reasonDefault            = "default"
 )
+
+// default_cause enum for the reason=default line. defaultCauseFor tests the
+// rows in this order and returns the first match; downstream real-enrollment
+// counts only no_full_release (abtest was evaluated, the user's groups do not
+// configure the key, and the key has no full release).
+const (
+	defaultCauseUnknownKey              = "unknown_key"                // no snapshot for the ns, or key not in it
+	defaultCauseFastPath                = "fast_path"                  // has_dynamic_resolution=false, abtest skipped
+	defaultCauseNoUser                  = "no_user"                    // experimentHashID "" or "0"
+	defaultCauseAbtestUnavailable       = "abtest_unavailable"         // abtest result is the degraded sentinel
+	defaultCauseAbVersionMissing        = "ab_version_missing"         // ab version not in local cache, no full release
+	defaultCauseNoFullRelease           = "no_full_release"            // key not in merged result (or version 0), no full release
+	defaultCauseFullReleaseValueMissing = "full_release_value_missing" // full release id set but its value is absent
+)
+
+// defaultCauseFor classifies why GetConfig is returning the caller's default.
+// Precondition: resolveKeyFromSnapshot(snap, ..., key, abresult, ...) resolved
+// no value, so a non-zero ab version in abresult is necessarily missing from
+// snap, and a full-release version (if any) has no value in snap. Pure: reads
+// only its arguments.
+//
+// The fast path is decided from has_dynamic_resolution itself (the same gate
+// GetConfig used to skip abtest), never from abresult — abresult is nil there.
+// "abtest evaluated" means abresult is neither nil nor emptyAbtestResult,
+// compared by pointer identity: a successful merge always allocates a fresh
+// result (mergeEachExperimentGroupResult), so an evaluated-but-empty result
+// (the user only lands in empty-param groups) yields no_full_release, never
+// abtest_unavailable. "No full release" is FullReleaseVersion == 0.
+func defaultCauseFor(snap *NamespaceSnapshot, key string, abresult *abtestComputeResult, experimentHashID string) string {
+	var ks KeyState
+	known := false
+	if snap != nil {
+		ks, known = snap.Keys[key]
+	}
+	switch {
+	case !known:
+		return defaultCauseUnknownKey
+	case keyIsStaticInSnapshot(snap, key):
+		return defaultCauseFastPath
+	case isNoUserExperimentHashID(experimentHashID):
+		return defaultCauseNoUser
+	case abresult == nil || abresult == emptyAbtestResult:
+		return defaultCauseAbtestUnavailable
+	}
+	noFullRelease := ks.FullReleaseVersion == 0
+	switch {
+	case abresult.keyVersions[key] != 0 && noFullRelease:
+		return defaultCauseAbVersionMissing
+	case noFullRelease:
+		return defaultCauseNoFullRelease
+	default:
+		return defaultCauseFullReleaseValueMissing
+	}
+}
 
 // keySource records where resolveKeyFromSnapshot found a key's value.
 type keySource uint8

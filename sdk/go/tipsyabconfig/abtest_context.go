@@ -137,6 +137,11 @@ func (r *abtestComputeResult) attributionFor(key string) keyAttribution {
 
 // emptyAbtestResult is the sentinel "no abtest hits" result. We never close
 // over it; callers must construct fresh AbtestContext instances per request.
+//
+// Its pointer identity is load-bearing: the reason=default hit log reports
+// default_cause=abtest_unavailable exactly when the result IS this pointer
+// (defaultCauseFor). Only degraded / identity-less paths may return it; a
+// successful merge must always allocate a fresh result, even an empty one.
 var emptyAbtestResult = &abtestComputeResult{keyVersions: map[string]int64{}}
 
 // NewAbtestContext creates a fresh per-request AbtestContext. Construction is

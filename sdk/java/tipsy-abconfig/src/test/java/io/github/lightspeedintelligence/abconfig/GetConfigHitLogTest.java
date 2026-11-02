@@ -23,13 +23,19 @@ import org.slf4j.LoggerFactory;
 /**
  * getConfig hit-log assertions (design "actual-enrollment-log" §4, SLS parsing
  * contract F7): every dynamic getConfig hit logs at INFO with a structured
- * {@code reason} (4-value enum: full_release / experiment / gray_whitelist /
+ * {@code reason} (value-hit reasons: full_release / experiment / gray_whitelist /
  * abtest_unattributed); conditional fields ({@code experiment_id},
  * {@code group_id}, {@code release_id}) are OMITTED (key absent from the line)
  * when not applicable. Java uses one FIXED kv text template per reason, so the
  * whole formatted line is asserted with FULL equality — substring containment
  * is banned here because the line embeds several ids and containment would let
  * "renders the version" and "renders the reason" pass on each other's content.
+ *
+ * <p>The fifth reason {@code default} (real-enrollment part-c §C1, the
+ * {@code get_config hit (default)} line) is tested in {@link DefaultHitLogTest}.
+ * Adding it must leave every template here byte-identical (part-c §C6); the
+ * hit-line filter ({@link HitLogLines#HIT_PREFIX}) counts the default variant
+ * too, so a value hit that also emitted a default line fails these tests.
  *
  * <p><b>Run {@link #smokeListAppenderCapturesHitLine} first</b> (design §4
  * implementation-order note). It is the injected-degradation check for this
@@ -58,7 +64,15 @@ final class GetConfigHitLogTest {
     // Log capture helper.
     // ------------------------------------------------------------------
 
-    /** Attaches a ListAppender to the client's logger for one test's scope. */
+    /**
+     * Attaches a ListAppender to the client's logger for one test's scope.
+     *
+     * <p>Create it BEFORE {@code AbtestTestSupport.build()} (first resource in
+     * the try header). Attaching after the client exists races its background
+     * threads' logging against logback's copy-on-write appender-list refresh,
+     * and an event logged in that window can miss the new appender (review
+     * NB-ST5-r2-2).
+     */
     private static final class LogCapture implements AutoCloseable {
         final Logger logger =
                 (Logger) LoggerFactory.getLogger(TipsyAbConfigClient.class);
@@ -94,13 +108,16 @@ final class GetConfigHitLogTest {
         }
 
         /**
-         * The single "get_config hit" line mentioning {@code key=<key>,}. The
-         * trailing comma keeps key=color from matching key=color_2.
+         * The single get_config hit line — of ANY variant (abtest / full /
+         * default) — whose PARSED {@code key} field equals {@code key}. Parsing
+         * replaces the old {@code contains("key=" + key + ",")} substring filter:
+         * the default template's field order is not pinned, so a trailing-comma
+         * substring could miss a default line for the key.
          */
         ILoggingEvent singleHitLineForKey(String key) {
             List<ILoggingEvent> hits = snapshot().stream()
-                    .filter(e -> e.getFormattedMessage().startsWith("tipsyabconfig: get_config hit"))
-                    .filter(e -> e.getFormattedMessage().contains("key=" + key + ","))
+                    .filter(e -> HitLogLines.variant(e.getFormattedMessage()) != null)
+                    .filter(e -> key.equals(HitLogLines.fields(e.getFormattedMessage()).get("key")))
                     .collect(Collectors.toList());
             assertEquals(1, hits.size(),
                     "expected exactly one hit line for key=" + key + ", got: " + hits);
@@ -130,12 +147,12 @@ final class GetConfigHitLogTest {
     @Test
     @DisplayName("SMOKE: the ListAppender attached to the client logger captures a get_config hit line")
     void smokeListAppenderCapturesHitLine() {
-        try (AbtestTestSupport h = AbtestTestSupport.newBuilder()
+        try (LogCapture cap = new LogCapture();
+             AbtestTestSupport h = AbtestTestSupport.newBuilder()
                 .namespaces(NS)
                 .snapshot(NS, new NsCache(2, 2).key("color", 7L, Map.of(7L, "blue")))
                 .abtestConfigFlatKv(NS, Map.of())
-                .build();
-             LogCapture cap = new LogCapture()) {
+                .build()) {
 
             AbtestContext ctx = h.client.newAbtestContext("u-smoke", Map.of());
             assertEquals("blue", h.client.getConfig(ctx, NS, "color", "DEF"));
@@ -162,11 +179,11 @@ final class GetConfigHitLogTest {
         GetExperimentResultResponse resp = GetExperimentResultResponse.newBuilder()
                 .addGroups(group("exp-1", "grp-1", Map.of("color", 9L)))
                 .build();
-        try (AbtestTestSupport h = AbtestTestSupport.newBuilder()
+        try (LogCapture cap = new LogCapture();
+             AbtestTestSupport h = AbtestTestSupport.newBuilder()
                 .namespaces(NS)
                 .snapshot(NS, new NsCache(2, 2).key("color", 7L, Map.of(7L, "blue", 9L, "gold")))
-                .build();
-             LogCapture cap = new LogCapture()) {
+                .build()) {
             h.abtest.setFullResponse(NS, resp);
 
             AbtestContext ctx = h.client.newAbtestContext("u-1", Map.of(), "tr-exp");
@@ -198,11 +215,11 @@ final class GetConfigHitLogTest {
                         .setReleaseId(41L)
                         .putKeyVersions("color", 7L))
                 .build();
-        try (AbtestTestSupport h = AbtestTestSupport.newBuilder()
+        try (LogCapture cap = new LogCapture();
+             AbtestTestSupport h = AbtestTestSupport.newBuilder()
                 .namespaces(NS)
                 .snapshot(NS, new NsCache(2, 2).key("color", 3L, Map.of(3L, "full", 7L, "grayval")))
-                .build();
-             LogCapture cap = new LogCapture()) {
+                .build()) {
             h.abtest.setFullResponse(NS, resp);
 
             AbtestContext ctx = h.client.newAbtestContext("u-1", Map.of(), "tr-gray");
@@ -237,13 +254,13 @@ final class GetConfigHitLogTest {
                 .addGroups(group("", "", Map.of("color", 9L)))
                 .addGroups(group("exp-1", "grp-1", Map.of("banner", 12L)))
                 .build();
-        try (AbtestTestSupport h = AbtestTestSupport.newBuilder()
+        try (LogCapture cap = new LogCapture();
+             AbtestTestSupport h = AbtestTestSupport.newBuilder()
                 .namespaces(NS)
                 .snapshot(NS, new NsCache(2, 2)
                         .key("color", 7L, Map.of(7L, "blue", 9L, "gold"))
                         .key("banner", 5L, Map.of(5L, "bfull", 12L, "bexp")))
-                .build();
-             LogCapture cap = new LogCapture()) {
+                .build()) {
             h.abtest.setFullResponse(NS, resp);
 
             AbtestContext ctx = h.client.newAbtestContext("u-1", Map.of(), "tr-unattr");
@@ -268,11 +285,11 @@ final class GetConfigHitLogTest {
         // attribution, so reason=abtest_unattributed here holds whether or not
         // the merge writes attribution correctly. This case proves only the
         // unattributed FALLBACK; it must not be counted as attribution coverage.
-        try (AbtestTestSupport h = AbtestTestSupport.newBuilder()
+        try (LogCapture cap = new LogCapture();
+             AbtestTestSupport h = AbtestTestSupport.newBuilder()
                 .namespaces(NS)
                 .snapshot(NS, new NsCache(2, 2).key("color", 7L, Map.of(7L, "blue", 9L, "gold")))
-                .build();
-             LogCapture cap = new LogCapture()) {
+                .build()) {
 
             AbtestContext ctx = h.client.mockAbtestContext("u-1", Map.of(NS, Map.of("color", 9L)));
             assertEquals("gold", h.client.getConfig(ctx, NS, "color", "DEF"));
@@ -293,12 +310,12 @@ final class GetConfigHitLogTest {
     @Test
     @DisplayName("reason=full_release: fixed template line, no conditional fields")
     void fullReleaseReasonTemplate() {
-        try (AbtestTestSupport h = AbtestTestSupport.newBuilder()
+        try (LogCapture cap = new LogCapture();
+             AbtestTestSupport h = AbtestTestSupport.newBuilder()
                 .namespaces(NS)
                 .snapshot(NS, new NsCache(2, 2).key("color", 7L, Map.of(7L, "blue")))
                 .abtestConfigFlatKv(NS, Map.of()) // no ab hits
-                .build();
-             LogCapture cap = new LogCapture()) {
+                .build()) {
 
             AbtestContext ctx = h.client.newAbtestContext("u-1", Map.of(), "tr-full");
             assertEquals("blue", h.client.getConfig(ctx, NS, "color", "DEF"));
@@ -317,12 +334,12 @@ final class GetConfigHitLogTest {
         NsCache cache = new NsCache(2, 2)
                 .key("color", 7L, Map.of(7L, "blue"))
                 .hasDynamicResolution("color", Boolean.FALSE);
-        try (AbtestTestSupport h = AbtestTestSupport.newBuilder()
+        try (LogCapture cap = new LogCapture();
+             AbtestTestSupport h = AbtestTestSupport.newBuilder()
                 .namespaces(NS)
                 .snapshot(NS, cache)
                 .abtestConfigFlatKv(NS, Map.of("color", 9L)) // would steer if (wrongly) asked
-                .build();
-             LogCapture cap = new LogCapture()) {
+                .build()) {
 
             // FRESH ctx and ONLY the fast-path key queried on this link (see the
             // file-header convention): a reused ctx with a prior dynamic query
@@ -340,12 +357,12 @@ final class GetConfigHitLogTest {
     @Test
     @DisplayName("ab->full fallback (ab version not cached): WARN keeps trace_id; hit line is reason=full_release")
     void abToFullFallbackLogsFullReleaseAndWarn() {
-        try (AbtestTestSupport h = AbtestTestSupport.newBuilder()
+        try (LogCapture cap = new LogCapture();
+             AbtestTestSupport h = AbtestTestSupport.newBuilder()
                 .namespaces(NS)
                 .snapshot(NS, new NsCache(2, 2).key("color", 7L, Map.of(7L, "blue")))
                 .abtestConfigFlatKv(NS, Map.of("color", 99L)) // steers to an uncached version
-                .build();
-             LogCapture cap = new LogCapture()) {
+                .build()) {
 
             AbtestContext ctx = h.client.newAbtestContext("u-1", Map.of(), "tr-fb");
             assertEquals("blue", h.client.getConfig(ctx, NS, "color", "DEF"));
@@ -370,12 +387,12 @@ final class GetConfigHitLogTest {
     @Test
     @DisplayName("RPC failure degrade: hit line is reason=full_release (value from the full release)")
     void rpcFailureDegradeLogsFullRelease() {
-        try (AbtestTestSupport h = AbtestTestSupport.newBuilder()
+        try (LogCapture cap = new LogCapture();
+             AbtestTestSupport h = AbtestTestSupport.newBuilder()
                 .namespaces(NS)
                 .snapshot(NS, new NsCache(2, 2).key("color", 7L, Map.of(7L, "blue", 9L, "gold")))
                 .abtestConfigFlatKv(NS, Map.of("color", 9L))
-                .build();
-             LogCapture cap = new LogCapture()) {
+                .build()) {
             h.abtest.failFor(NS);
 
             AbtestContext ctx = h.client.newAbtestContext("u-1", Map.of(), "tr-deg");
@@ -398,11 +415,11 @@ final class GetConfigHitLogTest {
         // dynamic getConfig/getConfigDefault. Downstream identifies enrollment
         // events by the PRESENCE of the reason field, so the static line must
         // keep not having one.
-        try (AbtestTestSupport h = AbtestTestSupport.newBuilder()
+        try (LogCapture cap = new LogCapture();
+             AbtestTestSupport h = AbtestTestSupport.newBuilder()
                 .namespaces(NS)
                 .snapshot(NS, new NsCache(2, 2).key("color", 7L, Map.of(7L, "blue")))
-                .build();
-             LogCapture cap = new LogCapture()) {
+                .build()) {
 
             assertEquals(java.util.Optional.of("blue"), h.client.getConfigStatic(NS, "color"));
 

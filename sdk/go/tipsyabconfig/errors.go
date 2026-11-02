@@ -18,8 +18,6 @@
 //   - HTTP middleware adapter for any net/http compatible router; a thin
 //     adapter is provided for gin-style frameworks via the AdaptHTTPRequest
 //     helper.
-//   - Async fire-and-forget exposure emission with a 5-minute per-process
-//     dedup window keyed on (uid, key, version) per design §9.2.
 //
 // All gRPC traffic is JWT-authenticated via a Bearer token (or token-provider
 // callback) attached as a grpc.PerRPCCredentials. The SDK never imports any
