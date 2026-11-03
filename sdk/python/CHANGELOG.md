@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.17.0] - 2026-10-31
+## [0.17.0] - 2026-11-03
 
 ### Added
 - **返回默认值时也打命中日志**。`get_config` / `get_config_default`（以及基于它们的
