@@ -61,9 +61,10 @@ from .abtest_context import (
     _KeyAttribution,
     _UNATTRIBUTED,
     _ensure_ctx,
+    _is_no_user_experiment_hash_id,
     abtest_ctx_var,
 )
-from .cache import ConfigCache, NamespaceSnapshot
+from .cache import ConfigCache, KeyState, NamespaceSnapshot
 from .exceptions import (
     NamespaceNotSubscribed,
     NamespaceRequired,
@@ -95,12 +96,38 @@ logger = logging.getLogger("tipsy_ab_config")
 
 
 # ``reason`` enum on the get_config hit log (design §4, SLS contract). The
-# enum is complete with exactly these 4 values; downstream parsers treat a
-# line carrying ``reason`` as an enrollment event.
+# enum is complete with exactly these 5 values: the first four come with a
+# resolved value (``get_config hit (abtest)`` / ``(full)``); ``default`` is
+# the ``get_config hit (default)`` line emitted when nothing resolved and the
+# caller's default was returned (it carries ``default_cause`` and no
+# ``version``).
 _REASON_FULL_RELEASE = "full_release"
 _REASON_EXPERIMENT = "experiment"
 _REASON_GRAY_WHITELIST = "gray_whitelist"
 _REASON_ABTEST_UNATTRIBUTED = "abtest_unattributed"
+_REASON_DEFAULT = "default"
+
+# ``default_cause`` enum on the reason=default line. :func:`_default_cause`
+# tests these in this order and returns the first match; downstream
+# real-enrollment counts only ``no_full_release`` (abtest was evaluated, the
+# user's groups do not configure the key, and the key has no full release):
+#
+# - unknown_key: no snapshot for the ns yet, or the key is not in it;
+# - fast_path: ``has_dynamic_resolution`` explicitly False, abtest skipped;
+# - no_user: ``experiment_hash_id`` is ``""`` or ``"0"``;
+# - abtest_unavailable: the abtest result IS the ``_EMPTY_RESULT`` sentinel;
+# - ab_version_missing: merged ab version not in the local cache, no full
+#   release;
+# - no_full_release: key not in the merged result (or version 0), no full
+#   release;
+# - full_release_value_missing: full-release id set but its value is absent.
+_DEFAULT_CAUSE_UNKNOWN_KEY = "unknown_key"
+_DEFAULT_CAUSE_FAST_PATH = "fast_path"
+_DEFAULT_CAUSE_NO_USER = "no_user"
+_DEFAULT_CAUSE_ABTEST_UNAVAILABLE = "abtest_unavailable"
+_DEFAULT_CAUSE_AB_VERSION_MISSING = "ab_version_missing"
+_DEFAULT_CAUSE_NO_FULL_RELEASE = "no_full_release"
+_DEFAULT_CAUSE_FULL_RELEASE_VALUE_MISSING = "full_release_value_missing"
 
 # ``source`` values on _KeyResolution: which resolution branch produced the
 # value ("" when absent).
@@ -486,6 +513,58 @@ def _has_dynamic_resolution_in_snapshot(
     return (ks.has_dynamic_resolution, True)
 
 
+def _has_full_release(ks: KeyState) -> bool:
+    """Whether ``ks`` has a full-release version on the dynamic path.
+
+    A missing id (``None``) and id ``0`` both mean "no full release", matching
+    the Go / Java ``FullReleaseVersion == 0`` sentinel. Used by both
+    :meth:`Client._resolve_key_from_snapshot` and :func:`_default_cause` so the
+    two agree on that boundary. (``ConfigCache.full_release_version`` /
+    ``get_config_static`` keep their ``is None`` gate.)
+    """
+    return ks.full_release_version is not None and ks.full_release_version != 0
+
+
+def _default_cause(
+    snap: Optional[NamespaceSnapshot],
+    key: str,
+    abresult: Optional[_ComputeResult],
+    experiment_hash_id: str,
+) -> str:
+    """Classify why :meth:`Client.get_config` is returning the caller's default.
+
+    Precondition: :meth:`Client._resolve_key_from_snapshot` resolved nothing
+    against ``snap`` — so a non-zero ab version in ``abresult`` is necessarily
+    missing from the snapshot, and a full-release version (if any) has no value
+    there. Pure: reads only its arguments. Rows are tested in the
+    ``_DEFAULT_CAUSE_*`` order and the first match wins.
+
+    The fast path is decided from ``has_dynamic_resolution`` itself (the same
+    gate ``get_config`` used to skip abtest), never from ``abresult`` — it is
+    ``None`` there. "abtest evaluated" means ``abresult`` is neither ``None``
+    nor ``_EMPTY_RESULT``, compared with ``is``: ``==`` would make a
+    successful-but-empty merge (the user only lands in empty-param groups) equal
+    the sentinel and misreport it as ``abtest_unavailable``.
+    """
+    ks = snap.keys.get(key) if snap is not None else None
+    if ks is None:
+        return _DEFAULT_CAUSE_UNKNOWN_KEY
+    hdr_value, hdr_present = _has_dynamic_resolution_in_snapshot(snap, key)
+    if hdr_present and hdr_value is False:
+        return _DEFAULT_CAUSE_FAST_PATH
+    if _is_no_user_experiment_hash_id(experiment_hash_id):
+        return _DEFAULT_CAUSE_NO_USER
+    if abresult is None or abresult is _EMPTY_RESULT:
+        return _DEFAULT_CAUSE_ABTEST_UNAVAILABLE
+    no_full_release = not _has_full_release(ks)
+    ab_version = abresult.key_versions.get(key)
+    if ab_version is not None and ab_version != 0 and no_full_release:
+        return _DEFAULT_CAUSE_AB_VERSION_MISSING
+    if no_full_release:
+        return _DEFAULT_CAUSE_NO_FULL_RELEASE
+    return _DEFAULT_CAUSE_FULL_RELEASE_VALUE_MISSING
+
+
 class Client:
     """Tipsy AB-config Python SDK handle.
 
@@ -666,7 +745,9 @@ class Client:
         SDK ALWAYS preserves the full-release fallback. A key absent from the
         map is the common "no experiment hit" case and resolves to the
         full-release version, NOT the default. The default is only returned
-        when neither an abtest hit nor a full-release version exists.
+        when neither an abtest hit nor a full-release version exists; that
+        return still emits one ``get_config hit (default)`` Info line
+        (``reason=default`` + ``default_cause``).
         """
         if self._closed:
             raise SDKClosed("client closed")
@@ -707,11 +788,43 @@ class Client:
             snap, key, abresult, resolved_ns, ctx.trace_id
         )
         if not res.present:
+            self._log_get_config_default(snap, key, abresult, resolved_ns, ctx)
             return default
         # Hit Info log lives HERE on the single-key path only (design §6):
         # get_all_configs shares the resolver but never logs per-key hits.
         self._log_get_config_hit(res, resolved_ns, key, ctx)
         return res.value
+
+    def _log_get_config_default(
+        self,
+        snap: Optional[NamespaceSnapshot],
+        key: str,
+        abresult: Optional[_ComputeResult],
+        resolved_ns: str,
+        ctx: AbtestContext,
+    ) -> None:
+        """Emit the ``get_config hit (default)`` Info log (SLS contract).
+
+        Called ONLY from :meth:`get_config` when nothing resolved and the
+        caller's default is returned. Same field layout as
+        :meth:`_log_get_config_hit` minus ``version``, with ``reason=default``
+        plus ``default_cause`` (:func:`_default_cause`). It never carries
+        ``version`` / ``experiment_id`` / ``group_id`` / ``release_id``, nor the
+        default value itself.
+        """
+        logger.info(
+            "get_config hit (default)",
+            extra={
+                "ns": resolved_ns,
+                "key": key,
+                "uid": ctx.experiment_hash_id,
+                "trace_id": ctx.trace_id,
+                "reason": _REASON_DEFAULT,
+                "default_cause": _default_cause(
+                    snap, key, abresult, ctx.experiment_hash_id
+                ),
+            },
+        )
 
     def _log_get_config_hit(
         self,
@@ -727,10 +840,12 @@ class Client:
         per-key hit logs (its aggregate Debug log is unchanged).
 
         SLS contract (design §4): msg text unchanged (``get_config hit
-        (abtest)`` / ``(full)``); every line carries the constant fields
-        ``reason`` / ``uid`` / ``trace_id`` / ``ns`` / ``key`` / ``version``;
-        ``experiment_id`` / ``group_id`` / ``release_id`` are conditional on
-        ``reason`` with omit semantics (an absent field's key is not emitted).
+        (abtest)`` / ``(full)``); every line from this method carries the
+        constant fields ``reason`` / ``uid`` / ``trace_id`` / ``ns`` / ``key`` /
+        ``version``; ``experiment_id`` / ``group_id`` / ``release_id`` are
+        conditional on ``reason`` with omit semantics (an absent field's key is
+        not emitted). The default-value line (``reason=default``, no
+        ``version``) is :meth:`_log_get_config_default`.
         """
         extra: Dict[str, Any] = {
             "ns": resolved_ns,
@@ -815,7 +930,8 @@ class Client:
             )
 
         # Full-release fallback (M6): key not in the merged map, or ab→full.
-        if ks is not None and ks.full_release_version is not None:
+        # A full-release id of 0 counts as absent (_has_full_release).
+        if ks is not None and _has_full_release(ks):
             value = ks.versions.get(ks.full_release_version)
             if value is not None:
                 return _KeyResolution(

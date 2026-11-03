@@ -20,8 +20,9 @@ final class AbtestComputeResult {
     /**
      * Why a key ended up in {@link #keyVersions}: which source produced the
      * winning versionId. Package-private; surfaces in the hit log only as the
-     * structured {@code reason} field (experiment / gray_whitelist /
-     * abtest_unattributed).
+     * structured {@code reason} field of an abtest hit (experiment /
+     * gray_whitelist / abtest_unattributed). The other two reasons,
+     * full_release and default, never read an attribution.
      */
     static final class Attribution {
 
@@ -66,6 +67,16 @@ final class AbtestComputeResult {
      * The shared sentinel "no abtest hits" result. It is reused freely because
      * it is immutable and holds an empty map; callers must construct fresh
      * {@link AbtestContext} instances per request rather than sharing this.
+     *
+     * <p>Its reference identity is load-bearing: the reason=default hit log
+     * reports {@code default_cause=abtest_unavailable} exactly when the result
+     * IS this instance ({@code TipsyAbConfigClient.defaultCause}, compared with
+     * {@code ==}). Only degraded / identity-less paths may return it — RPC
+     * failure, no abtest transport, empty/mock context for an unseeded ns, no-user
+     * id, interrupt — plus the {@code getConfig} fast-path placeholder, which
+     * {@code defaultCause} tells apart via {@code hasDynamicResolution}. A
+     * successful merge ({@code AbtestContext.mergeEachExperimentGroupResponse})
+     * must always allocate a fresh result, even an empty one.
      */
     static final AbtestComputeResult EMPTY_RESULT =
             new AbtestComputeResult(Collections.emptyMap());

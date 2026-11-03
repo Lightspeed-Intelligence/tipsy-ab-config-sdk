@@ -1,0 +1,90 @@
+# Shared default_cause scenario list (cross-language alignment).
+#
+# Source: platform task real-enrollment-dashboard, design part-c §C1 (the
+# 7-row default_cause table) and §C6 (the four error-prone scenarios). Go,
+# Python and Java unit tests ALL load this file and run EVERY row, asserting
+# the same `expect` value on the emitted `get_config hit (default)` line:
+#
+#   Go     sdk/go/tipsyabconfig/default_hit_log_test.go      TestDefaultHitLog_SharedScenarios/<id>
+#   Python sdk/python/tests/test_default_hit_log.py          test_default_hit_log_shared_scenario[<id>]
+#   Java   sdk/java/tipsy-abconfig/src/test/java/.../DefaultHitLogTest.java   sharedScenarios() -> dynamic test <id>
+#
+# Every runner turns each row into its own named test with no skip path, and
+# fails the load on an unknown column value, so a row cannot be silently
+# dropped or mis-built by one language. Each language also has a shape test
+# requiring all 7 causes and the §C6 ids below. Add a row here and all three
+# languages pick it up; never copy rows into a language-local table.
+#
+# Format: one scenario per line, whitespace-separated columns, no spaces inside
+# a value. Lines starting with '#' and blank lines are ignored.
+#
+#   id        unique scenario id (also the subtest / parameter id)
+#   expect    the default_cause the line must carry (C1 table)
+#   snapshot  none        the subscribed ns has NO snapshot (startup pull returned nothing)
+#             key_absent  ns snapshot exists (holds k2 only); target key k is absent
+#             key         ns snapshot holds k2 and the target key k
+#   full      (only for snapshot=key; '-' otherwise) k's full_release_version:
+#             absent      proto field unset
+#             zero        proto field explicitly set to 0
+#             uncached    field set to 7, and version 7 is NOT in k's versions
+#   hdr       (only for snapshot=key; '-' otherwise) k's has_dynamic_resolution:
+#             absent | true | false   (false = fast path, abtest skipped)
+#   ctx       new           NewAbtestContext(uid) with explicit trace id "tr-<id>"
+#             empty         EmptyAbtestContext() (uid is "" in all three SDKs)
+#             mock_seeded   MockAbtestContext(uid, {ns1: {}})  - ns1 seeded with an EMPTY map
+#             mock_unseeded MockAbtestContext(uid, {})         - ns1 not seeded
+#   uid       real -> "u-sc" | empty -> "" | zero -> "0"
+#   abtest    what the abtest service does IF the SDK calls it (for rows where
+#             the SDK must not call it, it is armed as a tripwire that would
+#             change the cause):
+#             ok_empty       success, response with no groups and no gray_hits
+#             ok_empty_group success, one attributed CONFIG_VERSION group
+#                            (exp-sc / grp-sc) with EMPTY params - the wire
+#                            shape of a user who only landed in an
+#                            empty-parameter group
+#             ok_other       success, one attributed CONFIG_VERSION group
+#                            (exp-sc / grp-sc) whose params are {k2: 3}
+#             ok_v0          success, same group with params {k: 0}
+#             ok_uncached    success, same group with params {k: 99}; version 99
+#                            is in no snapshot
+#             rpc_error      the RPC fails (UNAVAILABLE / INTERNAL)
+#             timeout        the response is delayed past the client's abtest timeout
+#             not_configured the client is built WITHOUT an abtest address
+#
+# Fixed fixture values (identical in every language):
+#   namespace ns1; target key k; companion key k2 with full_release_version 3
+#   and versions {3: "full-k2"}; k's versions are ALWAYS {0: "stray-v0", 5: "v5"}
+#   (the stray version 0 makes "version 0 treated as present" observable as a
+#   changed return value, not only as a changed cause); the caller's default is
+#   "DEF-<id>" and must be returned unchanged and never appear in the line.
+#
+# Row design: each canonical row is built so that as many LOWER-priority C1
+# conditions as possible hold at the same time, so swapping the C1 evaluation
+# order changes the observed cause (see ST5-mutations.md, mechanism M1).
+
+# id                                    expect                      snapshot    full      hdr     ctx            uid    abtest
+unknown_key.no_snapshot                 unknown_key                 none        -         -       new            real   ok_uncached
+unknown_key.key_absent                  unknown_key                 key_absent  -         -       new            real   rpc_error
+unknown_key.no_user                     unknown_key                 key_absent  -         -       new            empty  ok_empty
+fast_path.over_no_user                  fast_path                   key         uncached  false   new            empty  ok_uncached
+no_user.empty_uid                       no_user                     key         uncached  absent  new            empty  ok_uncached
+no_user.zero_uid                        no_user                     key         absent    absent  new            zero   ok_uncached
+no_user.empty_ctx                       no_user                     key         absent    absent  empty          empty  ok_uncached
+abtest_unavailable.rpc_error            abtest_unavailable          key         uncached  absent  new            real   rpc_error
+abtest_unavailable.timeout              abtest_unavailable          key         absent    absent  new            real   timeout
+abtest_unavailable.not_configured       abtest_unavailable          key         absent    absent  new            real   not_configured
+abtest_unavailable.mock_unseeded        abtest_unavailable          key         absent    absent  mock_unseeded  real   ok_uncached
+ab_version_missing                      ab_version_missing          key         absent    absent  new            real   ok_uncached
+no_full_release                         no_full_release             key         absent    absent  new            real   ok_other
+no_full_release.hdr_true                no_full_release             key         absent    true    new            real   ok_other
+no_full_release.mock_seeded_empty       no_full_release             key         absent    absent  mock_seeded    real   ok_uncached
+full_release_value_missing              full_release_value_missing  key         uncached  absent  new            real   ok_other
+full_release_value_missing.ab_uncached  full_release_value_missing  key         uncached  absent  new            real   ok_uncached
+
+# The four error-prone scenarios of §C6 (E4 is one pair differing ONLY in full).
+E1.rpc_ok_empty_param_group             no_full_release             key         absent    absent  new            real   ok_empty_group
+E1.rpc_ok_no_groups                     no_full_release             key         absent    absent  new            real   ok_empty
+E2.fast_path_valid_uid                  fast_path                   key         absent    false   new            real   ok_uncached
+E3.merged_version_zero                  no_full_release             key         absent    absent  new            real   ok_v0
+E4.full_id_absent                       no_full_release             key         absent    absent  new            real   ok_other
+E4.full_id_zero                         no_full_release             key         zero      absent  new            real   ok_other

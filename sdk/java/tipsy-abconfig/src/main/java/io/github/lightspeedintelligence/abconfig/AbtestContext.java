@@ -537,9 +537,10 @@ public final class AbtestContext {
      * constructor normalises {@code null} to {@code ""}) and the string zero
      * {@code "0"} both mean "no user", for which abtest bucketing / whitelisting
      * is meaningless — {@link #ensureFetch} short-circuits these to the empty
-     * result without a {@code GetExperimentResult} RPC.
+     * result without a {@code GetExperimentResult} RPC. Also used by the
+     * reason=default hit log to classify {@code default_cause=no_user}.
      */
-    private static boolean isNoUserExperimentHashId(String id) {
+    static boolean isNoUserExperimentHashId(String id) {
         return id.isEmpty() || "0".equals(id);
     }
 }

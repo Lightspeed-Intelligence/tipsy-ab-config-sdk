@@ -6,10 +6,17 @@ package tipsyabconfig
 // CONTRACT UNDER TEST (design §4, SLS parsing contract): every dynamic-path hit
 // log carries reason + uid + trace_id + ns + key + version; experiment_id /
 // group_id / release_id are CONDITIONAL fields, present per reason and OMITTED
-// (key absent, not empty placeholder) otherwise. reason enum is exactly
-// {full_release, experiment, gray_whitelist, abtest_unattributed}. Every
-// assertion here targets the EMITTED slog record captured via logRecorder —
-// never a constant/enum declaration (no-op form 6).
+// (key absent, not empty placeholder) otherwise. The value-hit reasons are
+// {full_release, experiment, gray_whitelist, abtest_unattributed}; the fifth
+// value `default` (real-enrollment part-c §C1) has its own line and tests in
+// default_hit_log_test.go. Every assertion here targets the EMITTED slog record
+// captured via logRecorder — never a constant/enum declaration (no-op form 6).
+//
+// UNCHANGED-LINE GUARD (part-c §C1/§C6): adding the default line must leave
+// these four reasons' lines byte-identical — message, attr order and values.
+// Each case therefore also pins the rendered text line via requireText, and
+// findConfigHit counts the `(default)` variant too, so a value hit that also
+// emitted a default line fails here.
 //
 // TEST CONVENTION (design Testing Plan, r6): cases observing "second and later
 // call" behaviour (fast-path zero-RPC, degrade metric deltas) construct a
@@ -110,6 +117,7 @@ func TestHitLog_ReasonExperiment_Fields(t *testing.T) {
 		t.Fatalf("trace_id = %q, want trace-exp", got)
 	}
 	requireNoAttrs(t, hit, "release_id")
+	requireText(t, hit, `level=INFO msg="tipsyabconfig: get_config hit (abtest)" ns=ns1 key=k version=2 reason=experiment experiment_id=exp-42 group_id=grp-7 uid=u-exp trace_id=trace-exp`)
 }
 
 // TestHitLog_ReasonGrayWhitelist_Fields: gray attribution ⇒ reason=
@@ -152,6 +160,7 @@ func TestHitLog_ReasonGrayWhitelist_Fields(t *testing.T) {
 		t.Fatalf("trace_id = %q, want trace-gray", got)
 	}
 	requireNoAttrs(t, hit, "experiment_id", "group_id")
+	requireText(t, hit, `level=INFO msg="tipsyabconfig: get_config hit (abtest)" ns=ns1 key=k version=2 reason=gray_whitelist release_id=33 uid=u-gray trace_id=trace-gray`)
 }
 
 // TestHitLog_ReasonFullRelease_PureFull: no abtest hit for the key ⇒ msg
@@ -187,6 +196,7 @@ func TestHitLog_ReasonFullRelease_PureFull(t *testing.T) {
 		t.Fatalf("trace_id = %q, want trace-full", got)
 	}
 	requireNoAttrs(t, hit, "experiment_id", "group_id", "release_id")
+	requireText(t, hit, `level=INFO msg="tipsyabconfig: get_config hit (full)" ns=ns1 key=k version=6 reason=full_release uid=u-full trace_id=trace-full`)
 }
 
 // TestHitLog_ReasonFullRelease_FastPath_NoRPC: has_dynamic_resolution=false ⇒
@@ -219,6 +229,7 @@ func TestHitLog_ReasonFullRelease_FastPath_NoRPC(t *testing.T) {
 		t.Fatalf("fast-path reason = %q, want full_release", got)
 	}
 	requireNoAttrs(t, hit, "experiment_id", "group_id", "release_id")
+	requireText(t, hit, `level=INFO msg="tipsyabconfig: get_config hit (full)" ns=ns1 key=k version=4 reason=full_release uid=u-fast trace_id=`+abctx.TraceID())
 }
 
 // TestHitLog_ReasonFullRelease_AbFullFallback_WarnHasTraceID: the ab hit points
@@ -254,6 +265,7 @@ func TestHitLog_ReasonFullRelease_AbFullFallback_WarnHasTraceID(t *testing.T) {
 		t.Fatalf("ab→full fallback reason = %q, want full_release", got)
 	}
 	requireNoAttrs(t, hit, "experiment_id", "group_id", "release_id")
+	requireText(t, hit, `level=INFO msg="tipsyabconfig: get_config hit (full)" ns=ns1 key=k version=1 reason=full_release uid=u-fb trace_id=trace-fb`)
 
 	warns := findRecordByMsg(rec, "tipsyabconfig: ab version missing in local cache; falling back to full")
 	if len(warns) != 1 {
@@ -311,6 +323,7 @@ func TestHitLog_ReasonUnattributed_EmptyIdGroup(t *testing.T) {
 		t.Fatalf("kA version = %d, want 2", got)
 	}
 	requireNoAttrs(t, hitA, "experiment_id", "group_id", "release_id")
+	requireText(t, hitA, `level=INFO msg="tipsyabconfig: get_config hit (abtest)" ns=ns1 key=kA version=2 reason=abtest_unattributed uid=u-anon trace_id=`+abctx.TraceID())
 
 	hitB := findConfigHit(t, rec, "kB")
 	if got := attrString(t, hitB, "reason"); got != "experiment" {
@@ -319,6 +332,7 @@ func TestHitLog_ReasonUnattributed_EmptyIdGroup(t *testing.T) {
 	if got := attrString(t, hitB, "experiment_id"); got != "e1" {
 		t.Fatalf("kB experiment_id = %q, want e1", got)
 	}
+	requireText(t, hitB, `level=INFO msg="tipsyabconfig: get_config hit (abtest)" ns=ns1 key=kB version=3 reason=experiment experiment_id=e1 group_id=g1 uid=u-anon trace_id=`+abctx.TraceID())
 }
 
 // TestHitLog_ReasonUnattributed_Mock: a MockAbtestContext seeds only
@@ -357,6 +371,7 @@ func TestHitLog_ReasonUnattributed_Mock(t *testing.T) {
 		t.Fatalf("uid = %q, want u-mock", got)
 	}
 	requireNoAttrs(t, hit, "experiment_id", "group_id", "release_id")
+	requireText(t, hit, `level=INFO msg="tipsyabconfig: get_config hit (abtest)" ns=ns1 key=k version=9 reason=abtest_unattributed uid=u-mock trace_id=`+abctx.TraceID())
 }
 
 // TestHitLog_RPCFailureDegrade_DeltaOne (design F8): the per-ns
@@ -392,6 +407,7 @@ func TestHitLog_RPCFailureDegrade_DeltaOne(t *testing.T) {
 		t.Fatalf("degrade reason = %q, want full_release", got)
 	}
 	requireNoAttrs(t, hit, "experiment_id", "group_id", "release_id")
+	requireText(t, hit, `level=INFO msg="tipsyabconfig: get_config hit (full)" ns=ns1 key=k version=1 reason=full_release uid=u-deg trace_id=trace-deg`)
 
 	warns := findRecordByMsg(rec, "tipsyabconfig: AbtestService.GetExperimentResult failed; falling back to full release")
 	if len(warns) != 1 {

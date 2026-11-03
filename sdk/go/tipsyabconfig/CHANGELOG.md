@@ -20,6 +20,39 @@ bump first, then an SDK tag bump.
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-11-03
+
+### Added
+- **返回默认值时也打命中日志**。动态 `GetConfig` / `GetConfigDefault`（以及基于它们的
+  `GetConfigBool` / `GetConfigInt64` / `GetConfigFloat64` / `GetConfigString` /
+  `GetConfigJSON`）没有解析出值、返回调用方默认值时，打一行 Info
+  `tipsyabconfig: get_config hit (default)`。此前这个分支不打任何日志：key 没有全量版本时，
+  空参数组（例如对照组）的用户读这个 key 完全不留痕迹。
+  - 字段：`ns`、`key`、`reason=default`、`default_cause`、`uid`、`trace_id`。不带 `version`、
+    `experiment_id`、`group_id`、`release_id`，也不记默认值本身（命中日志不记 config value）。
+  - `default_cause` 按下列顺序判定，取第一个满足的：
+    1. `unknown_key`：该 namespace 还没有快照，或快照里没有这个 key；
+    2. `fast_path`：服务端明确下发 `has_dynamic_resolution=false`，SDK 跳过了 abtest；
+    3. `no_user`：uid 为 `""` 或 `"0"`（`EmptyAbtestContext` 也属于这一类）；
+    4. `abtest_unavailable`：abtest 结果是 SDK 的降级空结果（RPC 失败或超时、未配置 abtest
+       服务、`MockAbtestContext` 未预置的 namespace 等）；
+    5. `ab_version_missing`：abtest 评估成功，合并结果里该 key 的版本非 0，但本地缓存缺这个
+       版本，且 key 没有全量版本；
+    6. `no_full_release`：abtest 评估成功，合并结果里没有该 key（或版本为 0），且 key 没有
+       全量版本。合并结果整体为空（用户在该 namespace 只落在空参数组）也属于这一类；
+    7. `full_release_value_missing`：全量版本 id 存在，但取不到值（防御分支）。
+  - 每次走到默认值分支都打一行，不采样、不去重（与现有命中日志一致）。返回值仍是
+    `(defaultValue, nil)`。错误出口不打这一行，行为不变：nil `*Client`（`ErrClosed`）、
+    nil `AbtestContext`、namespace 错误、等待 abtest 结果时 ctx 被取消。`Close()` 之后
+    `GetConfig` 仍从缓存解析，走到默认值分支时照常打这一行。
+  - `GetConfigStatic`、`GetAllConfigs` 不变。
+
+### Changed
+- 命中日志的 `reason` 枚举不再是 4 值：新增第 5 个取值 `default`，只出现在
+  `get_config hit (default)` 行上。按 `reason` 分支解析的下游需要容纳这个新值。现有 4 种
+  reason（`full_release` / `experiment` / `gray_whitelist` / `abtest_unattributed`）的日志行
+  逐字不变：消息、字段、字段顺序都没有改。
+
 ## [0.15.1] - 2026-10-29
 
 ### Fixed

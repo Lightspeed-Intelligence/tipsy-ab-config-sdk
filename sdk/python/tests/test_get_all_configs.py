@@ -16,8 +16,8 @@ GetExperimentResult, so "zero RPC" is ``ab_servicer.calls == 0`` AND
 from __future__ import annotations
 
 import asyncio
-import pytest
 
+import pytest
 from tipsy_ab_config import Config, init
 from tipsy_ab_config.exceptions import (
     AbtestContextMissing,
@@ -111,6 +111,54 @@ async def test_get_all_configs_resolution_matrix(
         assert cli.metrics.abtest_fallback_total("ns1") >= 1
         # A single at-most-once GetExperimentResult served the whole map.
         assert ab_servicer.calls_by_ns.get("ns1", 0) == 1
+    finally:
+        await cli.aclose()
+
+
+async def test_get_all_configs_full_release_id_zero_is_no_full_release(
+    cfg_servicer: FakeConfigServicer,
+    ab_servicer: FakeAbtestServicer,
+    running_servers,
+):
+    """A full-release id of 0 counts as "no full release" in get-all too.
+
+    real-enrollment part-c §C1 makes the dynamic resolver treat id 0 like an
+    absent id (Go / Java already did: their caches store both as 0). The
+    resolver is shared with get_config, so get-all inherits it; the main
+    agent ruled this a deliberate consequence (2026-10-31).
+
+    - ``k_zero`` (id SET to 0) and ``k_absent`` (id unset) are DROPPED alike.
+      Each carries a stray version 0, so a resolver that treats id 0 as present
+      would return "stray-v0" for ``k_zero`` instead of dropping it.
+    - ``k_zero_ab`` (id 0, abtest hit on cached v5) stays present: an id-0 key
+      is not dropped wholesale, only its full-release branch is.
+    - ``k2`` is the ordinary full-release control.
+    """
+    cfg_addr, ab_addr = running_servers
+    stray = {0: "stray-v0", 5: "v5"}
+    cfg_servicer.set_pull_snapshot(
+        make_snapshot(
+            "ns1",
+            1,
+            1,
+            {
+                "k_zero": (0, dict(stray)),
+                "k_absent": (None, dict(stray)),
+                "k_zero_ab": (0, dict(stray)),
+                "k2": (3, {3: "full-k2"}),
+            },
+        )
+    )
+    ab_servicer.set_response("ns1", make_per_group_result({"k_zero_ab": 5}))
+    cli = await _init(cfg_addr, ab_addr)
+    try:
+        # Fixture non-degeneracy: the id really arrived as 0, not as absent,
+        # so this case differs from k_absent on the wire and in the cache.
+        keys = cli.cache.snapshot("ns1").keys
+        assert keys["k_zero"].full_release_version == 0
+        assert keys["k_absent"].full_release_version is None
+        got = await cli.get_all_configs(cli.new_abtest_context("u1"), "ns1")
+        assert got == {"k_zero_ab": "v5", "k2": "full-k2"}
     finally:
         await cli.aclose()
 

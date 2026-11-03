@@ -8,6 +8,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-11-03
+
+### Added
+- **返回默认值时也打命中日志**。`getConfig` / `getConfigDefault`（以及基于它们的
+  `getConfigBool` / `getConfigLong` / `getConfigDouble` / `getConfigString` /
+  `getConfigJson`）没有解析出值、返回调用方默认值时，打一行 INFO，固定模板为：
+  `tipsyabconfig: get_config hit (default) reason=default, ns={}, key={}, default_cause={}, uid={}, trace_id={}`。
+  此前这个分支不打任何日志：key 没有全量版本时，空参数组（例如对照组）的用户读这个 key
+  完全不留痕迹。
+  - 不带 `version`、`experiment_id`、`group_id`、`release_id`，也不记默认值本身（命中日志
+    不记 config value）。
+  - `default_cause` 按下列顺序判定，取第一个满足的：
+    1. `unknown_key`：该 namespace 还没有快照，或快照里没有这个 key；
+    2. `fast_path`：服务端明确下发 `has_dynamic_resolution=false`，SDK 跳过了 abtest（此时
+       内部占位结果与 RPC 失败相同，按 `has_dynamic_resolution` 区分）；
+    3. `no_user`：experimentHashId 为 `""` 或 `"0"`（`emptyAbtestContext()` 也属于这一类）；
+    4. `abtest_unavailable`：abtest 结果是 SDK 的降级空结果（RPC 失败或超时、未配置 abtest
+       服务、`mockAbtestContext` 未预置的 namespace、等待时线程被中断等）；
+    5. `ab_version_missing`：abtest 评估成功，合并结果里该 key 的版本非 0，但本地缓存缺这个
+       版本，且 key 没有全量版本；
+    6. `no_full_release`：abtest 评估成功，合并结果里没有该 key（或版本为 0），且 key 没有
+       全量版本。合并结果整体为空（用户在该 namespace 只落在空参数组）也属于这一类；
+    7. `full_release_value_missing`：全量版本 id 存在，但取不到值（防御分支）。
+  - 每次走到默认值分支都打一行，不采样、不去重（与现有命中日志一致）。返回值仍是调用方
+    默认值。以异常结束的出口不打这一行，行为不变：`SdkClosedException`、
+    `AbtestContextMissingException`、namespace 错误（`NamespaceRequiredException` /
+    `NamespaceNotSubscribedException`）。
+  - `getConfigStatic`、`getAllConfigs` 不变。
+
+### Changed
+- 命中日志的 `reason` 枚举不再是 4 值：新增第 5 个取值 `default`，只出现在
+  `get_config hit (default)` 行上。按 `reason` 分支解析的下游需要容纳这个新值。现有 4 种
+  reason 的固定模板逐字不变。
+
 ## [0.12.1] - 2026-10-29
 
 ### Fixed

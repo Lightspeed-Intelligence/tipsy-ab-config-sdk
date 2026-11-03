@@ -22,6 +22,7 @@ claim that any particular DEV deployment is currently online.
 | `load/` | Medium HTTP load driver; writes `last-run.json`. |
 | `headless/` | Local three-backend `dns:///` and `round_robin` verification. |
 | `combo/` | Local combo/holdout data-plane fixture and SDK assertions. |
+| `default-hit/` | Local platform: an empty-parameter-group user reading a key with no full release logs `reason=default default_cause=no_full_release` (Go SDK, workspace mode). |
 
 The harness is intentionally outside normal `go test`, Python and Maven unit
 test suites because it needs a real service and seeded database.

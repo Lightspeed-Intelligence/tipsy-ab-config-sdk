@@ -11,6 +11,14 @@ unchanged (``get_config hit (abtest)`` / ``get_config hit (full)``) and whose
   - ``reason=gray_whitelist``    ⇒ ``release_id`` (int);
   - ``reason=full_release`` / ``reason=abtest_unattributed`` ⇒ neither.
 
+The fifth reason ``default`` (real-enrollment part-c §C1, ``get_config hit
+(default)``) has a different field set — no ``version`` — so the field sets are
+per reason (:data:`_FIELDS_BY_REASON`); its behaviour is tested in
+test_default_hit_log.py. Adding it must leave the four lines here unchanged:
+message, ``extra`` field ORDER and values (part-c §C6), which
+:func:`_assert_contract` pins, and ``_hit_records`` counts the default variant
+too, so a value hit that also emitted a default line fails here.
+
 Assertion placement rule (design Testing Plan 1, no-op form 6): every reason
 value is asserted on an EMITTED log record (``caplog`` scoped to the
 ``tipsy_ab_config`` logger — precedent test_grpc_target.py), never on an enum
@@ -37,11 +45,9 @@ import logging
 
 import grpc
 import pytest
-
 from tipsy_ab_config import Config, init
 
 from .conftest import (
-    FakeAbtestServicer,
     FakeConfigServicer,
     issue_test_token,
     make_per_group_result,
@@ -49,13 +55,40 @@ from .conftest import (
 )
 
 _LOGGER = "tipsy_ab_config"
-# Matches "get_config hit (abtest)" and "get_config hit (full)" but NOT
-# "get_config_static hit" (differs at the char after "get_config").
+# Matches "get_config hit (abtest)", "get_config hit (full)" and "get_config
+# hit (default)" but NOT "get_config_static hit" (differs at the char after
+# "get_config").
 _HIT_PREFIX = "get_config hit"
 
-# The always-present field set of the SLS contract; the conditional fields.
-_ALWAYS_FIELDS = ("reason", "uid", "trace_id", "ns", "key", "version")
+# The ``extra`` field set of each reason's hit line, IN EMISSION ORDER (part-c
+# §C6: the four pre-existing lines keep their message, field order and values).
+# ``default`` carries no ``version`` and adds ``default_cause``; its order is
+# not pinned (only its set — see test_default_hit_log.py).
+_FIELDS_BY_REASON = {
+    "experiment": (
+        "ns", "key", "version", "uid", "trace_id", "reason",
+        "experiment_id", "group_id",
+    ),
+    "gray_whitelist": (
+        "ns", "key", "version", "uid", "trace_id", "reason", "release_id",
+    ),
+    "full_release": ("ns", "key", "version", "uid", "trace_id", "reason"),
+    "abtest_unattributed": ("ns", "key", "version", "uid", "trace_id", "reason"),
+    "default": ("ns", "key", "uid", "trace_id", "reason", "default_cause"),
+}
 _CONDITIONAL_FIELDS = ("experiment_id", "group_id", "release_id")
+
+# Attributes every LogRecord has before ``extra`` is applied (plus the two a
+# Formatter adds), so the remainder of ``rec.__dict__`` is the ``extra`` dict in
+# insertion order.
+_BASE_RECORD_ATTRS = frozenset(
+    logging.LogRecord("x", logging.INFO, __file__, 0, "m", None, None).__dict__
+) | {"message", "asctime"}
+
+
+def extra_fields(rec: logging.LogRecord) -> list[str]:
+    """The record's ``extra`` keys, in the order the SDK passed them."""
+    return [k for k in rec.__dict__ if k not in _BASE_RECORD_ATTRS]
 
 
 def _hit_records(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
@@ -82,9 +115,14 @@ def _assert_contract(
     Full equality on every field (no containment: the version is a templated
     id-like value and substring matches would let "renders the version" and
     "renders the release_id" both pass on overlapping digits). ``None`` for a
-    conditional field means it MUST be omitted (attribute absent).
+    conditional field means it MUST be omitted (attribute absent). The
+    ``extra`` field ORDER must equal :data:`_FIELDS_BY_REASON` for the reason
+    (part-c §C6 unchanged-line guard).
     """
     assert rec.levelno == logging.INFO
+    assert extra_fields(rec) == list(_FIELDS_BY_REASON[reason]), (
+        f"extra field order changed for reason={reason}: {extra_fields(rec)}"
+    )
     assert rec.reason == reason
     assert rec.ns == ns
     assert rec.key == key
@@ -545,6 +583,8 @@ async def test_mock_ctx_hit_logs_unattributed(
             assert await cli.get_config(ctx, "ns1", "k", "def") == "ab9"
         recs = _hit_records(caplog)
         assert len(recs) == 1
+        assert recs[0].getMessage() == "get_config hit (abtest)"
+        assert extra_fields(recs[0]) == list(_FIELDS_BY_REASON["abtest_unattributed"])
         assert recs[0].reason == "abtest_unattributed"
         assert recs[0].version == 9
         assert recs[0].uid == "u-mock"

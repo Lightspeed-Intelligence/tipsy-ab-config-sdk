@@ -107,7 +107,21 @@ class _ComputeResult:
     attribution: Dict[str, _KeyAttribution] = field(default_factory=dict)
 
 
+# Sentinel "no abtest hits" result for degraded / identity-less paths. Its
+# object IDENTITY is load-bearing: the reason=default hit log reports
+# ``default_cause=abtest_unavailable`` exactly when the result ``is`` this
+# object (``client._default_cause``). Never compare it with ``==``:
+# ``_ComputeResult`` is a dataclass, so a successful-but-empty merge compares
+# equal by value. A successful merge must always build a fresh
+# ``_ComputeResult``, even an empty one.
 _EMPTY_RESULT = _ComputeResult()
+
+
+def _is_no_user_experiment_hash_id(experiment_hash_id: str) -> bool:
+    """``""`` and ``"0"`` carry no real user identity (mirrors Go's
+    ``isNoUserExperimentHashID``): such a ctx never participates in experiment /
+    whitelist logic."""
+    return experiment_hash_id in ("", "0")
 
 
 @dataclass
@@ -237,7 +251,7 @@ class AbtestContext:
         """
         slot = self._results.get(ns)
         if slot is None:
-            no_user = self.experiment_hash_id in ("", "0")
+            no_user = _is_no_user_experiment_hash_id(self.experiment_hash_id)
             if (
                 self._empty
                 or self._owner is None

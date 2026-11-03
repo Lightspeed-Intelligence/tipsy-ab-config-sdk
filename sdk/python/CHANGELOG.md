@@ -8,7 +8,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-11-03
+
+### Added
+- **返回默认值时也打命中日志**。`get_config` / `get_config_default`（以及基于它们的
+  `get_config_bool` / `get_config_long` / `get_config_double` / `get_config_string` /
+  `get_config_json`）没有解析出值、返回调用方默认值时，打一行 Info
+  `get_config hit (default)`。与现有两条命中消息一致，不带 `tipsyabconfig:` 前缀。此前这个
+  分支不打任何日志：key 没有全量版本时，空参数组（例如对照组）的用户读这个 key 完全不留痕迹。
+  - 字段（`extra`）：`ns`、`key`、`uid`、`trace_id`、`reason="default"`、`default_cause`。不带
+    `version`、`experiment_id`、`group_id`、`release_id`，也不记默认值本身（命中日志不记
+    config value）。
+  - `default_cause` 按下列顺序判定，取第一个满足的：
+    1. `unknown_key`：该 namespace 还没有快照，或快照里没有这个 key；
+    2. `fast_path`：服务端明确下发 `has_dynamic_resolution=False`，SDK 跳过了 abtest；
+    3. `no_user`：`experiment_hash_id` 为 `""` 或 `"0"`（`empty_abtest_context()` 也属于这一类）；
+    4. `abtest_unavailable`：abtest 结果是 SDK 的降级空结果（RPC 失败或超时、未配置 abtest
+       服务、`mock_abtest_context` 未预置的 namespace 等）；
+    5. `ab_version_missing`：abtest 评估成功，合并结果里该 key 的版本非 0，但本地缓存缺这个
+       版本，且 key 没有全量版本；
+    6. `no_full_release`：abtest 评估成功，合并结果里没有该 key（或版本为 0），且 key 没有
+       全量版本。合并结果整体为空（用户在该 namespace 只落在空参数组）也属于这一类；
+    7. `full_release_value_missing`：全量版本 id 存在，但取不到值（防御分支）。
+  - 每次走到默认值分支都打一行，不采样、不去重（与现有命中日志一致）。返回值仍是调用方
+    默认值。以异常结束的出口不打这一行，行为不变：`SDKClosed`、`AbtestContextMissing`、
+    namespace 错误（`NamespaceRequired` / `NamespaceNotSubscribed`）、`CancelledError`。
+  - `get_config_static`、`get_all_configs` 不打这一行。
+
 ### Changed
+- 命中日志的 `reason` 枚举不再是 4 值：新增第 5 个取值 `default`，只出现在
+  `get_config hit (default)` 行上。按 `reason` 分支解析的下游需要容纳这个新值；
+  `version` 也不再是每条命中日志都有的字段（`default` 行没有）。现有 4 种 reason 的日志行
+  逐字不变：消息、字段、字段顺序都没有改。
+- 边界对齐（非新功能）：全量版本 id 为 `0` 时，动态路径现在按「没有全量版本」处理，与 Go、
+  Java 一致；此前 Python 只把字段缺失当作没有。`get_config` 与 `get_all_configs` 共用同一个
+  解析器，所以两者一起变：`get_config` 返回默认值，`get_all_configs` 省略该 key。服务端用版本
+  主键填这个字段，现网不会下发 0，正常流量下行为不变。`get_config_static` 不变。
 - 分发渠道改为 PyPI：`pip install "tipsy-ab-config==X.Y.Z"`。GitHub 仓库转为私有后，
   `git+https://…tipsy-ab-config-sdk.git@python-sdk/vX.Y.Z` 形式的依赖需要 GitHub 读权限，
   不再是受支持的安装方式。0.15.0、0.16.0 由各自 GitHub Release 的原始 wheel/sdist 回填到 PyPI，
