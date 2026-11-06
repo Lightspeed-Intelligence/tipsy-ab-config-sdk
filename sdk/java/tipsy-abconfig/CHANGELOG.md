@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- 为 `ExperimentType.CUSTOM_PARAMS` 增加 `@Deprecated`，新接入使用 `CONFIG_VERSION`；
+  更新原始结果 API 文档与示例。保留枚举值、字段、公共方法和 `UNSPECIFIED` 默认类型，
+  config/get-all/prefetch 语义不变。
+
 ## [0.13.0] - 2026-11-03
 
 ### Added

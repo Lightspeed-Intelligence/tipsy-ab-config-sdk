@@ -322,13 +322,37 @@ namespace 的一次实验拉取。显式 prefetch 非阻塞且幂等，适合与
 也不自动上报曝光。重要字段：
 
 - `config_flat_kv`: config key 名到 `config_version.id`；
-- `custom_flat_kv`: arbitrary JSON 参数；
+- `custom_flat_kv`: 历史 custom 实验的 arbitrary JSON 参数（已废弃，字段保留）；
 - `groups[].params_versions`: 每个命中实验组的 key 到 version id；
 - `gray_hits[].key_versions`: 按 gray release 分组的 key 到 version id；
 - `exposures`: 仅为 wire compatibility 保留，新服务端不填充。
 
 所有 wire 上的 int64 version 都是全局唯一的 `config_version.id`，不是每个 key 内的语义
 `version_no`。
+
+### custom_params 废弃与兼容
+
+三语言统一将 `custom_params` 标记为废弃，仅供历史实验兼容读取。Go 的
+`ExperimentTypeCustomParams` 使用 `Deprecated:` 注释，Java 的
+`ExperimentType.CUSTOM_PARAMS` 使用 `@Deprecated`；Python 在公共方法文档中提示，
+不增加运行时 warning。原始结果公共方法仍适用于 config 查询。
+
+| 类型 | wire 值 | 本阶段约定 |
+|---|---:|---|
+| `UNSPECIFIED` | 0 | 省略类型仍原样发送 0，服务端沿用历史 custom 默认行为 |
+| `CONFIG_VERSION` | 1 | 新接入显式选用，读取 config 实验与灰度结果 |
+| `CUSTOM_PARAMS` | 2 | 已废弃，保留以兼容历史 custom 实验 |
+| `ALL` | 3 | 继续请求两类结果，调用方自行选择要读取的字段 |
+
+`GetConfig` / `get_config` / `getConfig` 以及 get-all/prefetch 继续显式请求
+`CONFIG_VERSION`，保留实验/灰度 → full release → default 的解析顺序。SDK 升级
+不改变省略类型时的请求，也不移除 custom 枚举、请求/响应字段或公共方法；新旧 SDK
+读取 config 的协议保持一致。需要 raw config 结果时，显式传 Go
+`ExperimentTypeConfigVersion`、Python `EXPERIMENT_TYPE_CONFIG_VERSION` 或 Java
+`ExperimentType.CONFIG_VERSION`，示例见根 README 及各语言 README。
+
+服务端 custom 实现与数据库的退役另行推进，需先处理全部活跃 custom 数据和旧调用，
+再验证 config 结果一致；本次 SDK 提示不代表服务端已经停止历史 custom 读取。
 
 ### int64 与 JSON
 

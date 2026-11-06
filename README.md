@@ -80,6 +80,23 @@ if err != nil {
 完整 Go 示例见 [`sdk/go/example/main.go`](sdk/go/example/main.go)。Python/Java 示例见各自
 README 和 `example/` 目录。
 
+## custom_params 废弃提示
+
+新接入使用 `config_version`。`custom_params` 已废弃，Go / Python / Java SDK 保留历史
+实验读取所需的枚举、字段和公共方法。`GetConfig` 系列仍按原来的 config 解析路径工作；
+原始 `GetExperimentResult` 系列省略类型时仍发送 `UNSPECIFIED`（0），服务端沿用历史
+custom 默认行为。因此读取 config 原始结果时应显式指定 `CONFIG_VERSION`：
+
+```go
+result, err := client.GetExperimentResult(ctx, tipsyabconfig.ExperimentResultRequest{
+	Namespace: "my-app",
+	UserInfo:  tipsyabconfig.UserInfo{ExperimentHashID: "user-123"},
+	Type:      tipsyabconfig.ExperimentTypeConfigVersion,
+})
+```
+
+三端的类型取值和兼容约定见[集成手册](docs/usage-and-integration.md#custom_params-废弃与兼容)。
+
 ## 文档
 
 - [集成手册](docs/usage-and-integration.md)：鉴权、transport、API 语义、兼容边界和排障

@@ -1243,6 +1243,11 @@ public final class TipsyAbConfigClient implements AutoCloseable {
      * response so business code can read {@code config_flat_kv} /
      * {@code custom_flat_kv} / {@code groups} / {@code gray_hits} directly.
      *
+     * <p>{@code custom_params} is deprecated. Use
+     * {@link ExperimentType#CONFIG_VERSION} for new raw result queries, or
+     * {@link #getConfig} to resolve configuration values. This public method,
+     * legacy response fields, and the default request behavior remain supported.
+     *
      * <p>{@code gray_hits} is grouped per hit gray release: each
      * {@code GrayReleaseHit} carries a {@code release_id} plus a
      * {@code key_versions} map (config_key.key name &rarr; versionId), i.e. one

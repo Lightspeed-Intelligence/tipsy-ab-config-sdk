@@ -5,9 +5,10 @@ import io.github.lightspeedintelligence.abconfig.proto.abtest.v1.GetExperimentRe
 /**
  * SDK-stable mirror of {@code abtestv1.ExperimentType} for the
  * {@link TipsyAbConfigClient#getExperimentResult(ExperimentResultRequest)}
- * client surface (design 03 / 05). It lets business code select
- * {@code config_version} vs {@code custom_params} experiments without importing
- * the generated proto package directly.
+ * client surface (design 03 / 05). It lets business code select experiment types
+ * without importing the generated proto package directly. New integrations
+ * should select {@link #CONFIG_VERSION}; {@code custom_params} is deprecated
+ * and retained for historical experiments.
  *
  * <p>Each constant carries the proto wire value via {@link #wireValue()}; the
  * SDK builds the proto enum from it when constructing the
@@ -19,7 +20,11 @@ public enum ExperimentType {
     UNSPECIFIED(0),
     /** Selects {@code config_version} experiments. */
     CONFIG_VERSION(1),
-    /** Selects {@code custom_params} experiments. */
+    /**
+     * Selects historical {@code custom_params} experiments.
+     * @deprecated Use {@link #CONFIG_VERSION} for new integrations.
+     */
+    @Deprecated
     CUSTOM_PARAMS(2),
     /** Selects both experiment types. */
     ALL(3);

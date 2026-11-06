@@ -20,6 +20,11 @@ bump first, then an SDK tag bump.
 
 ## [Unreleased]
 
+### Changed
+- 标记 `ExperimentTypeCustomParams` 已废弃，新接入使用 `ExperimentTypeConfigVersion`；
+  更新原始结果 API 文档与示例。保留所有枚举值、字段、公共方法和零值请求的历史默认行为，
+  `GetConfig`、get-all 与 prefetch 的 config 读取语义不变。
+
 ## [0.16.0] - 2026-11-03
 
 ### Added

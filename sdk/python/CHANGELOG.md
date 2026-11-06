@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- 文档标记 `EXPERIMENT_TYPE_CUSTOM_PARAMS` 已废弃，新接入显式选择
+  `EXPERIMENT_TYPE_CONFIG_VERSION`，并提供原始结果查询示例；不增加运行时 warning。
+  保留枚举值、字段、公共方法及 `UNSPECIFIED` 默认参数，config/get-all/prefetch 语义不变。
+
 ## [0.17.0] - 2026-11-03
 
 ### Added

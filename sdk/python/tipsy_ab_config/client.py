@@ -17,8 +17,9 @@ Mirrors ``sdk/go/tipsyabconfig/sdk.go`` with asyncio semantics:
   warmed up front via
   ``AbtestContext.prefetch_config_version_flat_kv_for_namespace``.
 - ``Client.get_experiment_result`` is the thin client that exposes every
-  wire parameter (namespace / user_info / layer_ids / type / display) for
-  custom_params results (design 04 §B.6).
+  wire parameter (namespace / user_info / layer_ids / type / display).
+  New integrations explicitly select ``EXPERIMENT_TYPE_CONFIG_VERSION``;
+  ``custom_params`` is deprecated and retained for historical experiments.
 - ``Client.close`` cancels background tasks and closes the gRPC channels.
 """
 
@@ -1387,11 +1388,19 @@ class Client:
 
         Mirrors Go's ``GetExperimentResult`` (design 04 §B.6). Exposes every
         wire parameter (namespace / user_info / layer_ids / experiment_type /
-        display_type) so business code can fetch custom_params results (or
-        per-group results) directly. Unlike :meth:`get_config` it does NOT
+        display_type) for raw experiment results, including per-group results
+        and historical custom_params results. Unlike :meth:`get_config` it does NOT
         memoise into an AbtestContext and does NOT touch the local config
         cache — it returns the raw proto response so business code can read
         ``config_flat_kv`` / ``groups`` / ``gray_hits`` directly.
+
+        Selecting ``EXPERIMENT_TYPE_CUSTOM_PARAMS`` is deprecated. For new raw
+        result queries, pass ``EXPERIMENT_TYPE_CONFIG_VERSION`` explicitly;
+        use :meth:`get_config` to resolve configuration values. The enum values,
+        response fields, and this public method remain available. Omitting
+        ``experiment_type`` still sends ``UNSPECIFIED`` (0), preserving the
+        server's historical custom_params default. This is a documentation
+        notice; it does not emit a runtime warning.
 
         ``gray_hits`` is grouped per hit gray release: each ``GrayReleaseHit``
         carries a ``release_id`` plus a ``key_versions`` map (config_key.key

@@ -11,8 +11,9 @@ import (
 
 // ExperimentType is the SDK-stable mirror of abtestv1.ExperimentType for the
 // GetExperimentResult client surface (design 04 §B.6). It lets business code
-// select config_version vs custom_params experiments without importing the
-// generated proto package directly.
+// select experiment types without importing the generated proto package
+// directly. New integrations should select ExperimentTypeConfigVersion;
+// custom_params is deprecated and retained for historical experiments.
 type ExperimentType int32
 
 const (
@@ -22,6 +23,9 @@ const (
 	// ExperimentTypeConfigVersion selects config_version experiments.
 	ExperimentTypeConfigVersion ExperimentType = ExperimentType(abtestv1.ExperimentType_EXPERIMENT_TYPE_CONFIG_VERSION)
 	// ExperimentTypeCustomParams selects custom_params experiments.
+	//
+	// Deprecated: custom_params is retained for historical experiments. Use
+	// ExperimentTypeConfigVersion for new integrations.
 	ExperimentTypeCustomParams ExperimentType = ExperimentType(abtestv1.ExperimentType_EXPERIMENT_TYPE_CUSTOM_PARAMS)
 	// ExperimentTypeAll selects both experiment types.
 	ExperimentTypeAll ExperimentType = ExperimentType(abtestv1.ExperimentType_EXPERIMENT_TYPE_ALL)
@@ -40,9 +44,10 @@ const (
 )
 
 // ExperimentResultRequest is the SDK-stable request for the GetExperimentResult
-// client (design 04 §B.6). It exposes every wire parameter so business code can
-// fetch custom_params results (or per-group results) directly, without going
-// through the config-version fast path baked into GetConfig.
+// client (design 04 §B.6). It exposes every wire parameter for raw experiment
+// results, including per-group results and historical custom_params results.
+// New integrations should set Type to ExperimentTypeConfigVersion explicitly;
+// the zero value retains the server's historical custom_params default.
 type ExperimentResultRequest struct {
 	// Namespace is the target namespace. Empty resolves to the project default
 	// namespace (decision A-3); empty with no default returns
@@ -80,6 +85,10 @@ type ExperimentResultRequest struct {
 // NOT memoise into an AbtestContext and does NOT touch the local config cache —
 // it returns the raw proto response so business code can read
 // config_flat_kv / custom_flat_kv / groups / gray_hits directly.
+//
+// custom_params is deprecated; use ExperimentTypeConfigVersion for new raw
+// result queries, or GetConfig to resolve configuration values. The public
+// method, legacy fields, and zero-value request behavior remain supported.
 //
 // gray_hits is grouped per hit gray release: each GrayReleaseHit carries a
 // release_id plus a key_versions map (config_key.key name → versionId), i.e.
