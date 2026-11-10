@@ -18,8 +18,9 @@ This package mirrors the Go SDK 1:1:
 - :func:`Client.get_experiment_result` exposes the full wire request
   (namespace / user_info / layer_ids / type / display). New integrations should
   explicitly select ``EXPERIMENT_TYPE_CONFIG_VERSION``; ``custom_params`` is
-  deprecated and retained for historical experiments. Omitting the type keeps
-  the existing ``UNSPECIFIED`` wire value and server default.
+  deprecated. Omitting the type keeps the ``UNSPECIFIED`` wire value: servers
+  with custom retired return empty for 0, reject 2, and return config only for
+  ALL. Older servers retain historical custom behavior.
 - :class:`tipsy_ab_config.fastapi_middleware.AbtestMiddleware` wires the
   AbtestContext into ``contextvars`` for FastAPI / Starlette apps.
 

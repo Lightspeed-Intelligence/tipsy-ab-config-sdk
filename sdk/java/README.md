@@ -125,9 +125,13 @@ not the per-key `version_no`.
 
 `ExperimentType.CUSTOM_PARAMS` is marked `@Deprecated` and retained for
 historical experiments. The enum values, response fields, and public methods
-remain available. An omitted/null type still becomes `UNSPECIFIED` (0),
-preserving the server's historical custom default. `getConfig` continues to
-use `CONFIG_VERSION`. For new raw result queries, select it explicitly:
+remain available. An omitted/null type still becomes `UNSPECIFIED` (0).
+After server-side retirement, valid type 0 requests succeed with empty results;
+explicit type 2 requests fail with gRPC `FailedPrecondition` / HTTP 400, surfaced
+as `TipsyConfigException`. `ALL` returns config only and `custom_flat_kv` is not
+populated. Older servers retain historical custom behavior; the SDK does not
+rewrite defaults. `getConfig` continues to use `CONFIG_VERSION`.
+For raw config queries, select it explicitly:
 
 ```java
 import io.github.lightspeedintelligence.abconfig.ExperimentResultRequest;

@@ -322,7 +322,7 @@ namespace 的一次实验拉取。显式 prefetch 非阻塞且幂等，适合与
 也不自动上报曝光。重要字段：
 
 - `config_flat_kv`: config key 名到 `config_version.id`；
-- `custom_flat_kv`: 历史 custom 实验的 arbitrary JSON 参数（已废弃，字段保留）；
+- `custom_flat_kv`: 历史 custom 实验的 arbitrary JSON 参数（已废弃，字段保留，退役后的服务端不再填充）；
 - `groups[].params_versions`: 每个命中实验组的 key 到 version id；
 - `gray_hits[].key_versions`: 按 gray release 分组的 key 到 version id；
 - `exposures`: 仅为 wire compatibility 保留，新服务端不填充。
@@ -332,17 +332,20 @@ namespace 的一次实验拉取。显式 prefetch 非阻塞且幂等，适合与
 
 ### custom_params 废弃与兼容
 
-三语言统一将 `custom_params` 标记为废弃，仅供历史实验兼容读取。Go 的
+三语言统一将 `custom_params` 标记为废弃，保留协议字段和公共 API。Go 的
 `ExperimentTypeCustomParams` 使用 `Deprecated:` 注释，Java 的
 `ExperimentType.CUSTOM_PARAMS` 使用 `@Deprecated`；Python 在公共方法文档中提示，
 不增加运行时 warning。原始结果公共方法仍适用于 config 查询。
 
-| 类型 | wire 值 | 本阶段约定 |
+以下为服务端 custom 运行时退役后（配套服务端 PR #103）的契约；以目标环境实际部署版本为准。
+SDK 升级本身不启用服务端退役，也不改写请求类型。
+
+| 类型 | wire 值 | 退役后的服务端行为 |
 |---|---:|---|
-| `UNSPECIFIED` | 0 | 省略类型仍原样发送 0，服务端沿用历史 custom 默认行为 |
+| `UNSPECIFIED` | 0 | 省略类型仍原样发送 0；合法请求成功返回空结果，不计算 config/custom/gray/combo |
 | `CONFIG_VERSION` | 1 | 新接入显式选用，读取 config 实验与灰度结果 |
-| `CUSTOM_PARAMS` | 2 | 已废弃，保留以兼容历史 custom 实验 |
-| `ALL` | 3 | 继续请求两类结果，调用方自行选择要读取的字段 |
+| `CUSTOM_PARAMS` | 2 | 枚举保留；显式请求返回 gRPC `FailedPrecondition`，HTTP 400 |
+| `ALL` | 3 | 只返回 config 实验与灰度结果，不填充 custom 字段 |
 
 `GetConfig` / `get_config` / `getConfig` 以及 get-all/prefetch 继续显式请求
 `CONFIG_VERSION`，保留实验/灰度 → full release → default 的解析顺序。SDK 升级
@@ -351,8 +354,15 @@ namespace 的一次实验拉取。显式 prefetch 非阻塞且幂等，适合与
 `ExperimentTypeConfigVersion`、Python `EXPERIMENT_TYPE_CONFIG_VERSION` 或 Java
 `ExperimentType.CONFIG_VERSION`，示例见根 README 及各语言 README。
 
-服务端 custom 实现与数据库的退役另行推进，需先处理全部活跃 custom 数据和旧调用，
-再验证 config 结果一致；本次 SDK 提示不代表服务端已经停止历史 custom 读取。
+退役前的旧服务端仍将 0/2 作为 custom 查询，ALL 返回两类结果。退役后保留 0 的空结果
+兼容路径，避免无 custom 数据的旧默认调用突然报错；它不会自动成为 config 查询。
+原始结果接口不提供 `GetConfig` 的配置默认值回退，显式类型 2 的错误会返回/抛给调用方。
+在已确认无活跃 custom 数据和类型 2 调用的环境，可以一次部署入口收口及运行时退役；
+数据库表和触发器收尾另行执行。新旧 SDK 显式读取 config 的协议相同。
+
+Go staticcheck 会对废弃镜像枚举报告 `SA1019`；Java `-Xlint:deprecation -Werror`
+可能因 `@Deprecated` 引用失败。应迁移为显式 config 查询；仅用于兼容测试的引用可按
+项目规范局部抑制告警。Python 本次仅提供文档提示，不新增运行时 warning。
 
 ### int64 与 JSON
 

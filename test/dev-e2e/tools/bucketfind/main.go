@@ -249,18 +249,18 @@ func main() {
 			Source: "experiment_group", Note: "E_cfg group B (bucket-derived)"})
 	}
 
-	// demo-test E_custom group C / D → custom KV maps
+	// demo-test E_custom group C / D → retired custom compatibility probes
 	for _, uid := range uidByTarget("demo/E_custom/C") {
 		add(Expectation{NS: nsDemo, UserID: uid, Key: "__custom__",
 			ExpectedVersionID: "",
-			ExpectedValue:     map[string]any{"variant": "A", "max_items": 10, "enabled": true},
-			Source:            "experiment_group", Note: "E_custom group C (custom_params)"})
+			ExpectedValue:     map[string]any{},
+			Source:            "retired_custom", Note: "Archived custom fixture: omitted type returns empty; type 2 rejects; 1/3 return config only"})
 	}
 	for _, uid := range uidByTarget("demo/E_custom/D") {
 		add(Expectation{NS: nsDemo, UserID: uid, Key: "__custom__",
 			ExpectedVersionID: "",
-			ExpectedValue:     map[string]any{"variant": "B", "max_items": 20, "enabled": false},
-			Source:            "experiment_group", Note: "E_custom group D (custom_params)"})
+			ExpectedValue:     map[string]any{},
+			Source:            "retired_custom", Note: "Archived custom fixture: omitted type returns empty; type 2 rejects; 1/3 return config only"})
 	}
 
 	// demo-test E_gap experiment hit → gap_key=gap-EXP(900200031)
@@ -337,18 +337,18 @@ func main() {
 			Source: "full", Note: "experiment-internal gap: E_cfg2 bucket==9999 uncovered → fall back to full release"})
 	}
 
-	// for_dev_agent_test E_custom2 gold/silver → custom KV maps
+	// for_dev_agent_test E_custom2 gold/silver → retired custom compatibility probes
 	for _, uid := range uidByTarget("fda/E_custom2/GOLD") {
 		add(Expectation{NS: nsFda, UserID: uid, Key: "__custom__",
 			ExpectedVersionID: "",
-			ExpectedValue:     map[string]any{"tier": "gold", "weight": 1.5},
-			Source:            "experiment_group", Note: "E_custom2 gold (custom_params)"})
+			ExpectedValue:     map[string]any{},
+			Source:            "retired_custom", Note: "Archived custom fixture: omitted type returns empty; type 2 rejects; 1/3 return config only"})
 	}
 	for _, uid := range uidByTarget("fda/E_custom2/SILVER") {
 		add(Expectation{NS: nsFda, UserID: uid, Key: "__custom__",
 			ExpectedVersionID: "",
-			ExpectedValue:     map[string]any{"tier": "silver", "weight": 2.5},
-			Source:            "experiment_group", Note: "E_custom2 silver (custom_params)"})
+			ExpectedValue:     map[string]any{},
+			Source:            "retired_custom", Note: "Archived custom fixture: omitted type returns empty; type 2 rejects; 1/3 return config only"})
 	}
 
 	// for_dev_agent_test gray release: gray-fda-1 greeting=hi-GRAY(900400021)

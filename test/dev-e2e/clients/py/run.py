@@ -173,7 +173,7 @@ async def run_transport(client_tag: str, cfg, exps: List[Dict[str, Any]], r: Res
         # over a freshly-dialed cross-internet connection can be slow; priming it
         # avoids a one-off slow first call skewing a single assertion. Ignored.
         try:
-            wctx = cli.new_abtest_context("warmup-probe", None, NAMESPACES[0])
+            wctx = cli.new_abtest_context("warmup-probe", None)
             await cli.get_config(wctx, NAMESPACES[0], "welcome_text", "")
         except Exception:  # noqa: BLE001
             pass
@@ -194,25 +194,45 @@ async def assert_expectation(cli, client_tag, exp, r: Results, tac, abtest_pb2) 
     source = exp.get("source", "")
 
     if key == CUSTOM_KEY:
-        want = exp["expected_value"]
-        if not isinstance(want, dict):
-            r.bad(f"[{client_tag}] {ns}/{uid} custom: expected_value not an object")
+        request = {"user_info": tac.UserInfo(experiment_hash_id=uid, attrs=attrs)}
+        try:
+            response = await cli.get_experiment_result(ns, **request)  # Type omitted.
+            if (response.config_flat_kv or response.groups or response.gray_hits
+                    or (response.HasField("custom_flat_kv") and response.custom_flat_kv.fields)):
+                r.bad(f"[{client_tag}] default {ns}/{uid}: expected empty result")
+                return
+        except Exception as error:  # noqa: BLE001
+            r.bad(f"[{client_tag}] default {ns}/{uid}: {error}")
             return
         try:
-            resp = await cli.get_experiment_result(
-                ns,
-                user_info=tac.UserInfo(experiment_hash_id=uid, attrs=attrs),
+            await cli.get_experiment_result(
+                ns, **request,
                 experiment_type=abtest_pb2.ExperimentType.EXPERIMENT_TYPE_CUSTOM_PARAMS,
-                display_type=abtest_pb2.ResultDisplayType.RESULT_DISPLAY_TYPE_FLAT_KV,
             )
-        except Exception as e:  # noqa: BLE001
-            r.bad(f"[{client_tag}] get_experiment_result(custom) {ns}/{uid}: {e}")
-            return
-        got = struct_to_dict(resp.custom_flat_kv if resp.HasField("custom_flat_kv") else None)
-        if kv_equal(got, want):
-            r.ok(f"[{client_tag}] custom {ns}/{uid} custom_flat_kv = {want} ({source})")
+        except Exception as error:  # noqa: BLE001
+            if "custom_params is retired" not in str(error):
+                r.bad(f"[{client_tag}] retired custom {ns}/{uid}: unexpected error {error}")
+                return
         else:
-            r.bad(f"[{client_tag}] custom {ns}/{uid}: custom_flat_kv {got} want {want}")
+            r.bad(f"[{client_tag}] retired custom {ns}/{uid}: expected rejection")
+            return
+        try:
+            cv = await cli.get_experiment_result(
+                ns, **request,
+                experiment_type=abtest_pb2.ExperimentType.EXPERIMENT_TYPE_CONFIG_VERSION,
+            )
+            all_result = await cli.get_experiment_result(
+                ns, **request,
+                experiment_type=abtest_pb2.ExperimentType.EXPERIMENT_TYPE_ALL,
+            )
+            if (dict(cv.config_flat_kv) != dict(all_result.config_flat_kv)
+                    or (all_result.HasField("custom_flat_kv") and all_result.custom_flat_kv.fields)):
+                r.bad(f"[{client_tag}] ALL {ns}/{uid}: expected config-only parity")
+                return
+        except Exception as error:  # noqa: BLE001
+            r.bad(f"[{client_tag}] config types {ns}/{uid}: {error}")
+            return
+        r.ok(f"[{client_tag}] raw types {ns}/{uid}: 0 empty, 2 rejected, 1/3 config")
         return
 
     want_val = exp["expected_value"]
@@ -220,7 +240,7 @@ async def assert_expectation(cli, client_tag, exp, r: Results, tac, abtest_pb2) 
         r.bad(f"[{client_tag}] {ns}/{uid}/{key}: expected_value not a string")
         return
 
-    ctx = cli.new_abtest_context(uid, attrs, ns)
+    ctx = cli.new_abtest_context(uid, attrs)
     try:
         got = await cli.get_config(ctx, ns, key, DEFAULT_SENTINEL)
     except Exception as e:  # noqa: BLE001

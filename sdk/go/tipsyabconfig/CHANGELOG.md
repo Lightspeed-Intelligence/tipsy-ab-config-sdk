@@ -20,10 +20,14 @@ bump first, then an SDK tag bump.
 
 ## [Unreleased]
 
-### Changed
+### Deprecated
 - 标记 `ExperimentTypeCustomParams` 已废弃，新接入使用 `ExperimentTypeConfigVersion`；
-  更新原始结果 API 文档与示例。保留所有枚举值、字段、公共方法和零值请求的历史默认行为，
+  更新原始结果 API 文档与示例。保留所有枚举值、字段、公共方法和零值请求的 wire 值，
   `GetConfig`、get-all 与 prefetch 的 config 读取语义不变。
+- 服务端退役 custom 后，合法类型 0 请求成功返回空结果，显式类型 2 返回
+  `FailedPrecondition` / HTTP 400，ALL 只返回 config；旧服务端仍沿用历史行为。
+- staticcheck 会对废弃枚举引用报告 `SA1019`；将 lint 诊断视为错误的消费方需迁移
+  为显式 config 查询，或对兼容测试按项目规范局部抑制。
 
 ## [0.16.0] - 2026-11-03
 

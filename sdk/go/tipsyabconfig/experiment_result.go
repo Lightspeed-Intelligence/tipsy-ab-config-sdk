@@ -13,21 +13,21 @@ import (
 // GetExperimentResult client surface (design 04 §B.6). It lets business code
 // select experiment types without importing the generated proto package
 // directly. New integrations should select ExperimentTypeConfigVersion;
-// custom_params is deprecated and retained for historical experiments.
+// custom_params is deprecated; its wire value remains available for compatibility.
 type ExperimentType int32
 
 const (
-	// ExperimentTypeUnspecified is treated server-side as the default
-	// (custom_params).
+	// ExperimentTypeUnspecified is sent unchanged. Servers with custom_params
+	// retired return a successful empty result; older servers query custom.
 	ExperimentTypeUnspecified ExperimentType = ExperimentType(abtestv1.ExperimentType_EXPERIMENT_TYPE_UNSPECIFIED)
 	// ExperimentTypeConfigVersion selects config_version experiments.
 	ExperimentTypeConfigVersion ExperimentType = ExperimentType(abtestv1.ExperimentType_EXPERIMENT_TYPE_CONFIG_VERSION)
 	// ExperimentTypeCustomParams selects custom_params experiments.
 	//
-	// Deprecated: custom_params is retained for historical experiments. Use
-	// ExperimentTypeConfigVersion for new integrations.
+	// Deprecated: servers with custom_params retired reject explicit custom
+	// requests. Use ExperimentTypeConfigVersion for config queries.
 	ExperimentTypeCustomParams ExperimentType = ExperimentType(abtestv1.ExperimentType_EXPERIMENT_TYPE_CUSTOM_PARAMS)
-	// ExperimentTypeAll selects both experiment types.
+	// ExperimentTypeAll selects config only on retired servers, both types on older servers.
 	ExperimentTypeAll ExperimentType = ExperimentType(abtestv1.ExperimentType_EXPERIMENT_TYPE_ALL)
 )
 
@@ -47,7 +47,7 @@ const (
 // client (design 04 §B.6). It exposes every wire parameter for raw experiment
 // results, including per-group results and historical custom_params results.
 // New integrations should set Type to ExperimentTypeConfigVersion explicitly;
-// the zero value retains the server's historical custom_params default.
+// the zero value is sent unchanged and returns empty on retired servers.
 type ExperimentResultRequest struct {
 	// Namespace is the target namespace. Empty resolves to the project default
 	// namespace (decision A-3); empty with no default returns
@@ -64,7 +64,7 @@ type ExperimentResultRequest struct {
 	LayerIds []string
 
 	// Type selects the experiment type(s) to evaluate. Zero value
-	// (ExperimentTypeUnspecified) is treated server-side as the default.
+	// (ExperimentTypeUnspecified) returns empty on servers with custom retired.
 	Type ExperimentType
 
 	// DisplayType selects the result shape. Zero value
@@ -88,7 +88,9 @@ type ExperimentResultRequest struct {
 //
 // custom_params is deprecated; use ExperimentTypeConfigVersion for new raw
 // result queries, or GetConfig to resolve configuration values. The public
-// method, legacy fields, and zero-value request behavior remain supported.
+// method and legacy fields remain available. On servers with custom retired,
+// Type 0 succeeds with an empty result, Type 2 returns FailedPrecondition, and
+// Type 3 returns config only. The SDK does not rewrite the zero-value request.
 //
 // gray_hits is grouped per hit gray release: each GrayReleaseHit carries a
 // release_id plus a key_versions map (config_key.key name → versionId), i.e.

@@ -179,3 +179,15 @@ Raw HTTP/gRPC attributes use the typed `Value` envelope, for example
 The SQL is idempotent and scoped to the fixture namespaces and fixed id band.
 Teardown deliberately retains namespace-registry rows and the generated root
 domain so the namespaces remain usable.
+
+## Retired custom result contract
+
+These drivers target a server with custom runtime retired. The eight historical
+`__custom__` fixture rows now check omitted type 0 succeeds with an empty result,
+explicit type 2 rejects with the retirement error (HTTP 400 / gRPC
+FailedPrecondition), and types 1/3 return the same config flat map without custom
+values. Config GetConfig/full/gray assertions remain active. Seed custom rows are
+archived, have no slots, and do not create live custom experiments. The SQL seed
+is operator-run test data, not an application migration or production rollout.
+Use a disposable isolated database for regression; these scripts do not authorize
+seeding or testing against a shared deployment.

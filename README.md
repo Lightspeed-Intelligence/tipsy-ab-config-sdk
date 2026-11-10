@@ -83,9 +83,11 @@ README 和 `example/` 目录。
 ## custom_params 废弃提示
 
 新接入使用 `config_version`。`custom_params` 已废弃，Go / Python / Java SDK 保留历史
-实验读取所需的枚举、字段和公共方法。`GetConfig` 系列仍按原来的 config 解析路径工作；
-原始 `GetExperimentResult` 系列省略类型时仍发送 `UNSPECIFIED`（0），服务端沿用历史
-custom 默认行为。因此读取 config 原始结果时应显式指定 `CONFIG_VERSION`：
+协议兼容所需的枚举、字段和公共方法。`GetConfig` 系列仍按原来的 config 解析路径工作。
+原始 `GetExperimentResult` 系列省略类型时仍发送 `UNSPECIFIED`（0）：服务端退役 custom
+运行时后，0 成功返回空结果，显式 `CUSTOM_PARAMS=2` 返回 gRPC `FailedPrecondition` /
+HTTP 400，`ALL=3` 只返回 config；`custom_flat_kv` 保留但不再填充。
+读取 config 原始结果时应显式指定 `CONFIG_VERSION`：
 
 ```go
 result, err := client.GetExperimentResult(ctx, tipsyabconfig.ExperimentResultRequest{

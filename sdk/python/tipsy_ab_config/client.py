@@ -19,7 +19,8 @@ Mirrors ``sdk/go/tipsyabconfig/sdk.go`` with asyncio semantics:
 - ``Client.get_experiment_result`` is the thin client that exposes every
   wire parameter (namespace / user_info / layer_ids / type / display).
   New integrations explicitly select ``EXPERIMENT_TYPE_CONFIG_VERSION``;
-  ``custom_params`` is deprecated and retained for historical experiments.
+  ``custom_params`` is deprecated. Servers with custom retired return empty for
+  type 0, reject type 2, and return config only for ALL; defaults are not rewritten.
 - ``Client.close`` cancels background tasks and closes the gRPC channels.
 """
 
@@ -1398,9 +1399,11 @@ class Client:
         result queries, pass ``EXPERIMENT_TYPE_CONFIG_VERSION`` explicitly;
         use :meth:`get_config` to resolve configuration values. The enum values,
         response fields, and this public method remain available. Omitting
-        ``experiment_type`` still sends ``UNSPECIFIED`` (0), preserving the
-        server's historical custom_params default. This is a documentation
-        notice; it does not emit a runtime warning.
+        ``experiment_type`` still sends ``UNSPECIFIED`` (0). Servers with custom
+        retired return empty for valid type 0 requests, raise the transport error
+        for explicit type 2 (gRPC FailedPrecondition / HTTP 400), and return config
+        only for ALL. Older servers retain historical custom behavior. This is
+        a documentation notice; it does not emit a runtime warning or rewrite defaults.
 
         ``gray_hits`` is grouped per hit gray release: each ``GrayReleaseHit``
         carries a ``release_id`` plus a ``key_versions`` map (config_key.key

@@ -65,13 +65,9 @@
     "user_attrs": {},
     "key": "__custom__",
     "expected_version_id": "",
-    "expected_value": {
-      "enabled": false,
-      "max_items": 20,
-      "variant": "B"
-    },
-    "source": "experiment_group",
-    "note": "E_custom group D (custom_params)",
+    "expected_value": {},
+    "source": "retired_custom",
+    "note": "Archived custom fixture: omitted type returns empty; type 2 rejects; 1/3 return config only",
     "applies_to": [
       "http",
       "grpc",
@@ -193,13 +189,9 @@
     "user_attrs": {},
     "key": "__custom__",
     "expected_version_id": "",
-    "expected_value": {
-      "enabled": false,
-      "max_items": 20,
-      "variant": "B"
-    },
-    "source": "experiment_group",
-    "note": "E_custom group D (custom_params)",
+    "expected_value": {},
+    "source": "retired_custom",
+    "note": "Archived custom fixture: omitted type returns empty; type 2 rejects; 1/3 return config only",
     "applies_to": [
       "http",
       "grpc",
@@ -321,13 +313,9 @@
     "user_attrs": {},
     "key": "__custom__",
     "expected_version_id": "",
-    "expected_value": {
-      "enabled": true,
-      "max_items": 10,
-      "variant": "A"
-    },
-    "source": "experiment_group",
-    "note": "E_custom group C (custom_params)",
+    "expected_value": {},
+    "source": "retired_custom",
+    "note": "Archived custom fixture: omitted type returns empty; type 2 rejects; 1/3 return config only",
     "applies_to": [
       "http",
       "grpc",
@@ -445,13 +433,9 @@
     "user_attrs": {},
     "key": "__custom__",
     "expected_version_id": "",
-    "expected_value": {
-      "enabled": true,
-      "max_items": 10,
-      "variant": "A"
-    },
-    "source": "experiment_group",
-    "note": "E_custom group C (custom_params)",
+    "expected_value": {},
+    "source": "retired_custom",
+    "note": "Archived custom fixture: omitted type returns empty; type 2 rejects; 1/3 return config only",
     "applies_to": [
       "http",
       "grpc",
@@ -549,12 +533,9 @@
     "user_attrs": {},
     "key": "__custom__",
     "expected_version_id": "",
-    "expected_value": {
-      "tier": "silver",
-      "weight": 2.5
-    },
-    "source": "experiment_group",
-    "note": "E_custom2 silver (custom_params)",
+    "expected_value": {},
+    "source": "retired_custom",
+    "note": "Archived custom fixture: omitted type returns empty; type 2 rejects; 1/3 return config only",
     "applies_to": [
       "http",
       "grpc",
@@ -592,12 +573,9 @@
     "user_attrs": {},
     "key": "__custom__",
     "expected_version_id": "",
-    "expected_value": {
-      "tier": "gold",
-      "weight": 1.5
-    },
-    "source": "experiment_group",
-    "note": "E_custom2 gold (custom_params)",
+    "expected_value": {},
+    "source": "retired_custom",
+    "note": "Archived custom fixture: omitted type returns empty; type 2 rejects; 1/3 return config only",
     "applies_to": [
       "http",
       "grpc",
@@ -655,12 +633,9 @@
     "user_attrs": {},
     "key": "__custom__",
     "expected_version_id": "",
-    "expected_value": {
-      "tier": "silver",
-      "weight": 2.5
-    },
-    "source": "experiment_group",
-    "note": "E_custom2 silver (custom_params)",
+    "expected_value": {},
+    "source": "retired_custom",
+    "note": "Archived custom fixture: omitted type returns empty; type 2 rejects; 1/3 return config only",
     "applies_to": [
       "http",
       "grpc",
@@ -698,12 +673,9 @@
     "user_attrs": {},
     "key": "__custom__",
     "expected_version_id": "",
-    "expected_value": {
-      "tier": "gold",
-      "weight": 1.5
-    },
-    "source": "experiment_group",
-    "note": "E_custom2 gold (custom_params)",
+    "expected_value": {},
+    "source": "retired_custom",
+    "note": "Archived custom fixture: omitted type returns empty; type 2 rejects; 1/3 return config only",
     "applies_to": [
       "http",
       "grpc",

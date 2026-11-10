@@ -143,7 +143,7 @@ type experimentResultRequest struct {
 	Namespace      string                 `json:"namespace"`
 	UserID         string                 `json:"userId,omitempty"`
 	UserAttrs      map[string]interface{} `json:"userAttrs,omitempty"`
-	ExperimentType string                 `json:"experimentType"`
+	ExperimentType string                 `json:"experimentType,omitempty"`
 	DisplayType    string                 `json:"displayType"`
 	LayerIDs       []string               `json:"layerIds,omitempty"`
 }
@@ -152,6 +152,8 @@ type experimentResultRequest struct {
 // server returns int64 version ids as JSON strings, so config_flat_kv is a
 // map[string]string here. custom_flat_kv is the raw object (protojson Struct).
 type experimentResultResponse struct {
+	Groups       []json.RawMessage      `json:"groups"`
+	GrayHits     []json.RawMessage      `json:"gray_hits"`
 	ConfigFlatKV map[string]string      `json:"config_flat_kv"`
 	CustomFlatKV map[string]interface{} `json:"custom_flat_kv"`
 	ComputedAt   interface{}            `json:"computed_at"`

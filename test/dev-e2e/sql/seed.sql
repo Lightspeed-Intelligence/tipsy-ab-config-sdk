@@ -28,7 +28,7 @@
 --       for_dev_agent_test:  config_key 900300xxx, config_version 900400xxx
 --       release_full         900500xxx (both ns)
 --       release_whitelist    900600xxx (both ns)
---   - Derived BIGSERIAL tables (experiment_config_param / layer_key_claim /
+--   - Derived BIGSERIAL tables (experiment_config_param /
 --     experiment_group_whitelist_uid / release_whitelist_uid_active) get no
 --     explicit id; they are made idempotent via their natural UNIQUE keys.
 --   - root domain id = "root:<ns>" (auto-created by the platform; we backstop
@@ -131,12 +131,15 @@ ON CONFLICT (id) DO UPDATE SET
   name = EXCLUDED.name, salt = EXCLUDED.salt, hash_fn = EXCLUDED.hash_fn,
   traffic_total = EXCLUDED.traffic_total, admission = EXCLUDED.admission, status = EXCLUDED.status;
 
+-- Historical custom fixtures are archived and never own live slots. Also clean
+-- the two old fixture slots when reapplying this idempotent seed.
+DELETE FROM layer_slot WHERE id IN ('demo-test:slot:custom', 'for_dev_agent_test:slot:custom');
+
 -- ----------------------------------------------------------------------------
 -- A.6 layer_slot (kind='experiment'; L_gap covers ONLY [0,4999]).
 -- ----------------------------------------------------------------------------
 INSERT INTO layer_slot (id, layer_id, kind, experiment_id, traffic_range_lo, traffic_range_hi) VALUES
   ('demo-test:slot:cfg',    'demo-test:layer:cfg',    'experiment', 'demo-test:exp:cfg',    0, 9999),
-  ('demo-test:slot:custom', 'demo-test:layer:custom', 'experiment', 'demo-test:exp:custom', 0, 9999),
   ('demo-test:slot:gap',    'demo-test:layer:gap',    'experiment', 'demo-test:exp:gap',    0, 4999),
   ('demo-test:slot:admit',  'demo-test:layer:admit',  'experiment', 'demo-test:exp:admit',  0, 9999)
 ON CONFLICT (id) DO UPDATE SET
@@ -144,11 +147,11 @@ ON CONFLICT (id) DO UPDATE SET
   traffic_range_lo = EXCLUDED.traffic_range_lo, traffic_range_hi = EXCLUDED.traffic_range_hi;
 
 -- ----------------------------------------------------------------------------
--- A.7 experiment (status='running' is required to produce output).
+-- A.7 experiments: config runs; custom is archived retirement test data.
 -- ----------------------------------------------------------------------------
 INSERT INTO experiment (id, business_namespace, layer_id, type, name, status, salt, hash_fn, traffic_total, admission, sticky_enabled) VALUES
   ('demo-test:exp:cfg',    'demo-test', 'demo-test:layer:cfg',    'config_version', 'E_cfg',    'running', 'E_cfg_demo',    'xxhash', 10000, '{}'::jsonb, TRUE),
-  ('demo-test:exp:custom', 'demo-test', 'demo-test:layer:custom', 'custom_params',  'E_custom', 'running', 'E_custom_demo', 'xxhash', 10000, '{}'::jsonb, FALSE),
+  ('demo-test:exp:custom', 'demo-test', 'demo-test:layer:custom', 'custom_params',  'E_custom', 'archived', 'E_custom_demo', 'xxhash', 10000, '{}'::jsonb, FALSE),
   ('demo-test:exp:gap',    'demo-test', 'demo-test:layer:gap',    'config_version', 'E_gap',    'running', 'E_gap_demo',    'xxhash', 10000, '{}'::jsonb, FALSE),
   ('demo-test:exp:admit',  'demo-test', 'demo-test:layer:admit',  'config_version', 'E_admit',  'running', 'E_admit_demo',  'xxhash', 10000,
      '{"field":"country","op":"==","value":"US"}'::jsonb, FALSE)
@@ -209,25 +212,20 @@ ON CONFLICT (group_id, key_id) DO UPDATE SET
   version_id = EXCLUDED.version_id;
 
 -- ----------------------------------------------------------------------------
--- A.11 layer_key_claim: key → owning layer (UNIQUE(business_namespace,key_id),
--- GLOBAL per ns). Only config_version keys are claimed; custom_params claims none.
--- ----------------------------------------------------------------------------
-INSERT INTO layer_key_claim (business_namespace, key_id, layer_id) VALUES
-  ('demo-test', 900100001, 'demo-test:layer:cfg'),   -- welcome_text → cfg
-  ('demo-test', 900100002, 'demo-test:layer:cfg'),   -- banner_color → cfg
-  ('demo-test', 900100003, 'demo-test:layer:gap'),   -- gap_key → gap
-  ('demo-test', 900100004, 'demo-test:layer:admit')  -- admit_key → admit
-ON CONFLICT (business_namespace, key_id) DO UPDATE SET layer_id = EXCLUDED.layer_id;
-
+-- Historical layer_key_claim was dropped by migration 0012; do not seed it.
 -- ----------------------------------------------------------------------------
 -- A.12 gray release on welcome_text → welcome-GRAY (900200013), uids
 -- gray-user-1, gray-user-2. release_whitelist id 900600001.
 -- ----------------------------------------------------------------------------
-INSERT INTO release_whitelist (id, namespace, key_id, version_id, operator, status)
-VALUES (900600001, 'demo-test', 900100001, 900200013, 'e2e', 'active')
+INSERT INTO release_whitelist (id, namespace, operator, status)
+VALUES (900600001, 'demo-test', 'e2e', 'active')
 ON CONFLICT (id) DO UPDATE SET
-  namespace = EXCLUDED.namespace, key_id = EXCLUDED.key_id, version_id = EXCLUDED.version_id,
-  operator = EXCLUDED.operator, status = EXCLUDED.status;
+  namespace = EXCLUDED.namespace, operator = EXCLUDED.operator, status = EXCLUDED.status;
+
+-- Since migration 0009 the key/version pair lives in the child table.
+INSERT INTO release_whitelist_key (release_id, key_id, version_id)
+VALUES (900600001, 900100001, 900200013)
+ON CONFLICT (release_id, key_id) DO UPDATE SET version_id = EXCLUDED.version_id;
 
 INSERT INTO release_whitelist_uid (id, release_id, uid) VALUES
   (900600101, 900600001, 'gray-user-1'),
@@ -302,11 +300,10 @@ ON CONFLICT (id) DO UPDATE SET
   traffic_total = EXCLUDED.traffic_total, admission = EXCLUDED.admission, status = EXCLUDED.status;
 
 -- ----------------------------------------------------------------------------
--- B.6 layer_slot (both cover [0,9999]).
+-- B.6 config layer_slot covers [0,9999]; archived custom has no slot.
 -- ----------------------------------------------------------------------------
 INSERT INTO layer_slot (id, layer_id, kind, experiment_id, traffic_range_lo, traffic_range_hi) VALUES
-  ('for_dev_agent_test:slot:cfg',    'for_dev_agent_test:layer:cfg',    'experiment', 'for_dev_agent_test:exp:cfg',    0, 9999),
-  ('for_dev_agent_test:slot:custom', 'for_dev_agent_test:layer:custom', 'experiment', 'for_dev_agent_test:exp:custom', 0, 9999)
+  ('for_dev_agent_test:slot:cfg',    'for_dev_agent_test:layer:cfg',    'experiment', 'for_dev_agent_test:exp:cfg',    0, 9999)
 ON CONFLICT (id) DO UPDATE SET
   layer_id = EXCLUDED.layer_id, kind = EXCLUDED.kind, experiment_id = EXCLUDED.experiment_id,
   traffic_range_lo = EXCLUDED.traffic_range_lo, traffic_range_hi = EXCLUDED.traffic_range_hi;
@@ -316,7 +313,7 @@ ON CONFLICT (id) DO UPDATE SET
 -- ----------------------------------------------------------------------------
 INSERT INTO experiment (id, business_namespace, layer_id, type, name, status, salt, hash_fn, traffic_total, admission, sticky_enabled) VALUES
   ('for_dev_agent_test:exp:cfg',    'for_dev_agent_test', 'for_dev_agent_test:layer:cfg',    'config_version', 'E_cfg2',    'running', 'E_cfg_fda',    'xxhash', 10000, '{}'::jsonb, FALSE),
-  ('for_dev_agent_test:exp:custom', 'for_dev_agent_test', 'for_dev_agent_test:layer:custom', 'custom_params',  'E_custom2', 'running', 'E_custom_fda', 'xxhash', 10000, '{}'::jsonb, FALSE)
+  ('for_dev_agent_test:exp:custom', 'for_dev_agent_test', 'for_dev_agent_test:layer:custom', 'custom_params',  'E_custom2', 'archived', 'E_custom_fda', 'xxhash', 10000, '{}'::jsonb, FALSE)
 ON CONFLICT (id) DO UPDATE SET
   business_namespace = EXCLUDED.business_namespace, layer_id = EXCLUDED.layer_id, type = EXCLUDED.type,
   name = EXCLUDED.name, status = EXCLUDED.status, salt = EXCLUDED.salt, hash_fn = EXCLUDED.hash_fn,
@@ -350,21 +347,19 @@ ON CONFLICT (group_id, key_id) DO UPDATE SET
   version_id = EXCLUDED.version_id;
 
 -- ----------------------------------------------------------------------------
--- B.10 layer_key_claim (color → cfg; greeting is gray-only, not claimed by a
--- layer/experiment).
--- ----------------------------------------------------------------------------
-INSERT INTO layer_key_claim (business_namespace, key_id, layer_id) VALUES
-  ('for_dev_agent_test', 900300001, 'for_dev_agent_test:layer:cfg')  -- color → cfg
-ON CONFLICT (business_namespace, key_id) DO UPDATE SET layer_id = EXCLUDED.layer_id;
-
+-- Historical layer_key_claim was dropped by migration 0012; do not seed it.
 -- ----------------------------------------------------------------------------
 -- B.11 gray release on greeting → hi-GRAY (900400021), uid gray-fda-1.
 -- ----------------------------------------------------------------------------
-INSERT INTO release_whitelist (id, namespace, key_id, version_id, operator, status)
-VALUES (900600011, 'for_dev_agent_test', 900300002, 900400021, 'e2e', 'active')
+INSERT INTO release_whitelist (id, namespace, operator, status)
+VALUES (900600011, 'for_dev_agent_test', 'e2e', 'active')
 ON CONFLICT (id) DO UPDATE SET
-  namespace = EXCLUDED.namespace, key_id = EXCLUDED.key_id, version_id = EXCLUDED.version_id,
-  operator = EXCLUDED.operator, status = EXCLUDED.status;
+  namespace = EXCLUDED.namespace, operator = EXCLUDED.operator, status = EXCLUDED.status;
+
+-- Since migration 0009 the key/version pair lives in the child table.
+INSERT INTO release_whitelist_key (release_id, key_id, version_id)
+VALUES (900600011, 900300002, 900400021)
+ON CONFLICT (release_id, key_id) DO UPDATE SET version_id = EXCLUDED.version_id;
 
 INSERT INTO release_whitelist_uid (id, release_id, uid) VALUES
   (900600111, 900600011, 'gray-fda-1')

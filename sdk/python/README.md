@@ -177,9 +177,12 @@ and group inspection, including historical custom parameters. Values in `config_
 `EXPERIMENT_TYPE_CUSTOM_PARAMS` is deprecated and retained for historical
 experiments. The enum values, response fields, and public methods remain
 available. This is a documentation notice, with no runtime warning. Omitting
-`experiment_type` still sends `UNSPECIFIED` (0), preserving the server's
-historical custom default. `get_config` continues to use `CONFIG_VERSION`.
-For new raw result queries, select it explicitly:
+`experiment_type` still sends `UNSPECIFIED` (0). After server-side retirement,
+valid type 0 requests succeed with empty results, explicit type 2 requests raise
+the gRPC `FailedPrecondition` / HTTP 400 transport error, and `ALL` returns config
+only. `custom_flat_kv` is retained but not populated. Older servers retain
+historical custom behavior; the SDK does not rewrite defaults.
+`get_config` continues to use `CONFIG_VERSION`. For raw config queries, select it explicitly:
 
 ```python
 from tipsy_ab_config import UserInfo

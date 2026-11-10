@@ -8,10 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed
+### Deprecated
 - 为 `ExperimentType.CUSTOM_PARAMS` 增加 `@Deprecated`，新接入使用 `CONFIG_VERSION`；
   更新原始结果 API 文档与示例。保留枚举值、字段、公共方法和 `UNSPECIFIED` 默认类型，
   config/get-all/prefetch 语义不变。
+- 服务端退役 custom 后，合法类型 0 请求成功返回空结果，显式类型 2 返回
+  `FailedPrecondition` / HTTP 400（SDK 包装为 `TipsyConfigException`），ALL 只返回 config。
+- 消费方以 `-Xlint:deprecation -Werror` 编译且引用废弃枚举时会失败；应迁移为显式
+  config 查询，或对兼容测试按项目规范局部 `@SuppressWarnings("deprecation")`。
 
 ## [0.13.0] - 2026-11-03
 

@@ -9,8 +9,9 @@ import java.util.Map;
  * 03 / 05). It exposes every wire parameter for raw experiment results, including
  * per-group results and historical {@code custom_params} results.
  * New integrations should explicitly select {@link ExperimentType#CONFIG_VERSION};
- * the default remains {@link ExperimentType#UNSPECIFIED}, preserving the
- * server's historical {@code custom_params} behavior.
+ * the default remains {@link ExperimentType#UNSPECIFIED}. Servers with custom
+ * retired return empty for type 0, reject explicit type 2, and return config
+ * only for ALL. Older servers retain historical custom behavior.
  *
  * <p>Immutable; construct via {@link #builder()}. Mirrors the Go SDK's
  * {@code ExperimentResultRequest}.

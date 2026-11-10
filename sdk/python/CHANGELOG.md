@@ -8,10 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed
+### Deprecated
 - 文档标记 `EXPERIMENT_TYPE_CUSTOM_PARAMS` 已废弃，新接入显式选择
   `EXPERIMENT_TYPE_CONFIG_VERSION`，并提供原始结果查询示例；不增加运行时 warning。
   保留枚举值、字段、公共方法及 `UNSPECIFIED` 默认参数，config/get-all/prefetch 语义不变。
+- 服务端退役 custom 后，合法类型 0 请求成功返回空结果，显式类型 2 抛出
+  gRPC `FailedPrecondition` / HTTP 400 的 transport 错误，ALL 只返回 config；
+  旧服务端仍沿用历史 custom 行为，SDK 不改写默认类型。
 
 ## [0.17.0] - 2026-11-03
 

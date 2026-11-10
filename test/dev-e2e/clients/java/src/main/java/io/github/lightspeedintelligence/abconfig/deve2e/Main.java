@@ -254,12 +254,12 @@ public final class Main {
      * Drives one expectation row through the Java SDK. Config-version rows use
      * {@code getConfig} (dynamic, abtest-aware); custom rows use
      * {@code getExperimentResult} (custom_flat_kv). Mirrors the Go driver's
-     * {@code assertExpectation} / {@code assertCustom}.
+     * {@code assertExpectation} / {@code assertRetiredCustom}.
      */
     private static void assertExpectation(
             TipsyAbConfigClient cli, String client, Expectation e, Results r) {
         if (Expectation.CUSTOM_KEY.equals(e.key)) {
-            assertCustom(cli, client, e, r);
+            assertRetiredCustom(cli, client, e, r);
             return;
         }
 
@@ -287,48 +287,56 @@ public final class Main {
         }
     }
 
-    /**
-     * Exercises the SDK {@code getExperimentResult} wrapper for custom_params rows
-     * and deep-compares {@code custom_flat_kv} to the expected KV object. Mirrors
-     * the Go driver's {@code assertCustom}.
-     */
-    @SuppressWarnings("unchecked")
-    private static void assertCustom(
+    /** Checks the raw type contract against the retired server. */
+    @SuppressWarnings("deprecation") // Intentional compatibility test of wire value 2.
+    private static void assertRetiredCustom(
             TipsyAbConfigClient cli, String client, Expectation e, Results r) {
-        if (!(e.expectedValue instanceof Map<?, ?> wantRaw)) {
-            r.fail("[%s] %s/%s custom: expected_value not an object", client, e.ns, e.userId);
-            return;
-        }
-        Map<String, Object> want = (Map<String, Object>) wantRaw;
-
-        GetExperimentResultResponse resp;
+        ExperimentResultRequest.Builder builder = ExperimentResultRequest.builder()
+                .namespace(e.ns)
+                .userInfo(e.userId, Expectation.rawAttrs(e.userAttrs))
+                .displayType(ResultDisplayType.FLAT_KV);
         try {
-            // Explicit trace_id so the SDK call, the server compute log and any
-            // downstream exposure-report row all join on a recognisable id.
-            String traceId = "dev-e2e-java-" + client + "-" + e.ns + "-" + e.userId;
-            resp = cli.getExperimentResult(ExperimentResultRequest.builder()
-                    .namespace(e.ns)
-                    .userInfo(e.userId, Expectation.rawAttrs(e.userAttrs))
-                    .type(ExperimentType.CUSTOM_PARAMS)
-                    .displayType(ResultDisplayType.FLAT_KV)
-                    .traceId(traceId)
-                    .build());
+            GetExperimentResultResponse response = cli.getExperimentResult(builder.build());
+            if (!response.getConfigFlatKvMap().isEmpty() || response.getGroupsCount() != 0
+                    || response.getGrayHitsCount() != 0
+                    || (response.hasCustomFlatKv() && !response.getCustomFlatKv().getFieldsMap().isEmpty())) {
+                r.fail("[%s] default %s/%s: expected empty result", client, e.ns, e.userId);
+                return;
+            }
         } catch (RuntimeException ex) {
-            r.fail("[%s] getExperimentResult(custom) %s/%s: %s", client, e.ns, e.userId, ex);
+            r.fail("[%s] default %s/%s: %s", client, e.ns, e.userId, ex);
             return;
         }
-
-        Map<String, Object> got = new LinkedHashMap<>();
-        if (resp.hasCustomFlatKv()) {
-            got = structToMap(resp.getCustomFlatKv());
+        try {
+            cli.getExperimentResult(builder.type(ExperimentType.CUSTOM_PARAMS).build());
+            r.fail("[%s] retired custom %s/%s: expected rejection", client, e.ns, e.userId);
+            return;
+        } catch (RuntimeException ex) {
+            boolean retired = false;
+            for (Throwable cause = ex; cause != null; cause = cause.getCause()) {
+                if (cause.getMessage() != null && cause.getMessage().contains("custom_params is retired")) {
+                    retired = true;
+                    break;
+                }
+            }
+            if (!retired) {
+                r.fail("[%s] retired custom %s/%s: unexpected error %s", client, e.ns, e.userId, ex);
+                return;
+            }
         }
-        if (!Expectation.kvEqual(got, want)) {
-            r.fail("[%s] custom %s/%s: custom_flat_kv %s want %s",
-                    client, e.ns, e.userId, got, want);
+        try {
+            GetExperimentResultResponse cv = cli.getExperimentResult(builder.type(ExperimentType.CONFIG_VERSION).build());
+            GetExperimentResultResponse all = cli.getExperimentResult(builder.type(ExperimentType.ALL).build());
+            if (!cv.getConfigFlatKvMap().equals(all.getConfigFlatKvMap())
+                    || (all.hasCustomFlatKv() && !all.getCustomFlatKv().getFieldsMap().isEmpty())) {
+                r.fail("[%s] ALL %s/%s: expected config-only parity", client, e.ns, e.userId);
+                return;
+            }
+        } catch (RuntimeException ex) {
+            r.fail("[%s] config types %s/%s: %s", client, e.ns, e.userId, ex);
             return;
         }
-        r.pass("[%s] custom %s/%s custom_flat_kv = %s (%s)",
-                client, e.ns, e.userId, want, e.source);
+        r.pass("[%s] raw types %s/%s: 0 empty, 2 rejected, 1/3 config", client, e.ns, e.userId);
     }
 
     // ------------------------------------------------------------------
