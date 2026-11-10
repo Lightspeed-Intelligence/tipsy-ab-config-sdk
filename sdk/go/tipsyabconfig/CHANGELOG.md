@@ -22,6 +22,9 @@ bump first, then an SDK tag bump.
 
 ### Deprecated
 
+- 共享 proto 将枚举 2、`custom_flat_kv` 与 `params_custom` 标记为 deprecated；保留数值、
+  字段编号和访问方法。Go/Java 生成接口会增加废弃诊断，严格 lint 消费方需迁移或局部抑制。
+
 - 在服务端全量升级前，原始 config 查询必须显式传类型 1；旧服务端仍将 0 作为 custom 查询。
 - 标记 `ExperimentTypeCustomParams` 已废弃，新接入使用 `ExperimentTypeConfigVersion`；
   更新原始结果 API 文档与示例。保留所有枚举值、字段、公共方法和零值请求的 wire 值，

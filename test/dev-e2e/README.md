@@ -183,11 +183,10 @@ domain so the namespaces remain usable.
 ## Retired custom result contract
 
 These drivers target a server with custom runtime retired. The eight historical
-`__custom__` fixture rows now check omitted type 0 returns the same config as type 1,
+`__custom__` rows are protocol probes without custom experiment data. They check omitted type 0 returns the same config as type 1,
 explicit type 2 rejects with the retirement error (HTTP 400 / gRPC
 FailedPrecondition), and types 0/1/3 return the same config flat map without custom
-values. Config GetConfig/full/gray assertions remain active. Seed custom rows are
-archived, have no slots, and do not create live custom experiments. The SQL seed
+values. Config GetConfig/full/gray assertions remain active. The seed contains no custom experiments or custom derived table writes. The SQL seed
 is operator-run test data, not an application migration or production rollout.
 Use a disposable isolated database for regression; these scripts do not authorize
 seeding or testing against a shared deployment.

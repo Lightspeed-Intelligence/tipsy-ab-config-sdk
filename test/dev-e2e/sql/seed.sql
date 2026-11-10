@@ -123,7 +123,6 @@ ON CONFLICT (id) DO NOTHING;
 -- ----------------------------------------------------------------------------
 INSERT INTO layer (id, business_namespace, domain_id, name, salt, hash_fn, traffic_total, admission, status) VALUES
   ('demo-test:layer:cfg',    'demo-test', 'root:demo-test', 'cfg',    'L_cfg_demo',    'xxhash', 10000, '{}'::jsonb, 'active'),
-  ('demo-test:layer:custom', 'demo-test', 'root:demo-test', 'custom', 'L_custom_demo', 'xxhash', 10000, '{}'::jsonb, 'active'),
   ('demo-test:layer:gap',    'demo-test', 'root:demo-test', 'gap',    'L_gap_demo',    'xxhash', 10000, '{}'::jsonb, 'active'),
   ('demo-test:layer:admit',  'demo-test', 'root:demo-test', 'admit',  'L_admit_demo',  'xxhash', 10000, '{}'::jsonb, 'active')
 ON CONFLICT (id) DO UPDATE SET
@@ -131,8 +130,7 @@ ON CONFLICT (id) DO UPDATE SET
   name = EXCLUDED.name, salt = EXCLUDED.salt, hash_fn = EXCLUDED.hash_fn,
   traffic_total = EXCLUDED.traffic_total, admission = EXCLUDED.admission, status = EXCLUDED.status;
 
--- Historical custom fixtures are archived and never own live slots. Also clean
--- the two old fixture slots when reapplying this idempotent seed.
+-- Remove obsolete routing slots from earlier fixture versions.
 DELETE FROM layer_slot WHERE id IN ('demo-test:slot:custom', 'for_dev_agent_test:slot:custom');
 
 -- ----------------------------------------------------------------------------
@@ -147,11 +145,10 @@ ON CONFLICT (id) DO UPDATE SET
   traffic_range_lo = EXCLUDED.traffic_range_lo, traffic_range_hi = EXCLUDED.traffic_range_hi;
 
 -- ----------------------------------------------------------------------------
--- A.7 experiments: config runs; custom is archived retirement test data.
+-- A.7 experiments: config-only (0034 schema).
 -- ----------------------------------------------------------------------------
 INSERT INTO experiment (id, business_namespace, layer_id, type, name, status, salt, hash_fn, traffic_total, admission, sticky_enabled) VALUES
   ('demo-test:exp:cfg',    'demo-test', 'demo-test:layer:cfg',    'config_version', 'E_cfg',    'running', 'E_cfg_demo',    'xxhash', 10000, '{}'::jsonb, TRUE),
-  ('demo-test:exp:custom', 'demo-test', 'demo-test:layer:custom', 'custom_params',  'E_custom', 'archived', 'E_custom_demo', 'xxhash', 10000, '{}'::jsonb, FALSE),
   ('demo-test:exp:gap',    'demo-test', 'demo-test:layer:gap',    'config_version', 'E_gap',    'running', 'E_gap_demo',    'xxhash', 10000, '{}'::jsonb, FALSE),
   ('demo-test:exp:admit',  'demo-test', 'demo-test:layer:admit',  'config_version', 'E_admit',  'running', 'E_admit_demo',  'xxhash', 10000,
      '{"field":"country","op":"==","value":"US"}'::jsonb, FALSE)
@@ -169,9 +166,6 @@ INSERT INTO experiment_group (id, experiment_id, name, traffic_range_lo, traffic
   -- E_cfg A / B
   ('demo-test:grp:cfg:A', 'demo-test:exp:cfg', 'A', 0,    4999, '{}'::jsonb, '{"900100001":"900200011","900100002":"900200021"}'::jsonb),
   ('demo-test:grp:cfg:B', 'demo-test:exp:cfg', 'B', 5000, 9999, '{}'::jsonb, '{"900100001":"900200012","900100002":"900200022"}'::jsonb),
-  -- E_custom C / D (custom_params: arbitrary KV)
-  ('demo-test:grp:custom:C', 'demo-test:exp:custom', 'C', 0,    2999, '{}'::jsonb, '{"variant":"A","max_items":10,"enabled":true}'::jsonb),
-  ('demo-test:grp:custom:D', 'demo-test:exp:custom', 'D', 3000, 9999, '{}'::jsonb, '{"variant":"B","max_items":20,"enabled":false}'::jsonb),
   -- E_gap single group G
   ('demo-test:grp:gap:G', 'demo-test:exp:gap', 'G', 0, 9999, '{}'::jsonb, '{"900100003":"900200031"}'::jsonb),
   -- E_admit single group A
@@ -192,8 +186,8 @@ ON CONFLICT (group_id, uid) DO NOTHING;
 -- ----------------------------------------------------------------------------
 -- A.10 experiment_config_param: DERIVED index of config_version group params.
 -- One row per (group,key); experiment_status MUST equal the experiment status
--- ('running') for the row to enter GPV (and thus the SDK snapshot). custom_params
--- experiments do NOT contribute rows here. (UNIQUE(group_id,key_id)).
+-- ('running') for the row to enter GPV (and thus the SDK snapshot).
+-- UNIQUE(group_id,key_id).
 -- ----------------------------------------------------------------------------
 INSERT INTO experiment_config_param (business_namespace, layer_id, experiment_id, group_id, experiment_status, key_id, version_id) VALUES
   -- E_cfg A
@@ -292,15 +286,14 @@ ON CONFLICT (id) DO NOTHING;
 -- B.5 layers.
 -- ----------------------------------------------------------------------------
 INSERT INTO layer (id, business_namespace, domain_id, name, salt, hash_fn, traffic_total, admission, status) VALUES
-  ('for_dev_agent_test:layer:cfg',    'for_dev_agent_test', 'root:for_dev_agent_test', 'cfg',    'L_cfg_fda',    'xxhash', 10000, '{}'::jsonb, 'active'),
-  ('for_dev_agent_test:layer:custom', 'for_dev_agent_test', 'root:for_dev_agent_test', 'custom', 'L_custom_fda', 'xxhash', 10000, '{}'::jsonb, 'active')
+  ('for_dev_agent_test:layer:cfg',    'for_dev_agent_test', 'root:for_dev_agent_test', 'cfg',    'L_cfg_fda',    'xxhash', 10000, '{}'::jsonb, 'active')
 ON CONFLICT (id) DO UPDATE SET
   business_namespace = EXCLUDED.business_namespace, domain_id = EXCLUDED.domain_id,
   name = EXCLUDED.name, salt = EXCLUDED.salt, hash_fn = EXCLUDED.hash_fn,
   traffic_total = EXCLUDED.traffic_total, admission = EXCLUDED.admission, status = EXCLUDED.status;
 
 -- ----------------------------------------------------------------------------
--- B.6 config layer_slot covers [0,9999]; archived custom has no slot.
+-- B.6 config layer_slot covers [0,9999].
 -- ----------------------------------------------------------------------------
 INSERT INTO layer_slot (id, layer_id, kind, experiment_id, traffic_range_lo, traffic_range_hi) VALUES
   ('for_dev_agent_test:slot:cfg',    'for_dev_agent_test:layer:cfg',    'experiment', 'for_dev_agent_test:exp:cfg',    0, 9999)
@@ -312,8 +305,7 @@ ON CONFLICT (id) DO UPDATE SET
 -- B.7 experiment.
 -- ----------------------------------------------------------------------------
 INSERT INTO experiment (id, business_namespace, layer_id, type, name, status, salt, hash_fn, traffic_total, admission, sticky_enabled) VALUES
-  ('for_dev_agent_test:exp:cfg',    'for_dev_agent_test', 'for_dev_agent_test:layer:cfg',    'config_version', 'E_cfg2',    'running', 'E_cfg_fda',    'xxhash', 10000, '{}'::jsonb, FALSE),
-  ('for_dev_agent_test:exp:custom', 'for_dev_agent_test', 'for_dev_agent_test:layer:custom', 'custom_params',  'E_custom2', 'archived', 'E_custom_fda', 'xxhash', 10000, '{}'::jsonb, FALSE)
+  ('for_dev_agent_test:exp:cfg',    'for_dev_agent_test', 'for_dev_agent_test:layer:cfg',    'config_version', 'E_cfg2',    'running', 'E_cfg_fda',    'xxhash', 10000, '{}'::jsonb, FALSE)
 ON CONFLICT (id) DO UPDATE SET
   business_namespace = EXCLUDED.business_namespace, layer_id = EXCLUDED.layer_id, type = EXCLUDED.type,
   name = EXCLUDED.name, status = EXCLUDED.status, salt = EXCLUDED.salt, hash_fn = EXCLUDED.hash_fn,
@@ -326,9 +318,7 @@ ON CONFLICT (id) DO UPDATE SET
 INSERT INTO experiment_group (id, experiment_id, name, traffic_range_lo, traffic_range_hi, admission, params) VALUES
   ('for_dev_agent_test:grp:cfg:G1', 'for_dev_agent_test:exp:cfg', 'G1', 0,    3332, '{}'::jsonb, '{"900300001":"900400011"}'::jsonb),
   ('for_dev_agent_test:grp:cfg:G2', 'for_dev_agent_test:exp:cfg', 'G2', 3333, 6665, '{}'::jsonb, '{"900300001":"900400012"}'::jsonb),
-  ('for_dev_agent_test:grp:cfg:G3', 'for_dev_agent_test:exp:cfg', 'G3', 6666, 9998, '{}'::jsonb, '{"900300001":"900400013"}'::jsonb),
-  ('for_dev_agent_test:grp:custom:gold',   'for_dev_agent_test:exp:custom', 'gold',   0,    4999, '{}'::jsonb, '{"tier":"gold","weight":1.5}'::jsonb),
-  ('for_dev_agent_test:grp:custom:silver', 'for_dev_agent_test:exp:custom', 'silver', 5000, 9999, '{}'::jsonb, '{"tier":"silver","weight":2.5}'::jsonb)
+  ('for_dev_agent_test:grp:cfg:G3', 'for_dev_agent_test:exp:cfg', 'G3', 6666, 9998, '{}'::jsonb, '{"900300001":"900400013"}'::jsonb)
 ON CONFLICT (id) DO UPDATE SET
   experiment_id = EXCLUDED.experiment_id, name = EXCLUDED.name,
   traffic_range_lo = EXCLUDED.traffic_range_lo, traffic_range_hi = EXCLUDED.traffic_range_hi,

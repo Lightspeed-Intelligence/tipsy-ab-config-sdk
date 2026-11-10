@@ -28,8 +28,6 @@ BEGIN;
 DELETE FROM experiment_config_param
  WHERE business_namespace IN ('demo-test', 'for_dev_agent_test');
 
-DELETE FROM experiment_custom_param
- WHERE business_namespace IN ('demo-test', 'for_dev_agent_test');
 
 -- layer_key_claim was dropped by migration 0012.
 

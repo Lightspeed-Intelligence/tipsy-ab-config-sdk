@@ -10,6 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Deprecated
 
+- 共享 proto 将枚举 2、`custom_flat_kv` 与 `params_custom` 标记为 deprecated；保留数值、
+  字段编号和访问方法。Go/Java 生成接口会增加废弃诊断，严格 lint 消费方需迁移或局部抑制。
+
 - 在服务端全量升级前，原始 config 查询必须显式传类型 1；旧服务端仍将 0 作为 custom 查询。
 - 为 `ExperimentType.CUSTOM_PARAMS` 增加 `@Deprecated`，新接入使用 `CONFIG_VERSION`；
   更新原始结果 API 文档与示例。保留枚举值、字段、公共方法和 `UNSPECIFIED` 默认类型，
