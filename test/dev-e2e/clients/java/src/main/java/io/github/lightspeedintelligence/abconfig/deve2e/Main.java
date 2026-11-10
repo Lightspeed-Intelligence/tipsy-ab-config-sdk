@@ -295,12 +295,11 @@ public final class Main {
                 .namespace(e.ns)
                 .userInfo(e.userId, Expectation.rawAttrs(e.userAttrs))
                 .displayType(ResultDisplayType.FLAT_KV);
+        GetExperimentResultResponse response;
         try {
-            GetExperimentResultResponse response = cli.getExperimentResult(builder.build());
-            if (!response.getConfigFlatKvMap().isEmpty() || response.getGroupsCount() != 0
-                    || response.getGrayHitsCount() != 0
-                    || (response.hasCustomFlatKv() && !response.getCustomFlatKv().getFieldsMap().isEmpty())) {
-                r.fail("[%s] default %s/%s: expected empty result", client, e.ns, e.userId);
+            response = cli.getExperimentResult(builder.build());
+            if (response.hasCustomFlatKv() && !response.getCustomFlatKv().getFieldsMap().isEmpty()) {
+                r.fail("[%s] default %s/%s: expected config-only result", client, e.ns, e.userId);
                 return;
             }
         } catch (RuntimeException ex) {
@@ -327,7 +326,8 @@ public final class Main {
         try {
             GetExperimentResultResponse cv = cli.getExperimentResult(builder.type(ExperimentType.CONFIG_VERSION).build());
             GetExperimentResultResponse all = cli.getExperimentResult(builder.type(ExperimentType.ALL).build());
-            if (!cv.getConfigFlatKvMap().equals(all.getConfigFlatKvMap())
+            if (!response.getConfigFlatKvMap().equals(cv.getConfigFlatKvMap())
+                    || !cv.getConfigFlatKvMap().equals(all.getConfigFlatKvMap())
                     || (all.hasCustomFlatKv() && !all.getCustomFlatKv().getFieldsMap().isEmpty())) {
                 r.fail("[%s] ALL %s/%s: expected config-only parity", client, e.ns, e.userId);
                 return;
@@ -336,7 +336,7 @@ public final class Main {
             r.fail("[%s] config types %s/%s: %s", client, e.ns, e.userId, ex);
             return;
         }
-        r.pass("[%s] raw types %s/%s: 0 empty, 2 rejected, 1/3 config", client, e.ns, e.userId);
+        r.pass("[%s] raw types %s/%s: 0/1/3 config, 2 rejected", client, e.ns, e.userId);
     }
 
     // ------------------------------------------------------------------

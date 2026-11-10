@@ -19,7 +19,7 @@ This package mirrors the Go SDK 1:1:
   (namespace / user_info / layer_ids / type / display). New integrations should
   explicitly select ``EXPERIMENT_TYPE_CONFIG_VERSION``; ``custom_params`` is
   deprecated. Omitting the type keeps the ``UNSPECIFIED`` wire value: servers
-  with custom retired return empty for 0, reject 2, and return config only for
+  with custom retired treat 0 as CONFIG_VERSION, reject 2, and return config only for
   ALL. Older servers retain historical custom behavior.
 - :class:`tipsy_ab_config.fastapi_middleware.AbtestMiddleware` wires the
   AbtestContext into ``contextvars`` for FastAPI / Starlette apps.

@@ -16,7 +16,7 @@ import io.github.lightspeedintelligence.abconfig.proto.abtest.v1.GetExperimentRe
  */
 public enum ExperimentType {
 
-    /** Sent unchanged: empty on servers with custom retired, custom on older servers. */
+    /** Sent unchanged: CONFIG_VERSION on retired servers, custom on older servers. */
     UNSPECIFIED(0),
     /** Selects {@code config_version} experiments. */
     CONFIG_VERSION(1),

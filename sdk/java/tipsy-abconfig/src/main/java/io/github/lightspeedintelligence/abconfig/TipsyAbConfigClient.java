@@ -1247,7 +1247,7 @@ public final class TipsyAbConfigClient implements AutoCloseable {
      * {@link ExperimentType#CONFIG_VERSION} for new raw result queries, or
      * {@link #getConfig} to resolve configuration values. This public method,
      * and legacy response fields remain available. On servers with custom retired,
-     * type 0 succeeds with empty results, type 2 fails with FailedPrecondition
+     * type 0 is equivalent to CONFIG_VERSION, type 2 fails with FailedPrecondition
      * (HTTP 400), and ALL returns config only. Transport failures are wrapped in
      * TipsyConfigException; the SDK does not rewrite default request types.
      *

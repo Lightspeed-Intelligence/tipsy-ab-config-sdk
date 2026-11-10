@@ -18,7 +18,7 @@ type ExperimentType int32
 
 const (
 	// ExperimentTypeUnspecified is sent unchanged. Servers with custom_params
-	// retired return a successful empty result; older servers query custom.
+	// retired treat it as CONFIG_VERSION; older servers query custom.
 	ExperimentTypeUnspecified ExperimentType = ExperimentType(abtestv1.ExperimentType_EXPERIMENT_TYPE_UNSPECIFIED)
 	// ExperimentTypeConfigVersion selects config_version experiments.
 	ExperimentTypeConfigVersion ExperimentType = ExperimentType(abtestv1.ExperimentType_EXPERIMENT_TYPE_CONFIG_VERSION)
@@ -47,7 +47,7 @@ const (
 // client (design 04 §B.6). It exposes every wire parameter for raw experiment
 // results, including per-group results and historical custom_params results.
 // New integrations should set Type to ExperimentTypeConfigVersion explicitly;
-// the zero value is sent unchanged and returns empty on retired servers.
+// the zero value is sent unchanged and selects config on retired servers.
 type ExperimentResultRequest struct {
 	// Namespace is the target namespace. Empty resolves to the project default
 	// namespace (decision A-3); empty with no default returns
@@ -64,7 +64,8 @@ type ExperimentResultRequest struct {
 	LayerIds []string
 
 	// Type selects the experiment type(s) to evaluate. Zero value
-	// (ExperimentTypeUnspecified) returns empty on servers with custom retired.
+	// (ExperimentTypeUnspecified) selects config on servers with custom retired.
+	// Set CONFIG_VERSION explicitly until all server instances are upgraded.
 	Type ExperimentType
 
 	// DisplayType selects the result shape. Zero value
@@ -89,7 +90,7 @@ type ExperimentResultRequest struct {
 // custom_params is deprecated; use ExperimentTypeConfigVersion for new raw
 // result queries, or GetConfig to resolve configuration values. The public
 // method and legacy fields remain available. On servers with custom retired,
-// Type 0 succeeds with an empty result, Type 2 returns FailedPrecondition, and
+// Type 0 is equivalent to CONFIG_VERSION, Type 2 returns FailedPrecondition, and
 // Type 3 returns config only. The SDK does not rewrite the zero-value request.
 //
 // gray_hits is grouped per hit gray release: each GrayReleaseHit carries a

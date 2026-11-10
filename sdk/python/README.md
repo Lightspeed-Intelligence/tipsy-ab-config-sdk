@@ -178,11 +178,13 @@ and group inspection, including historical custom parameters. Values in `config_
 experiments. The enum values, response fields, and public methods remain
 available. This is a documentation notice, with no runtime warning. Omitting
 `experiment_type` still sends `UNSPECIFIED` (0). After server-side retirement,
-valid type 0 requests succeed with empty results, explicit type 2 requests raise
+type 0 is equivalent to CONFIG_VERSION, explicit type 2 requests raise
 the gRPC `FailedPrecondition` / HTTP 400 transport error, and `ALL` returns config
 only. `custom_flat_kv` is retained but not populated. Older servers retain
 historical custom behavior; the SDK does not rewrite defaults.
-`get_config` continues to use `CONFIG_VERSION`. For raw config queries, select it explicitly:
+`get_config` continues to use `CONFIG_VERSION`. Until all server instances are
+upgraded, raw config queries must select it explicitly; explicit selection is
+also recommended for new integrations:
 
 ```python
 from tipsy_ab_config import UserInfo

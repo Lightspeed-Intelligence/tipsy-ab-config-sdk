@@ -254,13 +254,13 @@ func main() {
 		add(Expectation{NS: nsDemo, UserID: uid, Key: "__custom__",
 			ExpectedVersionID: "",
 			ExpectedValue:     map[string]any{},
-			Source:            "retired_custom", Note: "Archived custom fixture: omitted type returns empty; type 2 rejects; 1/3 return config only"})
+			Source:            "retired_custom", Note: "Archived custom fixture: omitted type equals config; type 2 rejects; 0/1/3 return config only"})
 	}
 	for _, uid := range uidByTarget("demo/E_custom/D") {
 		add(Expectation{NS: nsDemo, UserID: uid, Key: "__custom__",
 			ExpectedVersionID: "",
 			ExpectedValue:     map[string]any{},
-			Source:            "retired_custom", Note: "Archived custom fixture: omitted type returns empty; type 2 rejects; 1/3 return config only"})
+			Source:            "retired_custom", Note: "Archived custom fixture: omitted type equals config; type 2 rejects; 0/1/3 return config only"})
 	}
 
 	// demo-test E_gap experiment hit → gap_key=gap-EXP(900200031)
@@ -342,13 +342,13 @@ func main() {
 		add(Expectation{NS: nsFda, UserID: uid, Key: "__custom__",
 			ExpectedVersionID: "",
 			ExpectedValue:     map[string]any{},
-			Source:            "retired_custom", Note: "Archived custom fixture: omitted type returns empty; type 2 rejects; 1/3 return config only"})
+			Source:            "retired_custom", Note: "Archived custom fixture: omitted type equals config; type 2 rejects; 0/1/3 return config only"})
 	}
 	for _, uid := range uidByTarget("fda/E_custom2/SILVER") {
 		add(Expectation{NS: nsFda, UserID: uid, Key: "__custom__",
 			ExpectedVersionID: "",
 			ExpectedValue:     map[string]any{},
-			Source:            "retired_custom", Note: "Archived custom fixture: omitted type returns empty; type 2 rejects; 1/3 return config only"})
+			Source:            "retired_custom", Note: "Archived custom fixture: omitted type equals config; type 2 rejects; 0/1/3 return config only"})
 	}
 
 	// for_dev_agent_test gray release: gray-fda-1 greeting=hi-GRAY(900400021)

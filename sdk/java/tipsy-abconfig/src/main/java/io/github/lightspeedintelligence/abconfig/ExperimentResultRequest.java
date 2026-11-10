@@ -10,8 +10,9 @@ import java.util.Map;
  * per-group results and historical {@code custom_params} results.
  * New integrations should explicitly select {@link ExperimentType#CONFIG_VERSION};
  * the default remains {@link ExperimentType#UNSPECIFIED}. Servers with custom
- * retired return empty for type 0, reject explicit type 2, and return config
- * only for ALL. Older servers retain historical custom behavior.
+ * retired treat type 0 as CONFIG_VERSION, reject explicit type 2, and return config
+ * only for ALL. Older servers retain historical custom behavior, so explicitly
+ * select CONFIG_VERSION until all instances are upgraded.
  *
  * <p>Immutable; construct via {@link #builder()}. Mirrors the Go SDK's
  * {@code ExperimentResultRequest}.

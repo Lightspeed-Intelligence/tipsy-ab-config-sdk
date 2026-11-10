@@ -47,7 +47,7 @@ message Value {
 
 // ExperimentType filters which experiment results are returned.
 enum ExperimentType {
-  EXPERIMENT_TYPE_UNSPECIFIED    = 0; // treated as default custom_params
+  EXPERIMENT_TYPE_UNSPECIFIED    = 0; // defaults to CONFIG_VERSION after server-side custom retirement; older servers default to custom_params
   EXPERIMENT_TYPE_CONFIG_VERSION = 1;
   EXPERIMENT_TYPE_CUSTOM_PARAMS  = 2;
   EXPERIMENT_TYPE_ALL            = 3;

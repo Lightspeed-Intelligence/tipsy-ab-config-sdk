@@ -342,7 +342,7 @@ SDK 升级本身不启用服务端退役，也不改写请求类型。
 
 | 类型 | wire 值 | 退役后的服务端行为 |
 |---|---:|---|
-| `UNSPECIFIED` | 0 | 省略类型仍原样发送 0；合法请求成功返回空结果，不计算 config/custom/gray/combo |
+| `UNSPECIFIED` | 0 | 省略类型仍原样发送 0；退役后的服务端按 CONFIG_VERSION(1) 计算并返回 config/gray；combo 参与事实按 config 请求记录 |
 | `CONFIG_VERSION` | 1 | 新接入显式选用，读取 config 实验与灰度结果 |
 | `CUSTOM_PARAMS` | 2 | 枚举保留；显式请求返回 gRPC `FailedPrecondition`，HTTP 400 |
 | `ALL` | 3 | 只返回 config 实验与灰度结果，不填充 custom 字段 |
@@ -354,8 +354,9 @@ SDK 升级本身不启用服务端退役，也不改写请求类型。
 `ExperimentTypeConfigVersion`、Python `EXPERIMENT_TYPE_CONFIG_VERSION` 或 Java
 `ExperimentType.CONFIG_VERSION`，示例见根 README 及各语言 README。
 
-退役前的旧服务端仍将 0/2 作为 custom 查询，ALL 返回两类结果。退役后保留 0 的空结果
-兼容路径，避免无 custom 数据的旧默认调用突然报错；它不会自动成为 config 查询。
+退役前的旧服务端仍将 0/2 作为 custom 查询，ALL 返回两类结果。退役后 0 等同 CONFIG_VERSION，结果及上报均按 config 处理。这个默认语义变化由服务端
+部署生效，SDK 不改写 wire 值。服务端全量升级前，原始 config 查询必须显式传 1，
+避免旧实例将 0 当作 custom 查询；新接入也建议始终显式指定 CONFIG_VERSION。
 原始结果接口不提供 `GetConfig` 的配置默认值回退，显式类型 2 的错误会返回/抛给调用方。
 在已确认无活跃 custom 数据和类型 2 调用的环境，可以一次部署入口收口及运行时退役；
 数据库表和触发器收尾另行执行。新旧 SDK 显式读取 config 的协议相同。

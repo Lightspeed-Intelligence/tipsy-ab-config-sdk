@@ -197,9 +197,8 @@ async def assert_expectation(cli, client_tag, exp, r: Results, tac, abtest_pb2) 
         request = {"user_info": tac.UserInfo(experiment_hash_id=uid, attrs=attrs)}
         try:
             response = await cli.get_experiment_result(ns, **request)  # Type omitted.
-            if (response.config_flat_kv or response.groups or response.gray_hits
-                    or (response.HasField("custom_flat_kv") and response.custom_flat_kv.fields)):
-                r.bad(f"[{client_tag}] default {ns}/{uid}: expected empty result")
+            if response.HasField("custom_flat_kv") and response.custom_flat_kv.fields:
+                r.bad(f"[{client_tag}] default {ns}/{uid}: expected config-only result")
                 return
         except Exception as error:  # noqa: BLE001
             r.bad(f"[{client_tag}] default {ns}/{uid}: {error}")
@@ -225,14 +224,15 @@ async def assert_expectation(cli, client_tag, exp, r: Results, tac, abtest_pb2) 
                 ns, **request,
                 experiment_type=abtest_pb2.ExperimentType.EXPERIMENT_TYPE_ALL,
             )
-            if (dict(cv.config_flat_kv) != dict(all_result.config_flat_kv)
+            if (dict(response.config_flat_kv) != dict(cv.config_flat_kv)
+                    or dict(cv.config_flat_kv) != dict(all_result.config_flat_kv)
                     or (all_result.HasField("custom_flat_kv") and all_result.custom_flat_kv.fields)):
                 r.bad(f"[{client_tag}] ALL {ns}/{uid}: expected config-only parity")
                 return
         except Exception as error:  # noqa: BLE001
             r.bad(f"[{client_tag}] config types {ns}/{uid}: {error}")
             return
-        r.ok(f"[{client_tag}] raw types {ns}/{uid}: 0 empty, 2 rejected, 1/3 config")
+        r.ok(f"[{client_tag}] raw types {ns}/{uid}: 0/1/3 config, 2 rejected")
         return
 
     want_val = exp["expected_value"]

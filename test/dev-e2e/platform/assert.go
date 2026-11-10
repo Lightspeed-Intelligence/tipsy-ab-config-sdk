@@ -80,7 +80,7 @@ func runStickyStability(c *httpClient, r *results) {
 
 // client. For config keys it checks BOTH the resolved value (config/dynamic)
 // AND the version id (experiment_result config_flat_kv). For custom rows it
-// verifies legacy default compatibility and explicit custom retirement.
+// verifies default config parity and explicit custom retirement.
 func runExpectations(c *httpClient, exps []Expectation, r *results) {
 	for _, e := range exps {
 		if !e.appliesTo("http") {
@@ -152,13 +152,13 @@ func assertConfigKey(c *httpClient, e Expectation, r *results) {
 	}
 }
 
-// assertRetiredCustom checks omitted type compatibility and explicit retirement.
+// assertRetiredCustom checks omitted config default and explicit retirement.
 func assertRetiredCustom(c *httpClient, e Expectation, r *results) {
 	cx, cancel := ctx()
 	defer cancel()
 	response, err := c.getExperimentResult(cx, e.NS, e.UserID, e.UserAttrs, "", displayFlatKV)
-	if err != nil || response == nil || len(response.ConfigFlatKV) != 0 || len(response.CustomFlatKV) != 0 || len(response.Groups) != 0 || len(response.GrayHits) != 0 {
-		r.fail("[default] %s/%s: response=%v err=%v; want empty success", e.NS, e.UserID, response, err)
+	if err != nil || response == nil || len(response.CustomFlatKV) != 0 {
+		r.fail("[default] %s/%s: response=%v err=%v; want config success", e.NS, e.UserID, response, err)
 		return
 	}
 	_, err = c.getExperimentResult(cx, e.NS, e.UserID, e.UserAttrs, expTypeCustomParams, displayFlatKV)
@@ -167,7 +167,7 @@ func assertRetiredCustom(c *httpClient, e Expectation, r *results) {
 		return
 	}
 	cv, err := c.getExperimentResult(cx, e.NS, e.UserID, e.UserAttrs, expTypeConfigVersion, displayFlatKV)
-	if err != nil {
+	if err != nil || cv == nil || !reflect.DeepEqual(response.ConfigFlatKV, cv.ConfigFlatKV) {
 		r.fail("[CONFIG_VERSION] %s/%s: %v", e.NS, e.UserID, err)
 		return
 	}
@@ -176,7 +176,7 @@ func assertRetiredCustom(c *httpClient, e Expectation, r *results) {
 		r.fail("[ALL] %s/%s: response=%v err=%v; want config-only parity", e.NS, e.UserID, all, err)
 		return
 	}
-	r.pass("[raw types] %s/%s: 0 empty, 2 rejected, 1/3 config", e.NS, e.UserID)
+	r.pass("[raw types] %s/%s: 0/1/3 config, 2 rejected", e.NS, e.UserID)
 }
 
 // kvEqual deep-compares two JSON-decoded KV maps, normalizing all numbers to

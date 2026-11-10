@@ -67,7 +67,7 @@
     "expected_version_id": "",
     "expected_value": {},
     "source": "retired_custom",
-    "note": "Archived custom fixture: omitted type returns empty; type 2 rejects; 1/3 return config only",
+    "note": "Archived custom fixture: omitted type equals config; type 2 rejects; 0/1/3 return config only",
     "applies_to": [
       "http",
       "grpc",
@@ -191,7 +191,7 @@
     "expected_version_id": "",
     "expected_value": {},
     "source": "retired_custom",
-    "note": "Archived custom fixture: omitted type returns empty; type 2 rejects; 1/3 return config only",
+    "note": "Archived custom fixture: omitted type equals config; type 2 rejects; 0/1/3 return config only",
     "applies_to": [
       "http",
       "grpc",
@@ -315,7 +315,7 @@
     "expected_version_id": "",
     "expected_value": {},
     "source": "retired_custom",
-    "note": "Archived custom fixture: omitted type returns empty; type 2 rejects; 1/3 return config only",
+    "note": "Archived custom fixture: omitted type equals config; type 2 rejects; 0/1/3 return config only",
     "applies_to": [
       "http",
       "grpc",
@@ -435,7 +435,7 @@
     "expected_version_id": "",
     "expected_value": {},
     "source": "retired_custom",
-    "note": "Archived custom fixture: omitted type returns empty; type 2 rejects; 1/3 return config only",
+    "note": "Archived custom fixture: omitted type equals config; type 2 rejects; 0/1/3 return config only",
     "applies_to": [
       "http",
       "grpc",
@@ -535,7 +535,7 @@
     "expected_version_id": "",
     "expected_value": {},
     "source": "retired_custom",
-    "note": "Archived custom fixture: omitted type returns empty; type 2 rejects; 1/3 return config only",
+    "note": "Archived custom fixture: omitted type equals config; type 2 rejects; 0/1/3 return config only",
     "applies_to": [
       "http",
       "grpc",
@@ -575,7 +575,7 @@
     "expected_version_id": "",
     "expected_value": {},
     "source": "retired_custom",
-    "note": "Archived custom fixture: omitted type returns empty; type 2 rejects; 1/3 return config only",
+    "note": "Archived custom fixture: omitted type equals config; type 2 rejects; 0/1/3 return config only",
     "applies_to": [
       "http",
       "grpc",
@@ -635,7 +635,7 @@
     "expected_version_id": "",
     "expected_value": {},
     "source": "retired_custom",
-    "note": "Archived custom fixture: omitted type returns empty; type 2 rejects; 1/3 return config only",
+    "note": "Archived custom fixture: omitted type equals config; type 2 rejects; 0/1/3 return config only",
     "applies_to": [
       "http",
       "grpc",
@@ -675,7 +675,7 @@
     "expected_version_id": "",
     "expected_value": {},
     "source": "retired_custom",
-    "note": "Archived custom fixture: omitted type returns empty; type 2 rejects; 1/3 return config only",
+    "note": "Archived custom fixture: omitted type equals config; type 2 rejects; 0/1/3 return config only",
     "applies_to": [
       "http",
       "grpc",

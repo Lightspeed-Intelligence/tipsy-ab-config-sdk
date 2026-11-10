@@ -27,7 +27,7 @@ const (
 type ExperimentType int32
 
 const (
-	ExperimentType_EXPERIMENT_TYPE_UNSPECIFIED    ExperimentType = 0 // treated as default custom_params
+	ExperimentType_EXPERIMENT_TYPE_UNSPECIFIED    ExperimentType = 0 // defaults to CONFIG_VERSION after server-side custom retirement; older servers default to custom_params
 	ExperimentType_EXPERIMENT_TYPE_CONFIG_VERSION ExperimentType = 1
 	ExperimentType_EXPERIMENT_TYPE_CUSTOM_PARAMS  ExperimentType = 2
 	ExperimentType_EXPERIMENT_TYPE_ALL            ExperimentType = 3

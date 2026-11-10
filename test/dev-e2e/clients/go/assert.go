@@ -183,7 +183,7 @@ func assertExpectation(cli *tac.Client, client string, e Expectation, r *results
 }
 
 // assertRetiredCustom verifies all raw result types after server retirement.
-// The fixture's former custom users now exercise 0-empty and 2-rejected.
+// The fixture's former custom users now exercise 0-default-config and 2-rejected.
 func assertRetiredCustom(cx context.Context, cli *tac.Client, client string, e Expectation, r *results) {
 	request := tac.ExperimentResultRequest{
 		Namespace:   e.NS,
@@ -192,8 +192,8 @@ func assertRetiredCustom(cx context.Context, cli *tac.Client, client string, e E
 		TraceID:     fmt.Sprintf("dev-e2e-go-%s-%s-%s", client, e.NS, e.UserID),
 	}
 	response, err := cli.GetExperimentResult(cx, request) // Type deliberately omitted.
-	if err != nil || response == nil || len(response.GetConfigFlatKv()) != 0 || len(response.GetCustomFlatKv().GetFields()) != 0 || len(response.GetGroups()) != 0 || len(response.GetGrayHits()) != 0 {
-		r.fail("[%s] default %s/%s: response=%v err=%v; want empty success", client, e.NS, e.UserID, response, err)
+	if err != nil || response == nil || len(response.GetCustomFlatKv().GetFields()) != 0 {
+		r.fail("[%s] default %s/%s: response=%v err=%v; want config success", client, e.NS, e.UserID, response, err)
 		return
 	}
 	//lint:ignore SA1019 Intentional compatibility test of the retired wire value.
@@ -205,7 +205,7 @@ func assertRetiredCustom(cx context.Context, cli *tac.Client, client string, e E
 	}
 	request.Type = tac.ExperimentTypeConfigVersion
 	cv, err := cli.GetExperimentResult(cx, request)
-	if err != nil {
+	if err != nil || cv == nil || !maps.Equal(response.GetConfigFlatKv(), cv.GetConfigFlatKv()) {
 		r.fail("[%s] CONFIG_VERSION %s/%s: %v", client, e.NS, e.UserID, err)
 		return
 	}
@@ -215,7 +215,7 @@ func assertRetiredCustom(cx context.Context, cli *tac.Client, client string, e E
 		r.fail("[%s] ALL %s/%s: response=%v err=%v; want config-only parity", client, e.NS, e.UserID, all, err)
 		return
 	}
-	r.pass("[%s] raw types %s/%s: 0 empty, 2 rejected, 1/3 config", client, e.NS, e.UserID)
+	r.pass("[%s] raw types %s/%s: 0/1/3 config, 2 rejected", client, e.NS, e.UserID)
 }
 
 func kvEqual(got, want map[string]interface{}) bool {
