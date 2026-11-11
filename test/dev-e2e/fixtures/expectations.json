@@ -92,6 +92,36 @@
         "s": "US"
       }
     },
+    "key": "__custom__",
+    "expected_version_id": "",
+    "expected_value": {},
+    "source": "retired_custom",
+    "note": "Raw type contract for this exact namespace/user/attrs: 0/1/3 match expected_config_flat_kv; 2 rejects; full fallbacks excluded.",
+    "applies_to": [
+      "http",
+      "grpc",
+      "go_sdk_grpc",
+      "go_sdk_http",
+      "py_sdk_grpc",
+      "py_sdk_http",
+      "java_sdk_grpc",
+      "java_sdk_http"
+    ],
+    "expected_config_flat_kv": {
+      "admit_key": "900200041",
+      "banner_color": "900200021",
+      "gap_key": "900200031",
+      "welcome_text": "900200011"
+    }
+  },
+  {
+    "ns": "demo-test",
+    "user_id": "u0",
+    "user_attrs": {
+      "country": {
+        "s": "US"
+      }
+    },
     "key": "admit_key",
     "expected_version_id": "900200041",
     "expected_value": "admit-EXP",
@@ -443,36 +473,6 @@
   },
   {
     "ns": "demo-test",
-    "user_id": "u0",
-    "user_attrs": {
-      "country": {
-        "s": "US"
-      }
-    },
-    "key": "__custom__",
-    "expected_version_id": "",
-    "expected_value": {},
-    "source": "retired_custom",
-    "note": "Raw type contract for this exact namespace/user/attrs: 0/1/3 match expected_config_flat_kv; 2 rejects; full fallbacks excluded.",
-    "applies_to": [
-      "http",
-      "grpc",
-      "go_sdk_grpc",
-      "go_sdk_http",
-      "py_sdk_grpc",
-      "py_sdk_http",
-      "java_sdk_grpc",
-      "java_sdk_http"
-    ],
-    "expected_config_flat_kv": {
-      "admit_key": "900200041",
-      "welcome_text": "900200011",
-      "banner_color": "900200021",
-      "gap_key": "900200031"
-    }
-  },
-  {
-    "ns": "demo-test",
     "user_id": "u6",
     "user_attrs": {},
     "key": "gap_key",
@@ -641,6 +641,27 @@
     "ns": "for_dev_agent_test",
     "user_id": "u15903",
     "user_attrs": {},
+    "key": "__custom__",
+    "expected_version_id": "",
+    "expected_value": {},
+    "source": "retired_custom",
+    "note": "Experiment-internal gap: E_cfg2 bucket 9999 is uncovered, so 0/1/3 return empty raw config; GetConfig resolves the full release separately.",
+    "applies_to": [
+      "http",
+      "grpc",
+      "go_sdk_grpc",
+      "go_sdk_http",
+      "py_sdk_grpc",
+      "py_sdk_http",
+      "java_sdk_grpc",
+      "java_sdk_http"
+    ],
+    "expected_config_flat_kv": {}
+  },
+  {
+    "ns": "for_dev_agent_test",
+    "user_id": "u15903",
+    "user_attrs": {},
     "key": "color",
     "expected_version_id": "900400019",
     "expected_value": "c-FULL",
@@ -802,26 +823,5 @@
       "java_sdk_grpc",
       "java_sdk_http"
     ]
-  },
-  {
-    "ns": "for_dev_agent_test",
-    "user_id": "u15903",
-    "user_attrs": {},
-    "key": "__custom__",
-    "expected_version_id": "",
-    "expected_value": {},
-    "source": "retired_custom",
-    "note": "Layer gap: 0/1/3 return empty raw config; GetConfig resolves the full release separately.",
-    "applies_to": [
-      "http",
-      "grpc",
-      "go_sdk_grpc",
-      "go_sdk_http",
-      "py_sdk_grpc",
-      "py_sdk_http",
-      "java_sdk_grpc",
-      "java_sdk_http"
-    ],
-    "expected_config_flat_kv": {}
   }
 ]

@@ -34,6 +34,15 @@ bump first, then an SDK tag bump.
 - staticcheck 会对废弃枚举引用报告 `SA1019`；将 lint 诊断视为错误的消费方需迁移
   为显式 config 查询，或对兼容测试按项目规范局部抑制。
 
+### 发布步骤
+
+- 本次 proto 新增了 deprecated 选项，`api/gen/go` 的生成代码随之变化。发版时先给
+  `api/gen/go` 打新 tag，再把本模块 `go.mod` 中的 `api/gen/go` 从 v0.7.0 升到该新版本
+  （同步 `go.sum`），然后再打 Go SDK tag 发布。顺序不能颠倒：仓库内 `go.work` 解析的是
+  树内 `api/gen/go`，CI 不会暴露过期的 pin（同 [0.13.1] 的教训）。
+  Python 生成代码（`_proto/*_pb2.py`）已在仓库中更新；Java 生成代码在构建期由仓库内
+  已更新的 `api/proto` 生成。二者发版均无需额外步骤。
+
 ## [0.16.0] - 2026-11-03
 
 ### Added

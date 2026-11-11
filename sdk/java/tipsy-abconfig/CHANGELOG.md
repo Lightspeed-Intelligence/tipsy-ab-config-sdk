@@ -22,6 +22,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 消费方以 `-Xlint:deprecation -Werror` 编译且引用废弃枚举时会失败；应迁移为显式
   config 查询，或对兼容测试按项目规范局部 `@SuppressWarnings("deprecation")`。
 
+### 发布步骤
+
+- 本次 proto 新增了 deprecated 选项。Go SDK 发版时需先给 `api/gen/go` 打新 tag，再把
+  `sdk/go/tipsyabconfig/go.mod` 中的 `api/gen/go` 从 v0.7.0 升到新版本，然后发布 Go SDK
+  （见 Go CHANGELOG）。Java 生成代码在构建期由仓库内已更新的 `api/proto` 生成，
+  本 SDK 发版无需额外步骤。
+
 ## [0.13.0] - 2026-11-03
 
 ### Added

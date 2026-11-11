@@ -17,14 +17,21 @@
 // for layer-gap targets the layer bucket in the requested layer range). It then
 // writes test/dev-e2e/fixtures/expectations.json and prints a readable summary.
 //
-// Run:  go run ./test/dev-e2e/tools/bucketfind
+// Run:  go run ./test/dev-e2e/tools/bucketfind [-out <path>]
+//
+// The fixture is written next to this source file
+// (../../fixtures/expectations.json) regardless of the working directory;
+// -out writes it elsewhere instead.
 package main
 
 import (
 	"encoding/json"
+	"errors"
+	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 
@@ -121,6 +128,9 @@ type Expectation struct {
 	Source            string         `json:"source"` // experiment_group|whitelist|full
 	Note              string         `json:"note"`
 	AppliesTo         []string       `json:"applies_to"`
+	// ExpectedConfigFlatKV is set only on retired_custom raw-result probes; an
+	// empty map (no config hit) must still be emitted, hence omitzero.
+	ExpectedConfigFlatKV map[string]string `json:"expected_config_flat_kv,omitzero"`
 }
 
 // allClients is the standard client matrix every expectation applies to unless
@@ -132,7 +142,49 @@ func noAttrs() map[string]any { return map[string]any{} }
 
 func usAttrs() map[string]any { return map[string]any{"country": map[string]any{"s": "US"}} }
 
+// rawExp is one config experiment as seen by a raw GetExperimentResult call:
+// the layer slot and first covering group route the user, and that group's
+// key→version map lands in config_flat_kv. Uncovered layer or group buckets
+// (gaps) contribute nothing; the full release is not part of raw results.
+type rawExp struct {
+	layer    layerSpec
+	exp      expSpec
+	groups   []rng
+	versions []map[string]string // per group, same order as groups
+	needUS   bool                // experiment admission country==US
+}
+
+func countryIsUS(attrs map[string]any) bool {
+	country, _ := attrs["country"].(map[string]any)
+	return country["s"] == "US"
+}
+
+// rawConfigFlatKV derives the expected raw config_flat_kv for one user from
+// the same bucket routing the per-key expectations use.
+func rawConfigFlatKV(uid string, attrs map[string]any, exps []rawExp) map[string]string {
+	out := map[string]string{}
+	for _, e := range exps {
+		if !e.layer.slot.covers(bucketOf(uid, e.layer.salt, e.layer.total)) {
+			continue
+		}
+		if e.needUS && !countryIsUS(attrs) {
+			continue
+		}
+		g := expGroupOf(uid, e.exp, e.groups)
+		if g < 0 {
+			continue
+		}
+		for key, version := range e.versions[g] {
+			out[key] = version
+		}
+	}
+	return out
+}
+
 func main() {
+	out := flag.String("out", "", "write the fixture here instead of ../../fixtures/expectations.json next to this source file")
+	flag.Parse()
+
 	// ---- Topology constants (EXACTLY from the design doc) -----------------
 
 	// NS demo-test --------------------------------------------------------
@@ -142,11 +194,6 @@ func main() {
 	eCfg := expSpec{salt: "E_cfg_demo", total: 10000}
 	cfgA := rng{0, 4999}    // welcome-A + red
 	cfgB := rng{5000, 9999} // welcome-B + blue
-
-	lCustom := layerSpec{salt: "L_custom_demo", total: 10000, slot: rng{0, 9999}}
-	eCustom := expSpec{salt: "E_custom_demo", total: 10000}
-	customC := rng{0, 2999}    // {"variant":"A","max_items":10,"enabled":true}
-	customD := rng{3000, 9999} // {"variant":"B","max_items":20,"enabled":false}
 
 	// L_gap slot covers ONLY [0,4999]; experiment group G covers [0,9999].
 	lGap := layerSpec{salt: "L_gap_demo", total: 10000, slot: rng{0, 4999}}
@@ -170,10 +217,15 @@ func main() {
 	g3 := rng{6666, 9998}   // c3
 	gGap := rng{9999, 9999} // bucket 9999 → uncovered → c-FULL
 
-	lCustomFda := layerSpec{salt: "L_custom_fda", total: 10000, slot: rng{0, 9999}}
-	eCustom2 := expSpec{salt: "E_custom_fda", total: 10000}
-	gold := rng{0, 4999}      // {"tier":"gold","weight":1.5}
-	silver := rng{5000, 9999} // {"tier":"silver","weight":2.5}
+	// Experiment-group config versions (key → version id): the single source
+	// for both the per-key GetConfig rows and the raw-result probes.
+	cfgVer := []map[string]string{
+		{"welcome_text": "900200011", "banner_color": "900200021"}, // E_cfg A
+		{"welcome_text": "900200012", "banner_color": "900200022"}, // E_cfg B
+	}
+	gapVer := map[string]string{"gap_key": "900200031"}
+	admitVer := map[string]string{"admit_key": "900200041"}
+	colorVer := []map[string]string{{"color": "900400011"}, {"color": "900400012"}, {"color": "900400013"}} // G1..G3
 
 	// ---- Reverse-solve UIDs for each target ------------------------------
 
@@ -181,9 +233,6 @@ func main() {
 		// demo-test E_cfg
 		{name: "demo/E_cfg/A", layer: lCfg, exp: &eCfg, group: cfgA, want: 2},
 		{name: "demo/E_cfg/B", layer: lCfg, exp: &eCfg, group: cfgB, want: 2},
-		// demo-test E_custom
-		{name: "demo/E_custom/C", layer: lCustom, exp: &eCustom, group: customC, want: 2},
-		{name: "demo/E_custom/D", layer: lCustom, exp: &eCustom, group: customD, want: 2},
 		// demo-test E_gap: (a) hits experiment, (b) layer gap → full
 		{name: "demo/E_gap/EXP", layer: lGap, exp: &eGap, group: gapG, want: 2},
 		{name: "demo/E_gap/LAYER_FULL", layer: lGapLayerFull, exp: nil, group: rng{}, want: 2},
@@ -194,9 +243,6 @@ func main() {
 		{name: "fda/E_cfg2/G2", layer: lCfgFda, exp: &eCfg2, group: g2, want: 2},
 		{name: "fda/E_cfg2/G3", layer: lCfgFda, exp: &eCfg2, group: g3, want: 2},
 		{name: "fda/E_cfg2/GAP9999", layer: lCfgFda, exp: &eCfg2, group: gGap, want: 2},
-		// for_dev_agent_test E_custom2 gold/silver
-		{name: "fda/E_custom2/GOLD", layer: lCustomFda, exp: &eCustom2, group: gold, want: 2},
-		{name: "fda/E_custom2/SILVER", layer: lCustomFda, exp: &eCustom2, group: silver, want: 2},
 	}
 
 	for _, t := range targets {
@@ -233,40 +279,26 @@ func main() {
 	// demo-test E_cfg group A → welcome_text=welcome-A(900200011), banner_color=red(900200021)
 	for _, uid := range uidByTarget("demo/E_cfg/A") {
 		add(Expectation{NS: nsDemo, UserID: uid, Key: "welcome_text",
-			ExpectedVersionID: "900200011", ExpectedValue: "welcome-A",
+			ExpectedVersionID: cfgVer[0]["welcome_text"], ExpectedValue: "welcome-A",
 			Source: "experiment_group", Note: "E_cfg group A (bucket-derived)"})
 		add(Expectation{NS: nsDemo, UserID: uid, Key: "banner_color",
-			ExpectedVersionID: "900200021", ExpectedValue: "red",
+			ExpectedVersionID: cfgVer[0]["banner_color"], ExpectedValue: "red",
 			Source: "experiment_group", Note: "E_cfg group A (bucket-derived)"})
 	}
 	// demo-test E_cfg group B → welcome-B(900200012), blue(900200022)
 	for _, uid := range uidByTarget("demo/E_cfg/B") {
 		add(Expectation{NS: nsDemo, UserID: uid, Key: "welcome_text",
-			ExpectedVersionID: "900200012", ExpectedValue: "welcome-B",
+			ExpectedVersionID: cfgVer[1]["welcome_text"], ExpectedValue: "welcome-B",
 			Source: "experiment_group", Note: "E_cfg group B (bucket-derived)"})
 		add(Expectation{NS: nsDemo, UserID: uid, Key: "banner_color",
-			ExpectedVersionID: "900200022", ExpectedValue: "blue",
+			ExpectedVersionID: cfgVer[1]["banner_color"], ExpectedValue: "blue",
 			Source: "experiment_group", Note: "E_cfg group B (bucket-derived)"})
-	}
-
-	// demo-test E_custom group C / D → retired custom compatibility probes
-	for _, uid := range uidByTarget("demo/E_custom/C") {
-		add(Expectation{NS: nsDemo, UserID: uid, Key: "__custom__",
-			ExpectedVersionID: "",
-			ExpectedValue:     map[string]any{},
-			Source:            "retired_custom", Note: "Archived custom fixture: omitted type equals config; type 2 rejects; 0/1/3 return config only"})
-	}
-	for _, uid := range uidByTarget("demo/E_custom/D") {
-		add(Expectation{NS: nsDemo, UserID: uid, Key: "__custom__",
-			ExpectedVersionID: "",
-			ExpectedValue:     map[string]any{},
-			Source:            "retired_custom", Note: "Archived custom fixture: omitted type equals config; type 2 rejects; 0/1/3 return config only"})
 	}
 
 	// demo-test E_gap experiment hit → gap_key=gap-EXP(900200031)
 	for _, uid := range uidByTarget("demo/E_gap/EXP") {
 		add(Expectation{NS: nsDemo, UserID: uid, Key: "gap_key",
-			ExpectedVersionID: "900200031", ExpectedValue: "gap-EXP",
+			ExpectedVersionID: gapVer["gap_key"], ExpectedValue: "gap-EXP",
 			Source: "experiment_group", Note: "E_gap hit: layer bucket in [0,4999] AND experiment group G"})
 	}
 	// demo-test layer gap (layer bucket in [5000,9999], no slot) → gap_key=gap-FULL(900200039)
@@ -279,7 +311,7 @@ func main() {
 	// demo-test E_admit: with country=US → admit-EXP(900200041); without → admit-FULL(900200049)
 	for _, uid := range uidByTarget("demo/E_admit/HIT") {
 		add(Expectation{NS: nsDemo, UserID: uid, UserAttrs: usAttrs(), Key: "admit_key",
-			ExpectedVersionID: "900200041", ExpectedValue: "admit-EXP",
+			ExpectedVersionID: admitVer["admit_key"], ExpectedValue: "admit-EXP",
 			Source: "experiment_group", Note: "E_admit admission country==US passes"})
 		add(Expectation{NS: nsDemo, UserID: uid, UserAttrs: noAttrs(), Key: "admit_key",
 			ExpectedVersionID: "900200049", ExpectedValue: "admit-FULL",
@@ -288,10 +320,10 @@ func main() {
 
 	// demo-test group whitelist: wl-force-B forced into E_cfg group B regardless of bucket.
 	add(Expectation{NS: nsDemo, UserID: "wl-force-B", Key: "welcome_text",
-		ExpectedVersionID: "900200012", ExpectedValue: "welcome-B",
+		ExpectedVersionID: cfgVer[1]["welcome_text"], ExpectedValue: "welcome-B",
 		Source: "experiment_group", Note: "group whitelist: forced into E_cfg group B (overrides bucket)"})
 	add(Expectation{NS: nsDemo, UserID: "wl-force-B", Key: "banner_color",
-		ExpectedVersionID: "900200022", ExpectedValue: "blue",
+		ExpectedVersionID: cfgVer[1]["banner_color"], ExpectedValue: "blue",
 		Source: "experiment_group", Note: "group whitelist: forced into E_cfg group B (overrides bucket)"})
 
 	// demo-test gray release: gray-user-1 / gray-user-2 welcome_text=welcome-GRAY(900200013).
@@ -304,9 +336,9 @@ func main() {
 	{
 		var verID, val, grp string
 		if grayUser1Group == 1 { // group B
-			verID, val, grp = "900200022", "blue", "B"
+			verID, val, grp = cfgVer[1]["banner_color"], "blue", "B"
 		} else { // group A (also covers gap → but bucket always covers A or B here since A∪B=[0,9999])
-			verID, val, grp = "900200021", "red", "A"
+			verID, val, grp = cfgVer[0]["banner_color"], "red", "A"
 		}
 		add(Expectation{NS: nsDemo, UserID: "gray-user-1", Key: "banner_color",
 			ExpectedVersionID: verID, ExpectedValue: val,
@@ -317,17 +349,17 @@ func main() {
 	// for_dev_agent_test E_cfg2 G1/G2/G3 → color c1/c2/c3
 	for _, uid := range uidByTarget("fda/E_cfg2/G1") {
 		add(Expectation{NS: nsFda, UserID: uid, Key: "color",
-			ExpectedVersionID: "900400011", ExpectedValue: "c1",
+			ExpectedVersionID: colorVer[0]["color"], ExpectedValue: "c1",
 			Source: "experiment_group", Note: "E_cfg2 group G1 (bucket-derived)"})
 	}
 	for _, uid := range uidByTarget("fda/E_cfg2/G2") {
 		add(Expectation{NS: nsFda, UserID: uid, Key: "color",
-			ExpectedVersionID: "900400012", ExpectedValue: "c2",
+			ExpectedVersionID: colorVer[1]["color"], ExpectedValue: "c2",
 			Source: "experiment_group", Note: "E_cfg2 group G2 (bucket-derived)"})
 	}
 	for _, uid := range uidByTarget("fda/E_cfg2/G3") {
 		add(Expectation{NS: nsFda, UserID: uid, Key: "color",
-			ExpectedVersionID: "900400013", ExpectedValue: "c3",
+			ExpectedVersionID: colorVer[2]["color"], ExpectedValue: "c3",
 			Source: "experiment_group", Note: "E_cfg2 group G3 (bucket-derived)"})
 	}
 	// for_dev_agent_test experiment-internal gap (bucket 9999) → color c-FULL(900400019)
@@ -337,24 +369,48 @@ func main() {
 			Source: "full", Note: "experiment-internal gap: E_cfg2 bucket==9999 uncovered → fall back to full release"})
 	}
 
-	// for_dev_agent_test E_custom2 gold/silver → retired custom compatibility probes
-	for _, uid := range uidByTarget("fda/E_custom2/GOLD") {
-		add(Expectation{NS: nsFda, UserID: uid, Key: "__custom__",
-			ExpectedVersionID: "",
-			ExpectedValue:     map[string]any{},
-			Source:            "retired_custom", Note: "Archived custom fixture: omitted type equals config; type 2 rejects; 0/1/3 return config only"})
-	}
-	for _, uid := range uidByTarget("fda/E_custom2/SILVER") {
-		add(Expectation{NS: nsFda, UserID: uid, Key: "__custom__",
-			ExpectedVersionID: "",
-			ExpectedValue:     map[string]any{},
-			Source:            "retired_custom", Note: "Archived custom fixture: omitted type equals config; type 2 rejects; 0/1/3 return config only"})
-	}
-
 	// for_dev_agent_test gray release: gray-fda-1 greeting=hi-GRAY(900400021)
 	add(Expectation{NS: nsFda, UserID: "gray-fda-1", Key: "greeting",
 		ExpectedVersionID: "900400021", ExpectedValue: "hi-GRAY",
 		Source: "whitelist", Note: "gray release on greeting takes priority over (no) experiment"})
+
+	// ---- Raw-result probes (retired custom compatibility) -----------------
+	// Each probe pins raw types 0/1/3 to the config-only result for one exact
+	// namespace/user/attrs; the expected map is derived, not hand-written.
+	rawExps := map[string][]rawExp{
+		nsDemo: {
+			{layer: lCfg, exp: eCfg, groups: []rng{cfgA, cfgB}, versions: cfgVer},
+			{layer: lGap, exp: eGap, groups: []rng{gapG}, versions: []map[string]string{gapVer}},
+			{layer: lAdmit, exp: eAdmit, groups: []rng{admitG}, versions: []map[string]string{admitVer}, needUS: true},
+		},
+		nsFda: {
+			{layer: lCfgFda, exp: eCfg2, groups: []rng{g1, g2, g3}, versions: colorVer},
+		},
+	}
+	const rawNote = "Raw type contract for this exact namespace/user/attrs: 0/1/3 match expected_config_flat_kv; 2 rejects; full fallbacks excluded."
+	probes := []struct {
+		ns, uid string
+		attrs   map[string]any
+		note    string
+	}{
+		{nsDemo, "u0", noAttrs(), rawNote},
+		{nsDemo, "u0", usAttrs(), rawNote},
+		{nsDemo, "u1", noAttrs(), rawNote},
+		{nsDemo, "u2", noAttrs(), rawNote},
+		{nsFda, "u0", noAttrs(), rawNote},
+		{nsFda, "u1", noAttrs(), rawNote},
+		{nsFda, "u2", noAttrs(), rawNote},
+		{nsFda, "u3", noAttrs(), rawNote},
+		{nsFda, uidByTarget("fda/E_cfg2/GAP9999")[0], noAttrs(),
+			"Experiment-internal gap: E_cfg2 bucket 9999 is uncovered, so 0/1/3 return empty raw config; GetConfig resolves the full release separately."},
+	}
+	for _, p := range probes {
+		add(Expectation{NS: p.ns, UserID: p.uid, UserAttrs: p.attrs, Key: "__custom__",
+			ExpectedVersionID: "",
+			ExpectedValue:     map[string]any{},
+			Source:            "retired_custom", Note: p.note,
+			ExpectedConfigFlatKV: rawConfigFlatKV(p.uid, p.attrs, rawExps[p.ns])})
+	}
 
 	// ---- Deterministic ordering ------------------------------------------
 	sort.SliceStable(exps, func(i, j int) bool {
@@ -373,9 +429,7 @@ func main() {
 	})
 
 	// ---- Write fixture ----------------------------------------------------
-	// Resolve the output path relative to this source file so the tool can be
-	// run from anywhere (go run ./test/dev-e2e/tools/bucketfind).
-	outPath, err := resolveFixturePath()
+	outPath, err := resolveFixturePath(*out)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "resolve fixture path:", err)
 		os.Exit(1)
@@ -400,32 +454,19 @@ func main() {
 	fmt.Printf("\nWrote %d expectations to %s\n", len(exps), outPath)
 }
 
-// resolveFixturePath returns the absolute path of the expectations fixture,
-// derived from this source file's location (../../fixtures/expectations.json).
-func resolveFixturePath() (string, error) {
-	// runtime.Caller-free: use the well-known repo-relative path. Prefer the
-	// module root resolved from the working dir, falling back to this file's dir.
-	// Since `go run ./test/dev-e2e/tools/bucketfind` runs with the module root as
-	// cwd, the repo-relative path is reliable.
-	const rel = "test/dev-e2e/fixtures/expectations.json"
-	if _, err := os.Stat("go.mod"); err == nil {
-		return filepath.Abs(rel)
+// resolveFixturePath returns out when set, else the fixture path derived from
+// this source file's location. The working directory and the nearest go.mod
+// are deliberately not consulted: the SDK copy is its own module under a
+// go.work root, so either would resolve to the wrong tree.
+func resolveFixturePath(out string) (string, error) {
+	if out != "" {
+		return filepath.Abs(out)
 	}
-	// Fallback: walk up to find go.mod.
-	dir, err := os.Getwd()
-	if err != nil {
-		return "", err
+	_, file, _, ok := runtime.Caller(0)
+	if !ok || !filepath.IsAbs(file) {
+		return "", errors.New("source path unavailable (built with -trimpath?); pass -out")
 	}
-	for {
-		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
-			return filepath.Join(dir, rel), nil
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			return filepath.Abs(rel)
-		}
-		dir = parent
-	}
+	return filepath.Join(filepath.Dir(file), "../../fixtures/expectations.json"), nil
 }
 
 func printSummary(targets []*target, grayUser1Group int, eCfg expSpec) {

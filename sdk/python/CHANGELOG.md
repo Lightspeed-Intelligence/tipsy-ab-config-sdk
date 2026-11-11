@@ -21,6 +21,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   gRPC `FailedPrecondition` / HTTP 400 的 transport 错误，ALL 只返回 config；
   旧服务端仍沿用历史 custom 行为，SDK 不改写默认类型。
 
+### 发布步骤
+
+- 本次 proto 新增了 deprecated 选项。Go SDK 发版时需先给 `api/gen/go` 打新 tag，再把
+  `sdk/go/tipsyabconfig/go.mod` 中的 `api/gen/go` 从 v0.7.0 升到新版本，然后发布 Go SDK
+  （见 Go CHANGELOG）。Python 生成代码（`_proto/*_pb2.py`）已在仓库中更新，
+  本 SDK 发版无需额外步骤。
+
 ## [0.17.0] - 2026-11-03
 
 ### Added
