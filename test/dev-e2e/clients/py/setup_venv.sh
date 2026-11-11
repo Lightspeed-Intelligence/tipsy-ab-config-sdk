@@ -4,8 +4,8 @@
 # Two install modes (choose with $SDK_MODE):
 #   - SDK_MODE=editable (default): install LOCAL sdk/python editable with the
 #     [http] extra. Fast iteration in-repo. Venv: .venv.
-#   - SDK_MODE=backend: install the RELEASED tipsy-ab-config==v0.5.0 via
-#     git+ssh at tag python-sdk/v0.5.0 (subdirectory=sdk/python). This is the
+#   - SDK_MODE=backend: install the RELEASED tipsy-ab-config==v0.17.0 via
+#     git+ssh at tag python-sdk/v0.17.0 (subdirectory=sdk/python). This is the
 #     true downstream consumer pattern (see sdk/python/README.md §Consumer
 #     onboarding). Venv: .venv-backend.
 #
@@ -80,13 +80,13 @@ if [ "$SDK_MODE" = "editable" ]; then
 	# (grpcio, protobuf) come from the base dependencies.
 	"$VENV/bin/python" -m pip install -e "${SDK_DIR}[http]"
 else
-	# True backend pattern: install the released v0.5.0 from git+ssh at the
+	# True backend pattern: install the released v0.17.0 from git+ssh at the
 	# tagged commit on the (private) SDK repo. Auth uses the same SSH key that
 	# already works for `git clone git@github.com:Lightspeed-Intelligence/tipsy-ab-config-sdk.git`.
-	# v0.5.0 predates PyPI distribution, so it is only reachable through git
-	# and needs GitHub read access; current releases install from PyPI.
+	# Pin an exact release tag for this consumer baseline. This path needs
+	# GitHub read access; current releases can also be installed from PyPI.
 	"$VENV/bin/python" -m pip install \
-		'tipsy-ab-config[http] @ git+ssh://git@github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk.git@python-sdk/v0.5.0#subdirectory=sdk/python'
+		'tipsy-ab-config[http] @ git+ssh://git@github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk.git@python-sdk/v0.17.0#subdirectory=sdk/python'
 	"$VENV/bin/python" -c "import tipsy_ab_config as p; print('SDK version:', p.__version__)"
 fi
 

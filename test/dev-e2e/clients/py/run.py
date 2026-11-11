@@ -166,7 +166,7 @@ async def run_transport(client_tag: str, cfg, exps: List[Dict[str, Any]], r: Res
         return
 
     try:
-        # The abtest_pb2 enum constants for the custom path.
+        # Enum constants for the raw-result compatibility checks.
         from tipsy_ab_config._proto.tipsy.abtest.v1 import abtest_pb2
 
         # Warm up the abtest path once before the asserted loop: the first RPC
@@ -194,10 +194,15 @@ async def assert_expectation(cli, client_tag, exp, r: Results, tac, abtest_pb2) 
     source = exp.get("source", "")
 
     if key == CUSTOM_KEY:
+        if "expected_config_flat_kv" not in exp:
+            r.bad(f"[{client_tag}] raw {ns}/{uid}: missing expected_config_flat_kv fixture")
+            return
+        want = {key: int(value) for key, value in exp["expected_config_flat_kv"].items()}
         request = {"user_info": tac.UserInfo(experiment_hash_id=uid, attrs=attrs)}
         try:
             response = await cli.get_experiment_result(ns, **request)  # Type omitted.
-            if response.HasField("custom_flat_kv") and response.custom_flat_kv.fields:
+            if (dict(response.config_flat_kv) != want
+                    or (response.HasField("custom_flat_kv") and response.custom_flat_kv.fields)):
                 r.bad(f"[{client_tag}] default {ns}/{uid}: expected config-only result")
                 return
         except Exception as error:  # noqa: BLE001
@@ -209,7 +214,13 @@ async def assert_expectation(cli, client_tag, exp, r: Results, tac, abtest_pb2) 
                 experiment_type=abtest_pb2.ExperimentType.EXPERIMENT_TYPE_CUSTOM_PARAMS,
             )
         except Exception as error:  # noqa: BLE001
-            if "custom_params is retired" not in str(error):
+            import grpc
+
+            if client_tag == "py_sdk_http":
+                valid_code = getattr(error, "status_code", None) == 400
+            else:
+                valid_code = isinstance(error, grpc.RpcError) and error.code() == grpc.StatusCode.FAILED_PRECONDITION
+            if not valid_code or "custom_params is retired" not in str(error):
                 r.bad(f"[{client_tag}] retired custom {ns}/{uid}: unexpected error {error}")
                 return
         else:
@@ -224,8 +235,9 @@ async def assert_expectation(cli, client_tag, exp, r: Results, tac, abtest_pb2) 
                 ns, **request,
                 experiment_type=abtest_pb2.ExperimentType.EXPERIMENT_TYPE_ALL,
             )
-            if (dict(response.config_flat_kv) != dict(cv.config_flat_kv)
-                    or dict(cv.config_flat_kv) != dict(all_result.config_flat_kv)
+            if (dict(cv.config_flat_kv) != want
+                    or dict(all_result.config_flat_kv) != want
+                    or (cv.HasField("custom_flat_kv") and cv.custom_flat_kv.fields)
                     or (all_result.HasField("custom_flat_kv") and all_result.custom_flat_kv.fields)):
                 r.bad(f"[{client_tag}] ALL {ns}/{uid}: expected config-only parity")
                 return

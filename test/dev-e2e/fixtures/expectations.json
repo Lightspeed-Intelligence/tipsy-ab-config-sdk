@@ -67,7 +67,7 @@
     "expected_version_id": "",
     "expected_value": {},
     "source": "retired_custom",
-    "note": "Archived custom fixture: omitted type equals config; type 2 rejects; 0/1/3 return config only",
+    "note": "Raw type contract for this exact namespace/user/attrs: 0/1/3 match expected_config_flat_kv; 2 rejects; full fallbacks excluded.",
     "applies_to": [
       "http",
       "grpc",
@@ -77,7 +77,12 @@
       "py_sdk_http",
       "java_sdk_grpc",
       "java_sdk_http"
-    ]
+    ],
+    "expected_config_flat_kv": {
+      "banner_color": "900200021",
+      "gap_key": "900200031",
+      "welcome_text": "900200011"
+    }
   },
   {
     "ns": "demo-test",
@@ -191,7 +196,7 @@
     "expected_version_id": "",
     "expected_value": {},
     "source": "retired_custom",
-    "note": "Archived custom fixture: omitted type equals config; type 2 rejects; 0/1/3 return config only",
+    "note": "Raw type contract for this exact namespace/user/attrs: 0/1/3 match expected_config_flat_kv; 2 rejects; full fallbacks excluded.",
     "applies_to": [
       "http",
       "grpc",
@@ -201,7 +206,12 @@
       "py_sdk_http",
       "java_sdk_grpc",
       "java_sdk_http"
-    ]
+    ],
+    "expected_config_flat_kv": {
+      "banner_color": "900200021",
+      "gap_key": "900200031",
+      "welcome_text": "900200011"
+    }
   },
   {
     "ns": "demo-test",
@@ -315,7 +325,7 @@
     "expected_version_id": "",
     "expected_value": {},
     "source": "retired_custom",
-    "note": "Archived custom fixture: omitted type equals config; type 2 rejects; 0/1/3 return config only",
+    "note": "Raw type contract for this exact namespace/user/attrs: 0/1/3 match expected_config_flat_kv; 2 rejects; full fallbacks excluded.",
     "applies_to": [
       "http",
       "grpc",
@@ -325,7 +335,11 @@
       "py_sdk_http",
       "java_sdk_grpc",
       "java_sdk_http"
-    ]
+    ],
+    "expected_config_flat_kv": {
+      "banner_color": "900200022",
+      "welcome_text": "900200012"
+    }
   },
   {
     "ns": "demo-test",
@@ -429,13 +443,17 @@
   },
   {
     "ns": "demo-test",
-    "user_id": "u6",
-    "user_attrs": {},
+    "user_id": "u0",
+    "user_attrs": {
+      "country": {
+        "s": "US"
+      }
+    },
     "key": "__custom__",
     "expected_version_id": "",
     "expected_value": {},
     "source": "retired_custom",
-    "note": "Archived custom fixture: omitted type equals config; type 2 rejects; 0/1/3 return config only",
+    "note": "Raw type contract for this exact namespace/user/attrs: 0/1/3 match expected_config_flat_kv; 2 rejects; full fallbacks excluded.",
     "applies_to": [
       "http",
       "grpc",
@@ -445,7 +463,13 @@
       "py_sdk_http",
       "java_sdk_grpc",
       "java_sdk_http"
-    ]
+    ],
+    "expected_config_flat_kv": {
+      "admit_key": "900200041",
+      "welcome_text": "900200011",
+      "banner_color": "900200021",
+      "gap_key": "900200031"
+    }
   },
   {
     "ns": "demo-test",
@@ -535,7 +559,7 @@
     "expected_version_id": "",
     "expected_value": {},
     "source": "retired_custom",
-    "note": "Archived custom fixture: omitted type equals config; type 2 rejects; 0/1/3 return config only",
+    "note": "Raw type contract for this exact namespace/user/attrs: 0/1/3 match expected_config_flat_kv; 2 rejects; full fallbacks excluded.",
     "applies_to": [
       "http",
       "grpc",
@@ -545,7 +569,10 @@
       "py_sdk_http",
       "java_sdk_grpc",
       "java_sdk_http"
-    ]
+    ],
+    "expected_config_flat_kv": {
+      "color": "900400011"
+    }
   },
   {
     "ns": "for_dev_agent_test",
@@ -575,7 +602,7 @@
     "expected_version_id": "",
     "expected_value": {},
     "source": "retired_custom",
-    "note": "Archived custom fixture: omitted type equals config; type 2 rejects; 0/1/3 return config only",
+    "note": "Raw type contract for this exact namespace/user/attrs: 0/1/3 match expected_config_flat_kv; 2 rejects; full fallbacks excluded.",
     "applies_to": [
       "http",
       "grpc",
@@ -585,7 +612,10 @@
       "py_sdk_http",
       "java_sdk_grpc",
       "java_sdk_http"
-    ]
+    ],
+    "expected_config_flat_kv": {
+      "color": "900400013"
+    }
   },
   {
     "ns": "for_dev_agent_test",
@@ -635,7 +665,7 @@
     "expected_version_id": "",
     "expected_value": {},
     "source": "retired_custom",
-    "note": "Archived custom fixture: omitted type equals config; type 2 rejects; 0/1/3 return config only",
+    "note": "Raw type contract for this exact namespace/user/attrs: 0/1/3 match expected_config_flat_kv; 2 rejects; full fallbacks excluded.",
     "applies_to": [
       "http",
       "grpc",
@@ -645,7 +675,10 @@
       "py_sdk_http",
       "java_sdk_grpc",
       "java_sdk_http"
-    ]
+    ],
+    "expected_config_flat_kv": {
+      "color": "900400013"
+    }
   },
   {
     "ns": "for_dev_agent_test",
@@ -675,7 +708,7 @@
     "expected_version_id": "",
     "expected_value": {},
     "source": "retired_custom",
-    "note": "Archived custom fixture: omitted type equals config; type 2 rejects; 0/1/3 return config only",
+    "note": "Raw type contract for this exact namespace/user/attrs: 0/1/3 match expected_config_flat_kv; 2 rejects; full fallbacks excluded.",
     "applies_to": [
       "http",
       "grpc",
@@ -685,7 +718,10 @@
       "py_sdk_http",
       "java_sdk_grpc",
       "java_sdk_http"
-    ]
+    ],
+    "expected_config_flat_kv": {
+      "color": "900400011"
+    }
   },
   {
     "ns": "for_dev_agent_test",
@@ -766,5 +802,26 @@
       "java_sdk_grpc",
       "java_sdk_http"
     ]
+  },
+  {
+    "ns": "for_dev_agent_test",
+    "user_id": "u15903",
+    "user_attrs": {},
+    "key": "__custom__",
+    "expected_version_id": "",
+    "expected_value": {},
+    "source": "retired_custom",
+    "note": "Layer gap: 0/1/3 return empty raw config; GetConfig resolves the full release separately.",
+    "applies_to": [
+      "http",
+      "grpc",
+      "go_sdk_grpc",
+      "go_sdk_http",
+      "py_sdk_grpc",
+      "py_sdk_http",
+      "java_sdk_grpc",
+      "java_sdk_http"
+    ],
+    "expected_config_flat_kv": {}
   }
 ]

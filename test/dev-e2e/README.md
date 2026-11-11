@@ -123,8 +123,8 @@ From the SDK repository root:
    Python and Java to run one transport.
 
    The isolated Go/Python modes are deliberately pinned by their executable
-   dependency files: Go `clients/go/go.mod` uses SDK v0.4.0 and Python
-   `clients/py/setup_venv.sh` uses `python-sdk/v0.5.0`. They are compatibility
+   dependency files: Go `clients/go/go.mod` uses SDK v0.16.0 and Python
+   `clients/py/setup_venv.sh` uses `python-sdk/v0.17.0`. They are compatibility
    baselines, not recommended current versions. The Java standalone harness is
    similarly pinned by `clients/java/pom.xml`; update a pin and its lock/build
    metadata together when changing the baseline.
@@ -190,3 +190,11 @@ values. Config GetConfig/full/gray assertions remain active. The seed contains n
 is operator-run test data, not an application migration or production rollout.
 Use a disposable isolated database for regression; these scripts do not authorize
 seeding or testing against a shared deployment.
+
+Raw-result probe rows include `expected_config_flat_kv`, an absolute key/version
+map for the exact namespace, user ID and attributes. Types 0/1/3 must all match
+that map and contain no custom values. A layer-gap probe expects an empty map;
+full-release fallbacks belong to GetConfig and are excluded from raw results.
+Explicit type 2 must return gRPC FailedPrecondition or HTTP 400. The drivers
+use the current SDK identity/context API; released-mode baselines are Go
+v0.16.0 and Python v0.17.0. Older SDKs require drivers matching their API.

@@ -4,9 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"maps"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -15,15 +18,16 @@ import (
 
 // Expectation mirrors one row of fixtures/expectations.json.
 type Expectation struct {
-	NS                string                 `json:"ns"`
-	UserID            string                 `json:"user_id"`
-	UserAttrs         map[string]interface{} `json:"user_attrs"`
-	Key               string                 `json:"key"`
-	ExpectedVersionID string                 `json:"expected_version_id"`
-	ExpectedValue     interface{}            `json:"expected_value"`
-	Source            string                 `json:"source"`
-	Note              string                 `json:"note"`
-	AppliesTo         []string               `json:"applies_to"`
+	NS                   string                 `json:"ns"`
+	UserID               string                 `json:"user_id"`
+	UserAttrs            map[string]interface{} `json:"user_attrs"`
+	Key                  string                 `json:"key"`
+	ExpectedConfigFlatKV map[string]string      `json:"expected_config_flat_kv"`
+	ExpectedVersionID    string                 `json:"expected_version_id"`
+	ExpectedValue        interface{}            `json:"expected_value"`
+	Source               string                 `json:"source"`
+	Note                 string                 `json:"note"`
+	AppliesTo            []string               `json:"applies_to"`
 }
 
 const customKey = "__custom__"
@@ -153,7 +157,7 @@ func toInt64(v interface{}) int64 {
 
 // assertExpectation drives one expectation row through the Go SDK. Config keys
 // use GetConfig (dynamic, abtest-aware) plus a GetConfigStatic check for the
-// full-release value. Historical custom rows exercise raw type compatibility; GetConfig remains config-only.
+// full-release value. Raw-result fixtures exercise type compatibility; GetConfig remains config-only.
 func assertExpectation(cli *tac.Client, client string, e Expectation, r *results) {
 	cx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
@@ -183,8 +187,21 @@ func assertExpectation(cli *tac.Client, client string, e Expectation, r *results
 }
 
 // assertRetiredCustom verifies all raw result types after server retirement.
-// The fixture's former custom users now exercise 0-default-config and 2-rejected.
+// The raw fixture supplies an absolute config result for this exact identity.
 func assertRetiredCustom(cx context.Context, cli *tac.Client, client string, e Expectation, r *results) {
+	if e.ExpectedConfigFlatKV == nil {
+		r.fail("[%s] raw %s/%s: missing expected_config_flat_kv fixture", client, e.NS, e.UserID)
+		return
+	}
+	want := make(map[string]int64, len(e.ExpectedConfigFlatKV))
+	for key, value := range e.ExpectedConfigFlatKV {
+		version, err := strconv.ParseInt(value, 10, 64)
+		if err != nil {
+			r.fail("[%s] raw fixture %s: invalid version %q", client, key, value)
+			return
+		}
+		want[key] = version
+	}
 	request := tac.ExperimentResultRequest{
 		Namespace:   e.NS,
 		UserInfo:    tac.UserInfo{ExperimentHashID: e.UserID, Attrs: rawAttrs(e.UserAttrs)},
@@ -192,26 +209,31 @@ func assertRetiredCustom(cx context.Context, cli *tac.Client, client string, e E
 		TraceID:     fmt.Sprintf("dev-e2e-go-%s-%s-%s", client, e.NS, e.UserID),
 	}
 	response, err := cli.GetExperimentResult(cx, request) // Type deliberately omitted.
-	if err != nil || response == nil || len(response.GetCustomFlatKv().GetFields()) != 0 {
+	if err != nil || response == nil || !maps.Equal(response.GetConfigFlatKv(), want) || len(response.GetCustomFlatKv().GetFields()) != 0 {
 		r.fail("[%s] default %s/%s: response=%v err=%v; want config success", client, e.NS, e.UserID, response, err)
 		return
 	}
 	//lint:ignore SA1019 Intentional compatibility test of the retired wire value.
 	request.Type = tac.ExperimentTypeCustomParams
 	_, err = cli.GetExperimentResult(cx, request)
-	if err == nil || !strings.Contains(err.Error(), "custom_params is retired") {
+	validCode := status.Code(err) == codes.FailedPrecondition
+	if client == "go_sdk_http" {
+		// The Go HTTP transport exposes the status in its error string.
+		validCode = err != nil && strings.Contains(err.Error(), "HTTP 400:")
+	}
+	if err == nil || !validCode || !strings.Contains(err.Error(), "custom_params is retired") {
 		r.fail("[%s] retired custom %s/%s: err=%v; want retirement error", client, e.NS, e.UserID, err)
 		return
 	}
 	request.Type = tac.ExperimentTypeConfigVersion
 	cv, err := cli.GetExperimentResult(cx, request)
-	if err != nil || cv == nil || !maps.Equal(response.GetConfigFlatKv(), cv.GetConfigFlatKv()) {
+	if err != nil || cv == nil || !maps.Equal(cv.GetConfigFlatKv(), want) || len(cv.GetCustomFlatKv().GetFields()) != 0 {
 		r.fail("[%s] CONFIG_VERSION %s/%s: %v", client, e.NS, e.UserID, err)
 		return
 	}
 	request.Type = tac.ExperimentTypeAll
 	all, err := cli.GetExperimentResult(cx, request)
-	if err != nil || all == nil || !maps.Equal(cv.GetConfigFlatKv(), all.GetConfigFlatKv()) || len(all.GetCustomFlatKv().GetFields()) != 0 {
+	if err != nil || all == nil || !maps.Equal(all.GetConfigFlatKv(), want) || len(all.GetCustomFlatKv().GetFields()) != 0 {
 		r.fail("[%s] ALL %s/%s: response=%v err=%v; want config-only parity", client, e.NS, e.UserID, all, err)
 		return
 	}

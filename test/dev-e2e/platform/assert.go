@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"maps"
 	"reflect"
 	"sort"
 	"strings"
@@ -154,10 +155,14 @@ func assertConfigKey(c *httpClient, e Expectation, r *results) {
 
 // assertRetiredCustom checks omitted config default and explicit retirement.
 func assertRetiredCustom(c *httpClient, e Expectation, r *results) {
+	if e.ExpectedConfigFlatKV == nil {
+		r.fail("[raw] %s/%s: missing expected_config_flat_kv fixture", e.NS, e.UserID)
+		return
+	}
 	cx, cancel := ctx()
 	defer cancel()
 	response, err := c.getExperimentResult(cx, e.NS, e.UserID, e.UserAttrs, "", displayFlatKV)
-	if err != nil || response == nil || len(response.CustomFlatKV) != 0 {
+	if err != nil || response == nil || !maps.Equal(response.ConfigFlatKV, e.ExpectedConfigFlatKV) || len(response.CustomFlatKV) != 0 {
 		r.fail("[default] %s/%s: response=%v err=%v; want config success", e.NS, e.UserID, response, err)
 		return
 	}
@@ -167,12 +172,12 @@ func assertRetiredCustom(c *httpClient, e Expectation, r *results) {
 		return
 	}
 	cv, err := c.getExperimentResult(cx, e.NS, e.UserID, e.UserAttrs, expTypeConfigVersion, displayFlatKV)
-	if err != nil || cv == nil || !reflect.DeepEqual(response.ConfigFlatKV, cv.ConfigFlatKV) {
+	if err != nil || cv == nil || !maps.Equal(cv.ConfigFlatKV, e.ExpectedConfigFlatKV) || len(cv.CustomFlatKV) != 0 {
 		r.fail("[CONFIG_VERSION] %s/%s: %v", e.NS, e.UserID, err)
 		return
 	}
 	all, err := c.getExperimentResult(cx, e.NS, e.UserID, e.UserAttrs, "EXPERIMENT_TYPE_ALL", displayFlatKV)
-	if err != nil || all == nil || !reflect.DeepEqual(cv.ConfigFlatKV, all.ConfigFlatKV) || len(all.CustomFlatKV) != 0 {
+	if err != nil || all == nil || !maps.Equal(all.ConfigFlatKV, e.ExpectedConfigFlatKV) || len(all.CustomFlatKV) != 0 {
 		r.fail("[ALL] %s/%s: response=%v err=%v; want config-only parity", e.NS, e.UserID, all, err)
 		return
 	}

@@ -12,6 +12,8 @@ import io.github.lightspeedintelligence.abconfig.TipsyAbConfigClient;
 import io.github.lightspeedintelligence.abconfig.Transport;
 import io.github.lightspeedintelligence.abconfig.proto.abtest.v1.GetExperimentResultResponse;
 import java.nio.file.Path;
+import io.grpc.Status;
+import io.github.lightspeedintelligence.abconfig.TipsyConfigException;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -29,7 +31,7 @@ import java.util.Map;
  *       {@code {"s":"US"}}, decoded back from the fixture via
  *       {@link Expectation#rawAttrs(Map)}),</li>
  *   <li>calls {@code getConfig} (config-version rows) /
- *       {@code getExperimentResult} (custom rows) and asserts the resolved value
+ *       {@code getExperimentResult} (raw type probes) and asserts the result
  *       against {@code expectations.json}.</li>
  * </ul>
  *
@@ -252,8 +254,8 @@ public final class Main {
 
     /**
      * Drives one expectation row through the Java SDK. Config-version rows use
-     * {@code getConfig} (dynamic, abtest-aware); custom rows use
-     * {@code getExperimentResult} (custom_flat_kv). Mirrors the Go driver's
+     * {@code getConfig} (dynamic, abtest-aware); raw probe rows use
+     * {@code getExperimentResult} to check config results and type rejection. Mirrors the Go driver's
      * {@code assertExpectation} / {@code assertRetiredCustom}.
      */
     private static void assertExpectation(
@@ -291,6 +293,10 @@ public final class Main {
     @SuppressWarnings("deprecation") // Intentional compatibility test of wire value 2.
     private static void assertRetiredCustom(
             TipsyAbConfigClient cli, String client, Expectation e, Results r) {
+        if (e.expectedConfigFlatKv == null) {
+            r.fail("[%s] raw %s/%s: missing expected_config_flat_kv fixture", client, e.ns, e.userId);
+            return;
+        }
         ExperimentResultRequest.Builder builder = ExperimentResultRequest.builder()
                 .namespace(e.ns)
                 .userInfo(e.userId, Expectation.rawAttrs(e.userAttrs))
@@ -298,7 +304,8 @@ public final class Main {
         GetExperimentResultResponse response;
         try {
             response = cli.getExperimentResult(builder.build());
-            if (response.hasCustomFlatKv() && !response.getCustomFlatKv().getFieldsMap().isEmpty()) {
+            if (!response.getConfigFlatKvMap().equals(e.expectedConfigFlatKv)
+                    || (response.hasCustomFlatKv() && !response.getCustomFlatKv().getFieldsMap().isEmpty())) {
                 r.fail("[%s] default %s/%s: expected config-only result", client, e.ns, e.userId);
                 return;
             }
@@ -312,13 +319,18 @@ public final class Main {
             return;
         } catch (RuntimeException ex) {
             boolean retired = false;
+            boolean validCode = !client.endsWith("_http")
+                    && Status.fromThrowable(ex).getCode() == Status.Code.FAILED_PRECONDITION;
             for (Throwable cause = ex; cause != null; cause = cause.getCause()) {
+                if (client.endsWith("_http") && ex instanceof TipsyConfigException
+                        && cause.getMessage() != null && cause.getMessage().contains("HTTP 400:")) {
+                    validCode = true;
+                }
                 if (cause.getMessage() != null && cause.getMessage().contains("custom_params is retired")) {
                     retired = true;
-                    break;
                 }
             }
-            if (!retired) {
+            if (!retired || !validCode) {
                 r.fail("[%s] retired custom %s/%s: unexpected error %s", client, e.ns, e.userId, ex);
                 return;
             }
@@ -326,8 +338,9 @@ public final class Main {
         try {
             GetExperimentResultResponse cv = cli.getExperimentResult(builder.type(ExperimentType.CONFIG_VERSION).build());
             GetExperimentResultResponse all = cli.getExperimentResult(builder.type(ExperimentType.ALL).build());
-            if (!response.getConfigFlatKvMap().equals(cv.getConfigFlatKvMap())
-                    || !cv.getConfigFlatKvMap().equals(all.getConfigFlatKvMap())
+            if (!cv.getConfigFlatKvMap().equals(e.expectedConfigFlatKv)
+                    || !all.getConfigFlatKvMap().equals(e.expectedConfigFlatKv)
+                    || (cv.hasCustomFlatKv() && !cv.getCustomFlatKv().getFieldsMap().isEmpty())
                     || (all.hasCustomFlatKv() && !all.getCustomFlatKv().getFieldsMap().isEmpty())) {
                 r.fail("[%s] ALL %s/%s: expected config-only parity", client, e.ns, e.userId);
                 return;

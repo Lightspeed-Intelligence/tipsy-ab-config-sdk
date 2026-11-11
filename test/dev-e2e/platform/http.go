@@ -19,15 +19,16 @@ import (
 // (key == "__custom__"). UserAttrs uses the typed Value envelope, e.g.
 // {"country":{"s":"US"}}.
 type Expectation struct {
-	NS                string                 `json:"ns"`
-	UserID            string                 `json:"user_id"`
-	UserAttrs         map[string]interface{} `json:"user_attrs"`
-	Key               string                 `json:"key"`
-	ExpectedVersionID string                 `json:"expected_version_id"`
-	ExpectedValue     interface{}            `json:"expected_value"`
-	Source            string                 `json:"source"`
-	Note              string                 `json:"note"`
-	AppliesTo         []string               `json:"applies_to"`
+	NS                   string                 `json:"ns"`
+	UserID               string                 `json:"user_id"`
+	UserAttrs            map[string]interface{} `json:"user_attrs"`
+	Key                  string                 `json:"key"`
+	ExpectedConfigFlatKV map[string]string      `json:"expected_config_flat_kv"`
+	ExpectedVersionID    string                 `json:"expected_version_id"`
+	ExpectedValue        interface{}            `json:"expected_value"`
+	Source               string                 `json:"source"`
+	Note                 string                 `json:"note"`
+	AppliesTo            []string               `json:"applies_to"`
 }
 
 const customKey = "__custom__"
