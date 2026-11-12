@@ -3,8 +3,10 @@ package main
 import (
 	"context"
 	"fmt"
+	"maps"
 	"reflect"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -79,14 +81,14 @@ func runStickyStability(c *httpClient, r *results) {
 
 // client. For config keys it checks BOTH the resolved value (config/dynamic)
 // AND the version id (experiment_result config_flat_kv). For custom rows it
-// checks custom_flat_kv deep-equals the expected object.
+// verifies default config parity and explicit custom retirement.
 func runExpectations(c *httpClient, exps []Expectation, r *results) {
 	for _, e := range exps {
 		if !e.appliesTo("http") {
 			continue
 		}
 		if e.Key == customKey {
-			assertCustom(c, e, r)
+			assertRetiredCustom(c, e, r)
 			continue
 		}
 		assertConfigKey(c, e, r)
@@ -151,26 +153,35 @@ func assertConfigKey(c *httpClient, e Expectation, r *results) {
 	}
 }
 
-// assertCustom verifies a custom_params expectation: custom_flat_kv deep-equals
-// the expected KV object (after numeric normalization).
-func assertCustom(c *httpClient, e Expectation, r *results) {
-	want, ok := e.ExpectedValue.(map[string]interface{})
-	if !ok {
-		r.fail("[custom] %s/%s: expected_value is not an object (%T)", e.NS, e.UserID, e.ExpectedValue)
+// assertRetiredCustom checks omitted config default and explicit retirement.
+func assertRetiredCustom(c *httpClient, e Expectation, r *results) {
+	if e.ExpectedConfigFlatKV == nil {
+		r.fail("[raw] %s/%s: missing expected_config_flat_kv fixture", e.NS, e.UserID)
 		return
 	}
 	cx, cancel := ctx()
-	res, err := c.getExperimentResult(cx, e.NS, e.UserID, e.UserAttrs, expTypeCustomParams, displayFlatKV)
-	cancel()
-	if err != nil {
-		r.fail("[custom] %s/%s: %v", e.NS, e.UserID, err)
+	defer cancel()
+	response, err := c.getExperimentResult(cx, e.NS, e.UserID, e.UserAttrs, "", displayFlatKV)
+	if err != nil || response == nil || !maps.Equal(response.ConfigFlatKV, e.ExpectedConfigFlatKV) || len(response.CustomFlatKV) != 0 {
+		r.fail("[default] %s/%s: response=%v err=%v; want config success", e.NS, e.UserID, response, err)
 		return
 	}
-	if !kvEqual(res.CustomFlatKV, want) {
-		r.fail("[custom] %s/%s: custom_flat_kv %v want %v", e.NS, e.UserID, res.CustomFlatKV, want)
+	_, err = c.getExperimentResult(cx, e.NS, e.UserID, e.UserAttrs, expTypeCustomParams, displayFlatKV)
+	if err == nil || !strings.Contains(err.Error(), "HTTP 400") || !strings.Contains(err.Error(), "custom_params is retired") {
+		r.fail("[retired custom] %s/%s: err=%v; want retirement HTTP 400", e.NS, e.UserID, err)
 		return
 	}
-	r.pass("[custom] %s/%s custom_flat_kv = %v (%s)", e.NS, e.UserID, want, e.Source)
+	cv, err := c.getExperimentResult(cx, e.NS, e.UserID, e.UserAttrs, expTypeConfigVersion, displayFlatKV)
+	if err != nil || cv == nil || !maps.Equal(cv.ConfigFlatKV, e.ExpectedConfigFlatKV) || len(cv.CustomFlatKV) != 0 {
+		r.fail("[CONFIG_VERSION] %s/%s: %v", e.NS, e.UserID, err)
+		return
+	}
+	all, err := c.getExperimentResult(cx, e.NS, e.UserID, e.UserAttrs, "EXPERIMENT_TYPE_ALL", displayFlatKV)
+	if err != nil || all == nil || !maps.Equal(all.ConfigFlatKV, e.ExpectedConfigFlatKV) || len(all.CustomFlatKV) != 0 {
+		r.fail("[ALL] %s/%s: response=%v err=%v; want config-only parity", e.NS, e.UserID, all, err)
+		return
+	}
+	r.pass("[raw types] %s/%s: 0/1/3 config, 2 rejected", e.NS, e.UserID)
 }
 
 // kvEqual deep-compares two JSON-decoded KV maps, normalizing all numbers to

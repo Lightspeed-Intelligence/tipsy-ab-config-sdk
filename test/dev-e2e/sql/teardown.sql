@@ -28,8 +28,8 @@ BEGIN;
 DELETE FROM experiment_config_param
  WHERE business_namespace IN ('demo-test', 'for_dev_agent_test');
 
-DELETE FROM layer_key_claim
- WHERE business_namespace IN ('demo-test', 'for_dev_agent_test');
+
+-- layer_key_claim was dropped by migration 0012.
 
 DELETE FROM experiment_group_whitelist_uid
  WHERE group_id LIKE 'demo-test:grp:%'
@@ -41,6 +41,21 @@ DELETE FROM experiment_sticky_assignment
  WHERE business_namespace IN ('demo-test', 'for_dev_agent_test')
    AND (experiment_id LIKE 'demo-test:exp:%'
         OR experiment_id LIKE 'for_dev_agent_test:exp:%');
+
+-- domain_group_mount (0022): form-B mount edges. Must go BEFORE the
+-- experiment_group delete below (leaf→root, design-migration-testing.md
+-- §3.6) — the join rows reference group ids, not their own prefix. Two
+-- passes: group side (this batch's groups) and domain side (any mount
+-- pointing at a domain in this batch's namespaces — the kept root domains
+-- are never mount targets, so this only removes test-created edges).
+DELETE FROM domain_group_mount
+ WHERE group_id LIKE 'demo-test:grp:%'
+    OR group_id LIKE 'for_dev_agent_test:grp:%';
+
+DELETE FROM domain_group_mount m
+ USING domain d
+ WHERE m.domain_id = d.id
+   AND d.business_namespace IN ('demo-test', 'for_dev_agent_test');
 
 -- ----------------------------------------------------------------------------
 -- experiment_group → experiment → layer_slot → layer (parent order).
@@ -73,6 +88,9 @@ DELETE FROM release_whitelist_uid_active
 DELETE FROM release_whitelist_uid
  WHERE id IN (900600101, 900600102, 900600111)
     OR release_id IN (900600001, 900600011);
+
+DELETE FROM release_whitelist_key
+ WHERE release_id IN (900600001, 900600011);
 
 DELETE FROM release_whitelist
  WHERE id IN (900600001, 900600011);

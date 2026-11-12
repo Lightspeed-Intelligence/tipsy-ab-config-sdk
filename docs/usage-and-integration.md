@@ -322,13 +322,48 @@ namespace 的一次实验拉取。显式 prefetch 非阻塞且幂等，适合与
 也不自动上报曝光。重要字段：
 
 - `config_flat_kv`: config key 名到 `config_version.id`；
-- `custom_flat_kv`: arbitrary JSON 参数；
+- `custom_flat_kv`: 历史 custom 实验的 arbitrary JSON 参数（已废弃，字段保留，退役后的服务端不再填充）；
 - `groups[].params_versions`: 每个命中实验组的 key 到 version id；
 - `gray_hits[].key_versions`: 按 gray release 分组的 key 到 version id；
 - `exposures`: 仅为 wire compatibility 保留，新服务端不填充。
 
 所有 wire 上的 int64 version 都是全局唯一的 `config_version.id`，不是每个 key 内的语义
 `version_no`。
+
+### custom_params 废弃与兼容
+
+三语言统一将 `custom_params` 标记为废弃，保留协议字段和公共 API。Go 的
+`ExperimentTypeCustomParams` 使用 `Deprecated:` 注释，Java 的
+`ExperimentType.CUSTOM_PARAMS` 使用 `@Deprecated`；Python 在公共方法文档中提示，
+不增加运行时 warning。原始结果公共方法仍适用于 config 查询。
+
+以下为服务端 custom 运行时退役后（配套服务端 PR #103）的契约；以目标环境实际部署版本为准。
+SDK 升级本身不启用服务端退役，也不改写请求类型。
+
+| 类型 | wire 值 | 退役后的服务端行为 |
+|---|---:|---|
+| `UNSPECIFIED` | 0 | 省略类型仍原样发送 0；退役后的服务端按 CONFIG_VERSION(1) 计算并返回 config/gray；combo 参与事实按 config 请求记录 |
+| `CONFIG_VERSION` | 1 | 新接入显式选用，读取 config 实验与灰度结果 |
+| `CUSTOM_PARAMS` | 2 | 枚举保留；显式请求返回 gRPC `FailedPrecondition`，HTTP 400 |
+| `ALL` | 3 | 只返回 config 实验与灰度结果，不填充 custom 字段 |
+
+`GetConfig` / `get_config` / `getConfig` 以及 get-all/prefetch 继续显式请求
+`CONFIG_VERSION`，保留实验/灰度 → full release → default 的解析顺序。SDK 升级
+不改变省略类型时的请求，也不移除 custom 枚举、请求/响应字段或公共方法；新旧 SDK
+读取 config 的协议保持一致。需要 raw config 结果时，显式传 Go
+`ExperimentTypeConfigVersion`、Python `EXPERIMENT_TYPE_CONFIG_VERSION` 或 Java
+`ExperimentType.CONFIG_VERSION`，示例见根 README 及各语言 README。
+
+退役前的旧服务端仍将 0/2 作为 custom 查询，ALL 返回两类结果。退役后 0 等同 CONFIG_VERSION，结果及上报均按 config 处理。这个默认语义变化由服务端
+部署生效，SDK 不改写 wire 值。服务端全量升级前，原始 config 查询必须显式传 1，
+避免旧实例将 0 当作 custom 查询；新接入也建议始终显式指定 CONFIG_VERSION。
+原始结果接口不提供 `GetConfig` 的配置默认值回退，显式类型 2 的错误会返回/抛给调用方。
+在已确认无活跃 custom 数据和类型 2 调用的环境，可以一次部署入口收口及运行时退役；
+数据库表和触发器收尾另行执行。新旧 SDK 显式读取 config 的协议相同。
+
+Go staticcheck 会对废弃镜像枚举报告 `SA1019`；Java `-Xlint:deprecation -Werror`
+可能因 `@Deprecated` 引用失败。应迁移为显式 config 查询；仅用于兼容测试的引用可按
+项目规范局部抑制告警。Python 本次仅提供文档提示，不新增运行时 warning。
 
 ### int64 与 JSON
 

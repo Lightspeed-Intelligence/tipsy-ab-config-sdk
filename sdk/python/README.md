@@ -167,10 +167,35 @@ the optimization.
 replaced with a UUID v4. Reuse an upstream request or trace id when available;
 the SDK forwards it to the service.
 
-`get_experiment_result(...)` exposes the raw service response for custom
-parameters and group inspection. Values in `config_flat_kv`,
+`get_experiment_result(...)` exposes the raw service response for experiment
+and group inspection, including historical custom parameters. Values in `config_flat_kv`,
 `groups[].params_versions`, and `gray_hits[].key_versions` are global
 `config_version` primary-key ids, not per-key `version_no` values.
+
+### custom_params deprecation
+
+`EXPERIMENT_TYPE_CUSTOM_PARAMS` is deprecated and retained for historical
+experiments. The enum values, response fields, and public methods remain
+available. This is a documentation notice, with no runtime warning. Omitting
+`experiment_type` still sends `UNSPECIFIED` (0). After server-side retirement,
+type 0 is equivalent to CONFIG_VERSION, explicit type 2 requests raise
+the gRPC `FailedPrecondition` / HTTP 400 transport error, and `ALL` returns config
+only. `custom_flat_kv` is retained but not populated. Older servers retain
+historical custom behavior; the SDK does not rewrite defaults.
+`get_config` continues to use `CONFIG_VERSION`. Until all server instances are
+upgraded, raw config queries must select it explicitly; explicit selection is
+also recommended for new integrations:
+
+```python
+from tipsy_ab_config import UserInfo
+from tipsy_ab_config._proto.tipsy.abtest.v1 import abtest_pb2
+
+result = await client.get_experiment_result(
+    "my-project",
+    user_info=UserInfo(experiment_hash_id="user-123"),
+    experiment_type=abtest_pb2.ExperimentType.EXPERIMENT_TYPE_CONFIG_VERSION,
+)
+```
 
 ## FastAPI and ASGI
 

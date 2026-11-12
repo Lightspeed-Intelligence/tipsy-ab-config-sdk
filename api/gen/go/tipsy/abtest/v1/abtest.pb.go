@@ -27,10 +27,11 @@ const (
 type ExperimentType int32
 
 const (
-	ExperimentType_EXPERIMENT_TYPE_UNSPECIFIED    ExperimentType = 0 // treated as default custom_params
+	ExperimentType_EXPERIMENT_TYPE_UNSPECIFIED    ExperimentType = 0 // defaults to CONFIG_VERSION after server-side custom retirement; older servers default to custom_params
 	ExperimentType_EXPERIMENT_TYPE_CONFIG_VERSION ExperimentType = 1
-	ExperimentType_EXPERIMENT_TYPE_CUSTOM_PARAMS  ExperimentType = 2
-	ExperimentType_EXPERIMENT_TYPE_ALL            ExperimentType = 3
+	// Deprecated: Marked as deprecated in tipsy/abtest/v1/abtest.proto.
+	ExperimentType_EXPERIMENT_TYPE_CUSTOM_PARAMS ExperimentType = 2 // rejected after server-side custom retirement
+	ExperimentType_EXPERIMENT_TYPE_ALL           ExperimentType = 3 // config-only after server-side custom retirement
 )
 
 // Enum value maps for ExperimentType.
@@ -247,7 +248,7 @@ type GetExperimentResultRequest struct {
 	UserId         string                 `protobuf:"bytes,2,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`                                                                                    // required (UID drives hashing)
 	UserAttrs      map[string]*Value      `protobuf:"bytes,3,rep,name=user_attrs,json=userAttrs,proto3" json:"user_attrs,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"` // userInfo for admission
 	LayerIds       []string               `protobuf:"bytes,4,rep,name=layer_ids,json=layerIds,proto3" json:"layer_ids,omitempty"`                                                                              // optional; empty = all layers
-	ExperimentType ExperimentType         `protobuf:"varint,5,opt,name=experiment_type,json=experimentType,proto3,enum=tipsy.abtest.v1.ExperimentType" json:"experiment_type,omitempty"`                       // optional; default custom_params
+	ExperimentType ExperimentType         `protobuf:"varint,5,opt,name=experiment_type,json=experimentType,proto3,enum=tipsy.abtest.v1.ExperimentType" json:"experiment_type,omitempty"`                       // optional; 0 = CONFIG_VERSION after custom retirement (older servers: custom_params)
 	DisplayType    ResultDisplayType      `protobuf:"varint,6,opt,name=display_type,json=displayType,proto3,enum=tipsy.abtest.v1.ResultDisplayType" json:"display_type,omitempty"`                             // optional; default flat_kv
 	TraceId        string                 `protobuf:"bytes,7,opt,name=trace_id,json=traceId,proto3" json:"trace_id,omitempty"`                                                                                 // optional; empty ⇒ server fills uuid.New()
 	// env: single-value environment identifier carried with the request; ""
@@ -350,11 +351,12 @@ type GetExperimentResultResponse struct {
 	// flat_kv mode: split to avoid int64 precision loss (M1).
 	//
 	//	config_flat_kv: config_version experiment/gray hits → key_name → version_id.
-	//	custom_flat_kv: custom_params experiment hits → key → arbitrary JSON value.
+	//	custom_flat_kv: retained for older servers; never populated after custom retirement.
 	//
 	// The int64 value is the versionId (config_version PRIMARY KEY id, globally
 	// unique) — NOT the per-key semantic version_no.
 	ConfigFlatKv map[string]int64 `protobuf:"bytes,1,rep,name=config_flat_kv,json=configFlatKv,proto3" json:"config_flat_kv,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"varint,2,opt,name=value"`
+	// Deprecated: Marked as deprecated in tipsy/abtest/v1/abtest.proto.
 	CustomFlatKv *structpb.Struct `protobuf:"bytes,2,opt,name=custom_flat_kv,json=customFlatKv,proto3" json:"custom_flat_kv,omitempty"`
 	// each_experiment_group mode: one element per hit experiment group.
 	Groups []*ExperimentGroupResult `protobuf:"bytes,3,rep,name=groups,proto3" json:"groups,omitempty"`
@@ -368,7 +370,8 @@ type GetExperimentResultResponse struct {
 	// (uid, namespace). One entry per hit release_id (each carrying a
 	// key_versions map of config_key.key → versionId). Populated ONLY when
 	// display_type == RESULT_DISPLAY_TYPE_EACH_EXPERIMENT_GROUP AND
-	// experiment_type ∈ {EXPERIMENT_TYPE_CONFIG_VERSION, EXPERIMENT_TYPE_ALL}.
+	// experiment_type ∈ {EXPERIMENT_TYPE_UNSPECIFIED, EXPERIMENT_TYPE_CONFIG_VERSION,
+	// EXPERIMENT_TYPE_ALL} after custom retirement (0 normalizes to config).
 	// In every other request shape the field is a zero-length slice (NOT a
 	// missing field) — same style as `groups` / `config_flat_kv`. Output is
 	// sorted by release_id ascending and stable across repeated identical
@@ -415,6 +418,7 @@ func (x *GetExperimentResultResponse) GetConfigFlatKv() map[string]int64 {
 	return nil
 }
 
+// Deprecated: Marked as deprecated in tipsy/abtest/v1/abtest.proto.
 func (x *GetExperimentResultResponse) GetCustomFlatKv() *structpb.Struct {
 	if x != nil {
 		return x.CustomFlatKv
@@ -457,13 +461,14 @@ type ExperimentGroupResult struct {
 	GroupId        string                 `protobuf:"bytes,3,opt,name=group_id,json=groupId,proto3" json:"group_id,omitempty"`
 	ExperimentType ExperimentType         `protobuf:"varint,4,opt,name=experiment_type,json=experimentType,proto3,enum=tipsy.abtest.v1.ExperimentType" json:"experiment_type,omitempty"`
 	// config_version: params as key_name → version_id (params_versions).
-	// custom_params: params as arbitrary JSON (params_custom).
+	// params_custom: retained for older servers; never populated after custom retirement.
 	// The int64 value in params_versions is the versionId (config_version
 	// PRIMARY KEY id, globally unique) — NOT the per-key semantic version_no.
 	ParamsVersions map[string]int64 `protobuf:"bytes,5,rep,name=params_versions,json=paramsVersions,proto3" json:"params_versions,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"varint,2,opt,name=value"`
-	ParamsCustom   *structpb.Struct `protobuf:"bytes,6,opt,name=params_custom,json=paramsCustom,proto3" json:"params_custom,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// Deprecated: Marked as deprecated in tipsy/abtest/v1/abtest.proto.
+	ParamsCustom  *structpb.Struct `protobuf:"bytes,6,opt,name=params_custom,json=paramsCustom,proto3" json:"params_custom,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ExperimentGroupResult) Reset() {
@@ -531,6 +536,7 @@ func (x *ExperimentGroupResult) GetParamsVersions() map[string]int64 {
 	return nil
 }
 
+// Deprecated: Marked as deprecated in tipsy/abtest/v1/abtest.proto.
 func (x *ExperimentGroupResult) GetParamsCustom() *structpb.Struct {
 	if x != nil {
 		return x.ParamsCustom
@@ -946,10 +952,10 @@ const file_tipsy_abtest_v1_abtest_proto_rawDesc = "" +
 	"\x03env\x18\b \x01(\tR\x03env\x1aT\n" +
 	"\x0eUserAttrsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12,\n" +
-	"\x05value\x18\x02 \x01(\v2\x16.tipsy.abtest.v1.ValueR\x05value:\x028\x01\"\xf7\x03\n" +
+	"\x05value\x18\x02 \x01(\v2\x16.tipsy.abtest.v1.ValueR\x05value:\x028\x01\"\xfb\x03\n" +
 	"\x1bGetExperimentResultResponse\x12d\n" +
-	"\x0econfig_flat_kv\x18\x01 \x03(\v2>.tipsy.abtest.v1.GetExperimentResultResponse.ConfigFlatKvEntryR\fconfigFlatKv\x12=\n" +
-	"\x0ecustom_flat_kv\x18\x02 \x01(\v2\x17.google.protobuf.StructR\fcustomFlatKv\x12>\n" +
+	"\x0econfig_flat_kv\x18\x01 \x03(\v2>.tipsy.abtest.v1.GetExperimentResultResponse.ConfigFlatKvEntryR\fconfigFlatKv\x12A\n" +
+	"\x0ecustom_flat_kv\x18\x02 \x01(\v2\x17.google.protobuf.StructB\x02\x18\x01R\fcustomFlatKv\x12>\n" +
 	"\x06groups\x18\x03 \x03(\v2&.tipsy.abtest.v1.ExperimentGroupResultR\x06groups\x127\n" +
 	"\texposures\x18\x04 \x03(\v2\x19.tipsy.abtest.v1.ExposureR\texposures\x12;\n" +
 	"\vcomputed_at\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
@@ -957,14 +963,14 @@ const file_tipsy_abtest_v1_abtest_proto_rawDesc = "" +
 	"\tgray_hits\x18\x06 \x03(\v2\x1f.tipsy.abtest.v1.GrayReleaseHitR\bgrayHits\x1a?\n" +
 	"\x11ConfigFlatKvEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\x03R\x05value:\x028\x01\"\xa2\x03\n" +
+	"\x05value\x18\x02 \x01(\x03R\x05value:\x028\x01\"\xa6\x03\n" +
 	"\x15ExperimentGroupResult\x12\x19\n" +
 	"\blayer_id\x18\x01 \x01(\tR\alayerId\x12#\n" +
 	"\rexperiment_id\x18\x02 \x01(\tR\fexperimentId\x12\x19\n" +
 	"\bgroup_id\x18\x03 \x01(\tR\agroupId\x12H\n" +
 	"\x0fexperiment_type\x18\x04 \x01(\x0e2\x1f.tipsy.abtest.v1.ExperimentTypeR\x0eexperimentType\x12c\n" +
-	"\x0fparams_versions\x18\x05 \x03(\v2:.tipsy.abtest.v1.ExperimentGroupResult.ParamsVersionsEntryR\x0eparamsVersions\x12<\n" +
-	"\rparams_custom\x18\x06 \x01(\v2\x17.google.protobuf.StructR\fparamsCustom\x1aA\n" +
+	"\x0fparams_versions\x18\x05 \x03(\v2:.tipsy.abtest.v1.ExperimentGroupResult.ParamsVersionsEntryR\x0eparamsVersions\x12@\n" +
+	"\rparams_custom\x18\x06 \x01(\v2\x17.google.protobuf.StructB\x02\x18\x01R\fparamsCustom\x1aA\n" +
 	"\x13ParamsVersionsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\x03R\x05value:\x028\x01\"\xb2\x02\n" +
@@ -1002,11 +1008,11 @@ const file_tipsy_abtest_v1_abtest_proto_rawDesc = "" +
 	"\x17experiment_snapshot_seq\x18\x01 \x01(\x03R\x15experimentSnapshotSeq\".\n" +
 	"\vVersionList\x12\x1f\n" +
 	"\vversion_ids\x18\x01 \x03(\x03R\n" +
-	"versionIds*\x91\x01\n" +
+	"versionIds*\x95\x01\n" +
 	"\x0eExperimentType\x12\x1f\n" +
 	"\x1bEXPERIMENT_TYPE_UNSPECIFIED\x10\x00\x12\"\n" +
-	"\x1eEXPERIMENT_TYPE_CONFIG_VERSION\x10\x01\x12!\n" +
-	"\x1dEXPERIMENT_TYPE_CUSTOM_PARAMS\x10\x02\x12\x17\n" +
+	"\x1eEXPERIMENT_TYPE_CONFIG_VERSION\x10\x01\x12%\n" +
+	"\x1dEXPERIMENT_TYPE_CUSTOM_PARAMS\x10\x02\x1a\x02\b\x01\x12\x17\n" +
 	"\x13EXPERIMENT_TYPE_ALL\x10\x03*\x88\x01\n" +
 	"\x11ResultDisplayType\x12#\n" +
 	"\x1fRESULT_DISPLAY_TYPE_UNSPECIFIED\x10\x00\x12\x1f\n" +

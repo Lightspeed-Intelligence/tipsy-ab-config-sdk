@@ -65,13 +65,9 @@
     "user_attrs": {},
     "key": "__custom__",
     "expected_version_id": "",
-    "expected_value": {
-      "enabled": false,
-      "max_items": 20,
-      "variant": "B"
-    },
-    "source": "experiment_group",
-    "note": "E_custom group D (custom_params)",
+    "expected_value": {},
+    "source": "retired_custom",
+    "note": "Raw type contract for this exact namespace/user/attrs: 0/1/3 match expected_config_flat_kv; 2 rejects; full fallbacks excluded.",
     "applies_to": [
       "http",
       "grpc",
@@ -81,7 +77,42 @@
       "py_sdk_http",
       "java_sdk_grpc",
       "java_sdk_http"
-    ]
+    ],
+    "expected_config_flat_kv": {
+      "banner_color": "900200021",
+      "gap_key": "900200031",
+      "welcome_text": "900200011"
+    }
+  },
+  {
+    "ns": "demo-test",
+    "user_id": "u0",
+    "user_attrs": {
+      "country": {
+        "s": "US"
+      }
+    },
+    "key": "__custom__",
+    "expected_version_id": "",
+    "expected_value": {},
+    "source": "retired_custom",
+    "note": "Raw type contract for this exact namespace/user/attrs: 0/1/3 match expected_config_flat_kv; 2 rejects; full fallbacks excluded.",
+    "applies_to": [
+      "http",
+      "grpc",
+      "go_sdk_grpc",
+      "go_sdk_http",
+      "py_sdk_grpc",
+      "py_sdk_http",
+      "java_sdk_grpc",
+      "java_sdk_http"
+    ],
+    "expected_config_flat_kv": {
+      "admit_key": "900200041",
+      "banner_color": "900200021",
+      "gap_key": "900200031",
+      "welcome_text": "900200011"
+    }
   },
   {
     "ns": "demo-test",
@@ -193,13 +224,9 @@
     "user_attrs": {},
     "key": "__custom__",
     "expected_version_id": "",
-    "expected_value": {
-      "enabled": false,
-      "max_items": 20,
-      "variant": "B"
-    },
-    "source": "experiment_group",
-    "note": "E_custom group D (custom_params)",
+    "expected_value": {},
+    "source": "retired_custom",
+    "note": "Raw type contract for this exact namespace/user/attrs: 0/1/3 match expected_config_flat_kv; 2 rejects; full fallbacks excluded.",
     "applies_to": [
       "http",
       "grpc",
@@ -209,7 +236,12 @@
       "py_sdk_http",
       "java_sdk_grpc",
       "java_sdk_http"
-    ]
+    ],
+    "expected_config_flat_kv": {
+      "banner_color": "900200021",
+      "gap_key": "900200031",
+      "welcome_text": "900200011"
+    }
   },
   {
     "ns": "demo-test",
@@ -321,13 +353,9 @@
     "user_attrs": {},
     "key": "__custom__",
     "expected_version_id": "",
-    "expected_value": {
-      "enabled": true,
-      "max_items": 10,
-      "variant": "A"
-    },
-    "source": "experiment_group",
-    "note": "E_custom group C (custom_params)",
+    "expected_value": {},
+    "source": "retired_custom",
+    "note": "Raw type contract for this exact namespace/user/attrs: 0/1/3 match expected_config_flat_kv; 2 rejects; full fallbacks excluded.",
     "applies_to": [
       "http",
       "grpc",
@@ -337,7 +365,11 @@
       "py_sdk_http",
       "java_sdk_grpc",
       "java_sdk_http"
-    ]
+    ],
+    "expected_config_flat_kv": {
+      "banner_color": "900200022",
+      "welcome_text": "900200012"
+    }
   },
   {
     "ns": "demo-test",
@@ -428,30 +460,6 @@
     "expected_value": "welcome-B",
     "source": "experiment_group",
     "note": "E_cfg group B (bucket-derived)",
-    "applies_to": [
-      "http",
-      "grpc",
-      "go_sdk_grpc",
-      "go_sdk_http",
-      "py_sdk_grpc",
-      "py_sdk_http",
-      "java_sdk_grpc",
-      "java_sdk_http"
-    ]
-  },
-  {
-    "ns": "demo-test",
-    "user_id": "u6",
-    "user_attrs": {},
-    "key": "__custom__",
-    "expected_version_id": "",
-    "expected_value": {
-      "enabled": true,
-      "max_items": 10,
-      "variant": "A"
-    },
-    "source": "experiment_group",
-    "note": "E_custom group C (custom_params)",
     "applies_to": [
       "http",
       "grpc",
@@ -549,12 +557,9 @@
     "user_attrs": {},
     "key": "__custom__",
     "expected_version_id": "",
-    "expected_value": {
-      "tier": "silver",
-      "weight": 2.5
-    },
-    "source": "experiment_group",
-    "note": "E_custom2 silver (custom_params)",
+    "expected_value": {},
+    "source": "retired_custom",
+    "note": "Raw type contract for this exact namespace/user/attrs: 0/1/3 match expected_config_flat_kv; 2 rejects; full fallbacks excluded.",
     "applies_to": [
       "http",
       "grpc",
@@ -564,7 +569,10 @@
       "py_sdk_http",
       "java_sdk_grpc",
       "java_sdk_http"
-    ]
+    ],
+    "expected_config_flat_kv": {
+      "color": "900400011"
+    }
   },
   {
     "ns": "for_dev_agent_test",
@@ -592,12 +600,9 @@
     "user_attrs": {},
     "key": "__custom__",
     "expected_version_id": "",
-    "expected_value": {
-      "tier": "gold",
-      "weight": 1.5
-    },
-    "source": "experiment_group",
-    "note": "E_custom2 gold (custom_params)",
+    "expected_value": {},
+    "source": "retired_custom",
+    "note": "Raw type contract for this exact namespace/user/attrs: 0/1/3 match expected_config_flat_kv; 2 rejects; full fallbacks excluded.",
     "applies_to": [
       "http",
       "grpc",
@@ -607,7 +612,10 @@
       "py_sdk_http",
       "java_sdk_grpc",
       "java_sdk_http"
-    ]
+    ],
+    "expected_config_flat_kv": {
+      "color": "900400013"
+    }
   },
   {
     "ns": "for_dev_agent_test",
@@ -628,6 +636,27 @@
       "java_sdk_grpc",
       "java_sdk_http"
     ]
+  },
+  {
+    "ns": "for_dev_agent_test",
+    "user_id": "u15903",
+    "user_attrs": {},
+    "key": "__custom__",
+    "expected_version_id": "",
+    "expected_value": {},
+    "source": "retired_custom",
+    "note": "Experiment-internal gap: E_cfg2 bucket 9999 is uncovered, so 0/1/3 return empty raw config; GetConfig resolves the full release separately.",
+    "applies_to": [
+      "http",
+      "grpc",
+      "go_sdk_grpc",
+      "go_sdk_http",
+      "py_sdk_grpc",
+      "py_sdk_http",
+      "java_sdk_grpc",
+      "java_sdk_http"
+    ],
+    "expected_config_flat_kv": {}
   },
   {
     "ns": "for_dev_agent_test",
@@ -655,12 +684,9 @@
     "user_attrs": {},
     "key": "__custom__",
     "expected_version_id": "",
-    "expected_value": {
-      "tier": "silver",
-      "weight": 2.5
-    },
-    "source": "experiment_group",
-    "note": "E_custom2 silver (custom_params)",
+    "expected_value": {},
+    "source": "retired_custom",
+    "note": "Raw type contract for this exact namespace/user/attrs: 0/1/3 match expected_config_flat_kv; 2 rejects; full fallbacks excluded.",
     "applies_to": [
       "http",
       "grpc",
@@ -670,7 +696,10 @@
       "py_sdk_http",
       "java_sdk_grpc",
       "java_sdk_http"
-    ]
+    ],
+    "expected_config_flat_kv": {
+      "color": "900400013"
+    }
   },
   {
     "ns": "for_dev_agent_test",
@@ -698,12 +727,9 @@
     "user_attrs": {},
     "key": "__custom__",
     "expected_version_id": "",
-    "expected_value": {
-      "tier": "gold",
-      "weight": 1.5
-    },
-    "source": "experiment_group",
-    "note": "E_custom2 gold (custom_params)",
+    "expected_value": {},
+    "source": "retired_custom",
+    "note": "Raw type contract for this exact namespace/user/attrs: 0/1/3 match expected_config_flat_kv; 2 rejects; full fallbacks excluded.",
     "applies_to": [
       "http",
       "grpc",
@@ -713,7 +739,10 @@
       "py_sdk_http",
       "java_sdk_grpc",
       "java_sdk_http"
-    ]
+    ],
+    "expected_config_flat_kv": {
+      "color": "900400011"
+    }
   },
   {
     "ns": "for_dev_agent_test",

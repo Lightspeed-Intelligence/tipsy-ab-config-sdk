@@ -47,10 +47,10 @@ message Value {
 
 // ExperimentType filters which experiment results are returned.
 enum ExperimentType {
-  EXPERIMENT_TYPE_UNSPECIFIED    = 0; // treated as default custom_params
+  EXPERIMENT_TYPE_UNSPECIFIED    = 0; // defaults to CONFIG_VERSION after server-side custom retirement; older servers default to custom_params
   EXPERIMENT_TYPE_CONFIG_VERSION = 1;
-  EXPERIMENT_TYPE_CUSTOM_PARAMS  = 2;
-  EXPERIMENT_TYPE_ALL            = 3;
+  EXPERIMENT_TYPE_CUSTOM_PARAMS  = 2 [deprecated = true]; // rejected after server-side custom retirement
+  EXPERIMENT_TYPE_ALL            = 3; // config-only after server-side custom retirement
 }
 
 // ResultDisplayType selects the result shape (flat_kv vs per-group).
@@ -65,7 +65,7 @@ message GetExperimentResultRequest {
   string user_id   = 2;                  // required (UID drives hashing)
   map<string, Value> user_attrs = 3;     // userInfo for admission
   repeated string layer_ids = 4;         // optional; empty = all layers
-  ExperimentType experiment_type = 5;    // optional; default custom_params
+  ExperimentType experiment_type = 5;    // optional; 0 = CONFIG_VERSION after custom retirement (older servers: custom_params)
   ResultDisplayType display_type = 6;    // optional; default flat_kv
   string trace_id = 7;                   // optional; empty ⇒ server fills uuid.New()
   // env: single-value environment identifier carried with the request; ""
@@ -78,11 +78,11 @@ message GetExperimentResultRequest {
 message GetExperimentResultResponse {
   // flat_kv mode: split to avoid int64 precision loss (M1).
   //   config_flat_kv: config_version experiment/gray hits → key_name → version_id.
-  //   custom_flat_kv: custom_params experiment hits → key → arbitrary JSON value.
+  //   custom_flat_kv: retained for older servers; never populated after custom retirement.
   // The int64 value is the versionId (config_version PRIMARY KEY id, globally
   // unique) — NOT the per-key semantic version_no.
   map<string, int64>     config_flat_kv = 1;
-  google.protobuf.Struct custom_flat_kv = 2;
+  google.protobuf.Struct custom_flat_kv = 2 [deprecated = true];
   // each_experiment_group mode: one element per hit experiment group.
   repeated ExperimentGroupResult groups = 3;
   // exposures: retained on the wire for proto3 backward compatibility
@@ -95,7 +95,8 @@ message GetExperimentResultResponse {
   // (uid, namespace). One entry per hit release_id (each carrying a
   // key_versions map of config_key.key → versionId). Populated ONLY when
   // display_type == RESULT_DISPLAY_TYPE_EACH_EXPERIMENT_GROUP AND
-  // experiment_type ∈ {EXPERIMENT_TYPE_CONFIG_VERSION, EXPERIMENT_TYPE_ALL}.
+  // experiment_type ∈ {EXPERIMENT_TYPE_UNSPECIFIED, EXPERIMENT_TYPE_CONFIG_VERSION,
+  // EXPERIMENT_TYPE_ALL} after custom retirement (0 normalizes to config).
   // In every other request shape the field is a zero-length slice (NOT a
   // missing field) — same style as `groups` / `config_flat_kv`. Output is
   // sorted by release_id ascending and stable across repeated identical
@@ -109,11 +110,11 @@ message ExperimentGroupResult {
   string group_id      = 3;
   ExperimentType experiment_type = 4;
   // config_version: params as key_name → version_id (params_versions).
-  // custom_params: params as arbitrary JSON (params_custom).
+  // params_custom: retained for older servers; never populated after custom retirement.
   // The int64 value in params_versions is the versionId (config_version
   // PRIMARY KEY id, globally unique) — NOT the per-key semantic version_no.
   map<string, int64>     params_versions = 5;
-  google.protobuf.Struct params_custom   = 6;
+  google.protobuf.Struct params_custom   = 6 [deprecated = true];
 }
 
 // Exposure is retained on the wire purely for proto3 backward compatibility

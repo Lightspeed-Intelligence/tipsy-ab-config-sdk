@@ -1243,6 +1243,14 @@ public final class TipsyAbConfigClient implements AutoCloseable {
      * response so business code can read {@code config_flat_kv} /
      * {@code custom_flat_kv} / {@code groups} / {@code gray_hits} directly.
      *
+     * <p>{@code custom_params} is deprecated. Use
+     * {@link ExperimentType#CONFIG_VERSION} for new raw result queries, or
+     * {@link #getConfig} to resolve configuration values. This public method,
+     * and legacy response fields remain available. On servers with custom retired,
+     * type 0 is equivalent to CONFIG_VERSION, type 2 fails with FailedPrecondition
+     * (HTTP 400), and ALL returns config only. Transport failures are wrapped in
+     * TipsyConfigException; the SDK does not rewrite default request types.
+     *
      * <p>{@code gray_hits} is grouped per hit gray release: each
      * {@code GrayReleaseHit} carries a {@code release_id} plus a
      * {@code key_versions} map (config_key.key name &rarr; versionId), i.e. one

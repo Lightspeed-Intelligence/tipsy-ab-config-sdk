@@ -16,7 +16,11 @@ This package mirrors the Go SDK 1:1:
   first dynamic ``get_config`` (or warmed up front via
   ``AbtestContext.prefetch_config_version_flat_kv_for_namespace``).
 - :func:`Client.get_experiment_result` exposes the full wire request
-  (namespace / user_info / layer_ids / type / display) for custom_params.
+  (namespace / user_info / layer_ids / type / display). New integrations should
+  explicitly select ``EXPERIMENT_TYPE_CONFIG_VERSION``; ``custom_params`` is
+  deprecated. Omitting the type keeps the ``UNSPECIFIED`` wire value: servers
+  with custom retired treat 0 as CONFIG_VERSION, reject 2, and return config only for
+  ALL. Older servers retain historical custom behavior.
 - :class:`tipsy_ab_config.fastapi_middleware.AbtestMiddleware` wires the
   AbtestContext into ``contextvars`` for FastAPI / Starlette apps.
 

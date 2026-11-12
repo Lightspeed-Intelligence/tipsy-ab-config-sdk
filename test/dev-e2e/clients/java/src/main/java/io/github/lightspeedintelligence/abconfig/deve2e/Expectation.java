@@ -36,6 +36,7 @@ final class Expectation {
     final String expectedVersionId;
     /** Either a {@code String} (config-version rows) or a {@code Map} (custom rows). */
     final Object expectedValue;
+    final Map<String, Long> expectedConfigFlatKv;
     final String source;
     final String note;
     final List<String> appliesTo;
@@ -47,6 +48,7 @@ final class Expectation {
             String key,
             String expectedVersionId,
             Object expectedValue,
+            Map<String, Long> expectedConfigFlatKv,
             String source,
             String note,
             List<String> appliesTo) {
@@ -56,6 +58,7 @@ final class Expectation {
         this.key = key;
         this.expectedVersionId = expectedVersionId;
         this.expectedValue = expectedValue;
+        this.expectedConfigFlatKv = expectedConfigFlatKv;
         this.source = source;
         this.note = note;
         this.appliesTo = appliesTo;
@@ -101,9 +104,20 @@ final class Expectation {
                 text(row, "key"),
                 text(row, "expected_version_id"),
                 toJavaValue(row.get("expected_value")),
+                rawConfigVersions(row.get("expected_config_flat_kv")),
                 text(row, "source"),
                 text(row, "note"),
                 applies);
+    }
+
+    private static Map<String, Long> rawConfigVersions(JsonNode node) {
+        if (node == null || !node.isObject()) {
+            return null;
+        }
+        Map<String, Long> versions = new LinkedHashMap<>();
+        node.fields().forEachRemaining(entry ->
+                versions.put(entry.getKey(), Long.parseLong(entry.getValue().asText())));
+        return versions;
     }
 
     private static String text(JsonNode row, String field) {

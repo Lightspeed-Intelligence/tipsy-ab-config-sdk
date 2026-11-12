@@ -8,6 +8,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Deprecated
+
+- 共享 proto 将枚举 2、`custom_flat_kv` 与 `params_custom` 标记为 deprecated；保留数值、
+  字段编号和访问方法。Go/Java 生成接口会增加废弃诊断，严格 lint 消费方需迁移或局部抑制。
+
+- 在服务端全量升级前，原始 config 查询必须显式传类型 1；旧服务端仍将 0 作为 custom 查询。
+- 为 `ExperimentType.CUSTOM_PARAMS` 增加 `@Deprecated`，新接入使用 `CONFIG_VERSION`；
+  更新原始结果 API 文档与示例。保留枚举值、字段、公共方法和 `UNSPECIFIED` 默认类型，
+  config/get-all/prefetch 语义不变。
+- 服务端退役 custom 后，类型 0 等同 `CONFIG_VERSION`（结果与上报均按 config），显式类型 2 返回
+  `FailedPrecondition` / HTTP 400（SDK 包装为 `TipsyConfigException`），ALL 只返回 config。
+- 消费方以 `-Xlint:deprecation -Werror` 编译且引用废弃枚举时会失败；应迁移为显式
+  config 查询，或对兼容测试按项目规范局部 `@SuppressWarnings("deprecation")`。
+
+### 发布步骤
+
+- 本次 proto 新增了 deprecated 选项。Go SDK 发版时需先给 `api/gen/go` 打新 tag，再把
+  `sdk/go/tipsyabconfig/go.mod` 中的 `api/gen/go` 从 v0.7.0 升到新版本，然后发布 Go SDK
+  （见 Go CHANGELOG）。Java 生成代码在构建期由仓库内已更新的 `api/proto` 生成，
+  本 SDK 发版无需额外步骤。
+
 ## [0.13.0] - 2026-11-03
 
 ### Added

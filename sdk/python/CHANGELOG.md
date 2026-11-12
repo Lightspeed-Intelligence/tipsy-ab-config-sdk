@@ -8,6 +8,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Deprecated
+
+- 共享 proto 将枚举 2、`custom_flat_kv` 与 `params_custom` 标记为 deprecated；保留数值、
+  字段编号和访问方法。Go/Java 生成接口会增加废弃诊断，严格 lint 消费方需迁移或局部抑制。
+
+- 在服务端全量升级前，原始 config 查询必须显式传类型 1；旧服务端仍将 0 作为 custom 查询。
+- 文档标记 `EXPERIMENT_TYPE_CUSTOM_PARAMS` 已废弃，新接入显式选择
+  `EXPERIMENT_TYPE_CONFIG_VERSION`，并提供原始结果查询示例；不增加运行时 warning。
+  保留枚举值、字段、公共方法及 `UNSPECIFIED` 默认参数，config/get-all/prefetch 语义不变。
+- 服务端退役 custom 后，类型 0 等同 `CONFIG_VERSION`（结果与上报均按 config），显式类型 2 抛出
+  gRPC `FailedPrecondition` / HTTP 400 的 transport 错误，ALL 只返回 config；
+  旧服务端仍沿用历史 custom 行为，SDK 不改写默认类型。
+
+### 发布步骤
+
+- 本次 proto 新增了 deprecated 选项。Go SDK 发版时需先给 `api/gen/go` 打新 tag，再把
+  `sdk/go/tipsyabconfig/go.mod` 中的 `api/gen/go` 从 v0.7.0 升到新版本，然后发布 Go SDK
+  （见 Go CHANGELOG）。Python 生成代码（`_proto/*_pb2.py`）已在仓库中更新，
+  本 SDK 发版无需额外步骤。
+
 ## [0.17.0] - 2026-11-03
 
 ### Added

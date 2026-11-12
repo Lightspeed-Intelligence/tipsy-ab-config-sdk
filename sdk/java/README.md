@@ -93,7 +93,7 @@ The runnable example is
 | `getAllConfigs(ctx, ns)` | Resolves all keys against one cache snapshot and returns a new mutable map. Keys without values are omitted; an empty string is valid. |
 | `getAllConfigsDefault(ctx)` | `getAllConfigs` using the default namespace. |
 | typed getters | Boolean, long, double, string and JSON accessors over the same static/dynamic semantics. |
-| `getExperimentResult(request)` | Exposes the raw proto response for custom parameters and group inspection. |
+| `getExperimentResult(request)` | Exposes raw experiment/group results, including historical custom parameters. Select `CONFIG_VERSION` for new integrations. |
 
 Create one `AbtestContext` for each logical request and reuse it. The first
 dynamic lookup fetches and memoizes at most one experiment result per namespace.
@@ -120,6 +120,33 @@ a UUID v4; pass an existing request/trace id when one is available.
 The raw response's `config_flat_kv`, `groups[].params_versions`, and
 `gray_hits[].key_versions` values are global `config_version` primary-key ids,
 not the per-key `version_no`.
+
+### custom_params deprecation
+
+`ExperimentType.CUSTOM_PARAMS` is marked `@Deprecated` and retained for
+historical experiments. The enum values, response fields, and public methods
+remain available. An omitted/null type still becomes `UNSPECIFIED` (0).
+After server-side retirement, type 0 is equivalent to CONFIG_VERSION;
+explicit type 2 requests fail with gRPC `FailedPrecondition` / HTTP 400, surfaced
+as `TipsyConfigException`. `ALL` returns config only and `custom_flat_kv` is not
+populated. Older servers retain historical custom behavior; the SDK does not
+rewrite defaults. `getConfig` continues to use `CONFIG_VERSION`.
+Until all server instances are upgraded, raw config queries must select it explicitly;
+explicit selection is also recommended for new integrations:
+
+```java
+import io.github.lightspeedintelligence.abconfig.ExperimentResultRequest;
+import io.github.lightspeedintelligence.abconfig.ExperimentType;
+import io.github.lightspeedintelligence.abconfig.proto.abtest.v1.GetExperimentResultResponse;
+import java.util.Map;
+
+GetExperimentResultResponse result = client.getExperimentResult(
+        ExperimentResultRequest.builder()
+                .namespace("my-project")
+                .userInfo("user-123", Map.of())
+                .type(ExperimentType.CONFIG_VERSION)
+                .build());
+```
 
 ## Transports
 

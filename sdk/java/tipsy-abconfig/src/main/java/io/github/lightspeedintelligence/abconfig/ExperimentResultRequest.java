@@ -6,9 +6,13 @@ import java.util.Map;
 
 /**
  * SDK-stable request for {@link TipsyAbConfigClient#getExperimentResult} (design
- * 03 / 05). It exposes every wire parameter so business code can fetch
- * {@code custom_params} results (or per-group results) directly, without going
- * through the {@code config_version} fast path baked into {@code getConfig}.
+ * 03 / 05). It exposes every wire parameter for raw experiment results, including
+ * per-group results and historical {@code custom_params} results.
+ * New integrations should explicitly select {@link ExperimentType#CONFIG_VERSION};
+ * the default remains {@link ExperimentType#UNSPECIFIED}. Servers with custom
+ * retired treat type 0 as CONFIG_VERSION, reject explicit type 2, and return config
+ * only for ALL. Older servers retain historical custom behavior, so explicitly
+ * select CONFIG_VERSION until all instances are upgraded.
  *
  * <p>Immutable; construct via {@link #builder()}. Mirrors the Go SDK's
  * {@code ExperimentResultRequest}.
@@ -106,7 +110,11 @@ public final class ExperimentResultRequest {
             return this;
         }
 
-        /** Selects the experiment type(s) to evaluate. */
+        /**
+         * Selects the experiment type(s) to evaluate. Use
+         * {@link ExperimentType#CONFIG_VERSION} for new integrations;
+         * {@code CUSTOM_PARAMS} is deprecated.
+         */
         public Builder type(ExperimentType type) {
             this.type = type;
             return this;
