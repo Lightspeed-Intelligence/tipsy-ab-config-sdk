@@ -42,10 +42,10 @@ namespace 至多拉取一次。创建上下文本身不发 RPC；可显式 prefe
 
 | 模块 | 发布标识/坐标 | 当前仓库元数据 |
 |---|---|---|
-| Go | module path + `sdk/go/tipsyabconfig/vX.Y.Z` tag | `v0.16.0` |
+| Go | module path + `sdk/go/tipsyabconfig/vX.Y.Z` tag | `v0.17.0` |
 | Python | `python-sdk/vX.Y.Z` / `tipsy-ab-config` | `v0.17.0` |
 | Java | `io.github.lightspeed-intelligence:tipsy-abconfig` | `v0.13.0` |
-| Go proto | `api/gen/go/vX.Y.Z` | `v0.7.0` |
+| Go proto | `api/gen/go/vX.Y.Z` | `v0.8.0` |
 
 版本入口：
 
@@ -58,7 +58,7 @@ Go：仓库为私有，`go get` 需要 `GOPRIVATE` 和能读取本仓库的 git 
 
 ```bash
 go env -w GOPRIVATE='github.com/Lightspeed-Intelligence/*'
-go get github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk/sdk/go/tipsyabconfig@v0.16.0
+go get github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk/sdk/go/tipsyabconfig@v0.17.0
 ```
 
 构建环境的凭证要求：
@@ -232,6 +232,22 @@ TokenProvider: func(ctx context.Context) (string, error) {
 `Middleware` 与无 Gin 编译依赖的 `GinMiddleware`；默认不预热，只有显式配置
 `PrefetchPaths(...)` 的精确路径才预热默认 namespace。完整 API 见包注释与
 [`sdk/go/example`](../sdk/go/example)。
+
+大 JSON 配置（例如 100 KB 以上、每秒读上百次）用 `ParsedConfig` 读，按版本缓存解析结果，
+同一版本只解析一次。`GetConfigJSON` / `GetConfigStaticJSON` 每次调用都会重新解析：
+
+```go
+// 包级变量，整个进程复用一个；解析函数可以换成带校验的自定义函数。
+var promptCfg = tipsyabconfig.NewParsedConfig(tipsyabconfig.ParseJSON[*PromptCfg])
+
+cfg, ok, err := promptCfg.Get(ctx, client, abctx, "my-app", "prompt_cfg") // 动态，语义同 GetConfig
+cfg, ok, err = promptCfg.GetStatic(client, "my-app", "prompt_cfg")        // 全量值，语义同 GetConfigStatic
+```
+
+`ok=false` 表示没有解析出值（`GetConfig` 会返回默认值）；`ok=true` 且 `err!=nil` 表示解析失败，
+失败结果同样缓存。缓存挂在 SDK 本地快照上，快照被替换（这个 namespace 有发布、下线、实验或白名单变更）
+后，在用的版本会再解析一次。返回的对象由读同一版本的所有请求共用，调用方不能修改它，
+包括其中的 map 和 slice。
 
 ## 6. Python 接入
 

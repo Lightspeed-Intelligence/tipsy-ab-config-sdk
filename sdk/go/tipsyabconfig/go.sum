@@ -1,5 +1,5 @@
-github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk/api/gen/go v0.7.0 h1:IwF+plrb8xW6W8OsHdagydQz13jIxTHZ67xoW9gpAoo=
-github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk/api/gen/go v0.7.0/go.mod h1:2Y544WTsGL8tORF2848VSOUkAMAIW+pbN3RXwfy+Sso=
+github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk/api/gen/go v0.8.0 h1:oKP7AGoLEgrddJch1srGGYiHG2+ZbYgZ78y7gIikuL0=
+github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk/api/gen/go v0.8.0/go.mod h1:2Y544WTsGL8tORF2848VSOUkAMAIW+pbN3RXwfy+Sso=
 github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk/sdk/go/tipsyauth v0.1.0 h1:QpsoP2cn8LtT8LsC2in6qIRX57HWaYCcGDqK5lpCxP4=
 github.com/Lightspeed-Intelligence/tipsy-ab-config-sdk/sdk/go/tipsyauth v0.1.0/go.mod h1:Px8oc0iNoZ7sMa/WUWFkY2M5xUKxFt6+sYInO9uJpOM=
 github.com/cespare/xxhash/v2 v2.3.0 h1:UL815xU9SqsFlibzuggzjXhog7bL6oX9BbNZnL2UFvs=

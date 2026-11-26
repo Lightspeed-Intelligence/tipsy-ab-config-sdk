@@ -36,6 +36,13 @@ type NamespaceSnapshot struct {
 	BusinessSnapshotSeq   int64
 	ExperimentSnapshotSeq int64
 	Keys                  map[string]KeyState
+
+	// parsed holds ParsedConfig results for versions read from this snapshot
+	// (parsedKey → *parsedEntry[T]). It is created with the snapshot and
+	// dropped with it, so a replace discards stale parse results without any
+	// eviction logic. nil (snapshot built outside applyProto) disables caching:
+	// ParsedConfig then parses on every read.
+	parsed *sync.Map
 }
 
 // configCache is the per-process in-memory cache of NamespaceSnapshot.
@@ -146,6 +153,7 @@ func (c *configCache) applyProto(pb *configv1.NamespaceSnapshot) (replaced, busi
 		BusinessSnapshotSeq:   newBiz,
 		ExperimentSnapshotSeq: newExp,
 		Keys:                  make(map[string]KeyState, len(pb.Keys)),
+		parsed:                new(sync.Map),
 	}
 	var byteSize uint64
 	for _, k := range pb.Keys {
