@@ -19,8 +19,8 @@ func (c *Client) GetConfigStatic(ns, key, defaultValue string) (string, bool) {
 
 // resolveStatic is GetConfigStatic without the caller default. It reads the
 // full-release version and its value from ONE captured snapshot (returned so
-// ParsedConfig can attach its per-version cache to that same snapshot) and
-// emits the get_config_static hit line on a hit.
+// GetConfigStaticJSON can attach its per-version decode cache to that same
+// snapshot) and emits the get_config_static hit line on a hit.
 func (c *Client) resolveStatic(ns, key string) (snap *NamespaceSnapshot, val string, versionID int64, ok bool) {
 	if c == nil {
 		return nil, "", 0, false
@@ -88,8 +88,8 @@ func (c *Client) getConfigResolved(ctx context.Context, abctx *AbtestContext, ns
 }
 
 // resolvedConfig is one dynamic (ns, key) resolution plus the snapshot it was
-// read from, so ParsedConfig can attach its per-version cache to that same
-// snapshot. res.source == keySourceNone means the caller's default applies.
+// read from, so GetConfigJSON can attach its per-version decode cache to that
+// same snapshot. res.source == keySourceNone means the caller's default applies.
 type resolvedConfig struct {
 	snap *NamespaceSnapshot
 	res  keyResolution

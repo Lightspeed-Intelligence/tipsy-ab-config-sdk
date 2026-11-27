@@ -37,11 +37,11 @@ type NamespaceSnapshot struct {
 	ExperimentSnapshotSeq int64
 	Keys                  map[string]KeyState
 
-	// parsed holds ParsedConfig results for versions read from this snapshot
-	// (parsedKey → *parsedEntry[T]). It is created with the snapshot and
-	// dropped with it, so a replace discards stale parse results without any
-	// eviction logic. nil (snapshot built outside applyProto) disables caching:
-	// ParsedConfig then parses on every read.
+	// parsed caches GetConfigJSON / GetConfigStaticJSON decodes of versions
+	// read from this snapshot (jsonCacheKey → *jsonCacheEntry, see
+	// json_cache.go). It is created with the snapshot and dropped with it, so a
+	// replace discards stale results without any eviction logic. nil (snapshot
+	// built outside applyProto) disables caching: every read decodes.
 	parsed *sync.Map
 }
 

@@ -20,19 +20,21 @@ bump first, then an SDK tag bump.
 
 ## [Unreleased]
 
-## [0.17.0] - 2026-11-26
-
-### Added
-
-- `ParsedConfig[T]`（`NewParsedConfig`、`Get`、`GetStatic`）和 `ParseJSON[T]`：读取配置并返回
-  解析后的值，按版本缓存解析结果，供每秒读上百次的大 JSON 配置使用。同一版本只解析一次，
-  并发首次读取也只解析一次；解析失败同样缓存；解析函数 panic 转成错误返回。缓存挂在本地
-  namespace 快照上，快照被替换时一起丢弃，不需要失效逻辑。返回值由所有读同一版本的调用方
-  共用，不能修改。`Get` 的版本决策、命中日志与 `GetConfig` 相同，`GetStatic` 与
-  `GetConfigStatic` 相同。约 100 KB 的 JSON：每次读从约 305 µs、231 KB 分配降到约 0.6 µs、32 B。
+## [0.17.0] - 2026-11-27
 
 ### Changed
 
+- `GetConfigJSON` / `GetConfigStaticJSON` 按版本缓存解码结果，供每秒读上百次的大 JSON 配置
+  使用，调用方不用改代码。`*out` 为零值时，同一版本（按 `out` 的类型分开）只解码一次，并发
+  首次读取也只解码一次；之后每次读把缓存的结果深拷贝进 `out`：map、slice、指针各自一份，
+  字符串共用（不可变），所以 `out` 仍归调用方，可以随意修改。缓存挂在本地 namespace 快照上，
+  快照被替换时一起丢弃，不需要失效逻辑。约 100 KB 的 JSON：解码进结构体每次从约 360 µs、
+  253 KB 分配降到约 30 µs、25 KB；解码进 `map[string]any` 从约 360 µs 降到约 110 µs。
+  - 返回值、错误（包括包装的错误文本）、命中日志与之前相同；类型不匹配时 `out` 里的部分
+    结果也与 `json.Unmarshal` 相同；自定义 `UnmarshalJSON` panic 时照旧向调用方抛出。
+  - 以下情况不走缓存，每次照旧 `json.Unmarshal` 进 `out`：`*out` 不是零值（例如预先填了
+    默认值，保留 `json.Unmarshal` 的合并语义）；类型里有带未导出字段的结构体（`time.Time`
+    除外）或 chan / func；`out` 不是非 nil 指针。
 - `GetConfigStatic` 改为从同一份快照读取全量版本号和值（之前分两次读快照，并发替换时可能
   误报未命中）；返回值和命中日志不变。
 

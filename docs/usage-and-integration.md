@@ -233,21 +233,19 @@ TokenProvider: func(ctx context.Context) (string, error) {
 `PrefetchPaths(...)` 的精确路径才预热默认 namespace。完整 API 见包注释与
 [`sdk/go/example`](../sdk/go/example)。
 
-大 JSON 配置（例如 100 KB 以上、每秒读上百次）用 `ParsedConfig` 读，按版本缓存解析结果，
-同一版本只解析一次。`GetConfigJSON` / `GetConfigStaticJSON` 每次调用都会重新解析：
+JSON 配置用 `GetConfigJSON`（动态）/ `GetConfigStaticJSON`（全量值）读。从 v0.17.0 起它们
+按版本缓存解码结果，大 JSON（例如 100 KB 以上、每秒读上百次）不会每次都重新解码：
 
 ```go
-// 包级变量，整个进程复用一个；解析函数可以换成带校验的自定义函数。
-var promptCfg = tipsyabconfig.NewParsedConfig(tipsyabconfig.ParseJSON[*PromptCfg])
-
-cfg, ok, err := promptCfg.Get(ctx, client, abctx, "my-app", "prompt_cfg") // 动态，语义同 GetConfig
-cfg, ok, err = promptCfg.GetStatic(client, "my-app", "prompt_cfg")        // 全量值，语义同 GetConfigStatic
+var cfg PromptCfg // 传零值才走缓存
+err := client.GetConfigJSON(ctx, abctx, "my-app", "prompt_cfg", &cfg)
 ```
 
-`ok=false` 表示没有解析出值（`GetConfig` 会返回默认值）；`ok=true` 且 `err!=nil` 表示解析失败，
-失败结果同样缓存。缓存挂在 SDK 本地快照上，快照被替换（这个 namespace 有发布、下线、实验或白名单变更）
-后，在用的版本会再解析一次。返回的对象由读同一版本的所有请求共用，调用方不能修改它，
-包括其中的 map 和 slice。
+同一版本只解码一次，之后每次读把缓存结果深拷贝进 `out`，`out` 归调用方，可以修改。
+解码进结构体比解码进 `map[string]any` 快得多（约 100 KB 时约 30 µs 对 110 µs，不缓存约 360 µs）。
+`*out` 预先填了值（例如默认值）时，照旧每次 `json.Unmarshal` 并保留合并语义，不走缓存。
+缓存挂在 SDK 本地快照上，快照被替换（这个 namespace 有发布、下线、实验或白名单变更）后，
+在用的版本会再解码一次。
 
 ## 6. Python 接入
 
