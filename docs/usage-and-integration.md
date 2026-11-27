@@ -244,6 +244,8 @@ err := client.GetConfigJSON(ctx, abctx, "my-app", "prompt_cfg", &cfg)
 同一版本只解码一次，之后每次读把缓存结果深拷贝进 `out`，`out` 归调用方，可以修改。
 解码进结构体比解码进 `map[string]any` 快得多（约 100 KB 时约 30 µs 对 110 µs，不缓存约 360 µs）。
 `*out` 预先填了值（例如默认值）时，照旧每次 `json.Unmarshal` 并保留合并语义，不走缓存。
+类型里有自定义 `UnmarshalJSON` / `UnmarshalText`（`time.Time`、`json.RawMessage` 除外）时也不走缓存，
+想要缓存就把校验放到读取之后，而不是写在 `UnmarshalJSON` 里。
 缓存挂在 SDK 本地快照上，快照被替换（这个 namespace 有发布、下线、实验或白名单变更）后，
 在用的版本会再解码一次。
 

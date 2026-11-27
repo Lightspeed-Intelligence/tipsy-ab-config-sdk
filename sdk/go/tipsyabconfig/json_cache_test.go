@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"reflect"
 	"strings"
 	"sync"
@@ -15,11 +16,20 @@ import (
 	"time"
 )
 
-// GetConfigJSON / GetConfigStaticJSON decode-cache tests. Decodes are counted
-// through types with a custom UnmarshalJSON. These tests must not run in
-// parallel with each other (shared counters).
+// GetConfigJSON / GetConfigStaticJSON decode-cache tests. Cached decodes are
+// counted through testHookJSONDecode; types with their own UnmarshalJSON count
+// their calls themselves. These tests must not run in parallel with each other
+// (package-level hook and counters).
 
-var countedDecodes atomic.Int64
+// countDecodes installs testHookJSONDecode for the test and returns the count
+// of cached decodes it has seen.
+func countDecodes(t *testing.T) *atomic.Int64 {
+	t.Helper()
+	var n atomic.Int64
+	testHookJSONDecode = func() { n.Add(1) }
+	t.Cleanup(func() { testHookJSONDecode = nil })
+	return &n
+}
 
 type countedCfg struct {
 	N    int               `json:"n"`
@@ -27,54 +37,10 @@ type countedCfg struct {
 	Meta map[string]string `json:"meta"`
 }
 
-func (c *countedCfg) UnmarshalJSON(b []byte) error {
-	countedDecodes.Add(1)
-	type plain countedCfg
-	return json.Unmarshal(b, (*plain)(c))
-}
-
-// hiddenCfg has an unexported field, so its decodes cannot be cached.
-type hiddenCfg struct {
-	N      int `json:"n"`
-	hidden int
-}
-
-var hiddenDecodes atomic.Int64
-
-func (h *hiddenCfg) UnmarshalJSON(b []byte) error {
-	hiddenDecodes.Add(1)
-	var w struct {
-		N int `json:"n"`
-	}
-	err := json.Unmarshal(b, &w)
-	h.N = w.N
-	return err
-}
-
-var errRejected = errors.New("rejected by UnmarshalJSON")
-
-type rejectingCfg struct{ N int }
-
-var rejectingDecodes atomic.Int64
-
-func (r *rejectingCfg) UnmarshalJSON([]byte) error {
-	rejectingDecodes.Add(1)
-	return errRejected
-}
-
-type panickingCfg struct{ N int }
-
-var panickingDecodes atomic.Int64
-
-func (p *panickingCfg) UnmarshalJSON([]byte) error {
-	panickingDecodes.Add(1)
-	panic("boom")
-}
-
 const countedRaw = `{"n":7,"tags":["a","b"],"meta":{"k":"v"}}`
 
 func TestGetConfigStaticJSON_DecodesOncePerVersionUnderConcurrency(t *testing.T) {
-	countedDecodes.Store(0)
+	decodes := countDecodes(t)
 	cli := seedStatic(t, map[string]string{"big": countedRaw})
 
 	const readers = 64
@@ -99,7 +65,7 @@ func TestGetConfigStaticJSON_DecodesOncePerVersionUnderConcurrency(t *testing.T)
 	}
 	wg.Wait()
 
-	if n := countedDecodes.Load(); n != 1 {
+	if n := decodes.Load(); n != 1 {
 		t.Fatalf("decoded %d times for one version, want 1", n)
 	}
 	var again countedCfg
@@ -129,7 +95,7 @@ func TestGetConfigStaticJSON_InterfaceOutIsCopied(t *testing.T) {
 }
 
 func TestGetConfigStaticJSON_NonZeroOutKeepsMergeSemantics(t *testing.T) {
-	countedDecodes.Store(0)
+	decodes := countDecodes(t)
 	cli := seedStatic(t, map[string]string{"partial": `{"tags":["x"]}`})
 
 	for i := 0; i < 3; i++ {
@@ -141,13 +107,13 @@ func TestGetConfigStaticJSON_NonZeroOutKeepsMergeSemantics(t *testing.T) {
 			t.Fatalf("read %d: got %+v, want the default N=99 kept and tags=[x]", i, c)
 		}
 	}
-	if n := countedDecodes.Load(); n != 3 {
-		t.Fatalf("non-zero out decoded %d times, want 3 (not cached)", n)
+	if n := decodes.Load(); n != 0 {
+		t.Fatalf("non-zero out went through the cache %d times, want 0", n)
 	}
 }
 
 func TestGetConfigStaticJSON_ReplaceDecodesAgain(t *testing.T) {
-	countedDecodes.Store(0)
+	decodes := countDecodes(t)
 	keys := map[string]typedKey{"big": {full: 7, versions: map[int64]string{7: countedRaw}}}
 	cli := seedParsedClient(t, keys)
 
@@ -164,14 +130,14 @@ func TestGetConfigStaticJSON_ReplaceDecodesAgain(t *testing.T) {
 		t.Fatal("same seqs must not replace the snapshot")
 	}
 	read()
-	if n := countedDecodes.Load(); n != 1 {
+	if n := decodes.Load(); n != 1 {
 		t.Fatalf("before replace: decoded %d times, want 1", n)
 	}
 
 	cli.cache.applyProto(makeSnapshot("ns1", 2, 1, keys))
 	read()
 	read()
-	if n := countedDecodes.Load(); n != 2 {
+	if n := decodes.Load(); n != 2 {
 		t.Fatalf("after replace: decoded %d times, want 2", n)
 	}
 
@@ -183,16 +149,15 @@ func TestGetConfigStaticJSON_ReplaceDecodesAgain(t *testing.T) {
 	}
 }
 
-func TestGetConfigStaticJSON_ErrorsMatchUnmarshal(t *testing.T) {
-	rejectingDecodes.Store(0)
+func TestGetConfigStaticJSON_ErrorsMatchUnmarshalAndAreCached(t *testing.T) {
+	decodes := countDecodes(t)
 	raws := map[string]string{
 		"syntax":   `{broken`,
 		"mismatch": `{"n":"not-a-number","tags":["kept"]}`,
-		"rejected": `{"n":1}`,
 	}
 	cli := seedStatic(t, raws)
 
-	for i := 0; i < 2; i++ {
+	for i := 0; i < 3; i++ {
 		var s countedCfg
 		if cli.GetConfigStaticJSON("ns1", "syntax", &s) {
 			t.Fatal("syntax error must return false")
@@ -200,10 +165,7 @@ func TestGetConfigStaticJSON_ErrorsMatchUnmarshal(t *testing.T) {
 
 		// A type mismatch still fills the other fields; the caller used to
 		// see that partial state, and still does on cached reads.
-		var got, want struct {
-			N    int      `json:"n"`
-			Tags []string `json:"tags"`
-		}
+		var got, want countedCfg
 		if cli.GetConfigStaticJSON("ns1", "mismatch", &got) {
 			t.Fatal("type mismatch must return false")
 		}
@@ -211,47 +173,202 @@ func TestGetConfigStaticJSON_ErrorsMatchUnmarshal(t *testing.T) {
 		if !reflect.DeepEqual(got, want) {
 			t.Fatalf("read %d: partial state %+v, want %+v (same as json.Unmarshal)", i, got, want)
 		}
+	}
+	if n := decodes.Load(); n != 2 {
+		t.Fatalf("two failing values read 3 times each were decoded %d times, want 2", n)
+	}
+}
 
+// --- types whose decoding runs user code: never cached ----------------------
+
+var errRejected = errors.New("rejected by UnmarshalJSON")
+
+type rejectingCfg struct{ N int }
+
+var rejectingDecodes atomic.Int64
+
+func (r *rejectingCfg) UnmarshalJSON([]byte) error {
+	rejectingDecodes.Add(1)
+	return errRejected
+}
+
+type panickingCfg struct{ N int }
+
+var panickingDecodes atomic.Int64
+
+func (p *panickingCfg) UnmarshalJSON([]byte) error {
+	panickingDecodes.Add(1)
+	panic("boom")
+}
+
+// probeRule is the PR #27 review repro: a custom UnmarshalJSON stores a value
+// with unexported fields behind an interface. Deep-copying it panicked with
+// "reflect: unknown method using value obtained using unexported field".
+type probeImpl struct{ limits []int }
+type probeIface interface{ Limits() []int }
+
+func (p *probeImpl) Limits() []int { return p.limits }
+
+type probeRule struct {
+	Kind string
+	Impl probeIface `json:"-"`
+}
+
+var probeDecodes atomic.Int64
+
+func (r *probeRule) UnmarshalJSON(b []byte) error {
+	probeDecodes.Add(1)
+	type plain probeRule
+	if err := json.Unmarshal(b, (*plain)(r)); err != nil {
+		return err
+	}
+	r.Impl = &probeImpl{limits: []int{1}}
+	return nil
+}
+
+// treeNode links children back to their parent in UnmarshalJSON, building a
+// pointer cycle a deep copy would recurse on forever.
+type treeNode struct {
+	Name     string      `json:"name"`
+	Children []*treeNode `json:"children"`
+	Parent   *treeNode   `json:"-"`
+}
+
+func (n *treeNode) UnmarshalJSON(b []byte) error {
+	type plain treeNode
+	if err := json.Unmarshal(b, (*plain)(n)); err != nil {
+		return err
+	}
+	for _, c := range n.Children {
+		c.Parent = n
+	}
+	return nil
+}
+
+// upperName decodes through encoding.TextUnmarshaler.
+type upperName string
+
+func (u *upperName) UnmarshalText(b []byte) error {
+	*u = upperName(strings.ToUpper(string(b)))
+	return nil
+}
+
+func TestGetConfigStaticJSON_CustomDecodersBypassCache(t *testing.T) {
+	decodes := countDecodes(t)
+	rejectingDecodes.Store(0)
+	panickingDecodes.Store(0)
+	probeDecodes.Store(0)
+	cli := seedStatic(t, map[string]string{
+		"rejected": `{"N":1}`,
+		"panics":   `{}`,
+		"probe":    `{"Kind":"a"}`,
+		"tree":     `{"name":"root","children":[{"name":"kid","children":[]}]}`,
+		"text":     `{"n":"abc","nested":{"x":"y"}}`,
+		"ip":       `{"addr":"10.0.0.1"}`,
+	})
+
+	for i := 0; i < 3; i++ {
 		var r rejectingCfg
 		if cli.GetConfigStaticJSON("ns1", "rejected", &r) {
 			t.Fatal("UnmarshalJSON error must return false")
 		}
-	}
-	if n := rejectingDecodes.Load(); n != 1 {
-		t.Fatalf("a failing decode ran %d times, want 1 (errors are cached)", n)
-	}
-}
 
-func TestGetConfigStaticJSON_PanicStillPropagates(t *testing.T) {
-	panickingDecodes.Store(0)
-	cli := seedStatic(t, map[string]string{"p": `{}`})
-	for i := 0; i < 2; i++ {
 		func() {
 			defer func() {
-				if r := recover(); r != "boom" {
-					t.Fatalf("read %d: recovered %v, want the UnmarshalJSON panic", i, r)
+				if got := recover(); got != "boom" {
+					t.Fatalf("read %d: recovered %v, want the UnmarshalJSON panic", i, got)
 				}
 			}()
 			var p panickingCfg
-			cli.GetConfigStaticJSON("ns1", "p", &p)
+			cli.GetConfigStaticJSON("ns1", "panics", &p)
 		}()
+
+		var pr probeRule
+		if !cli.GetConfigStaticJSON("ns1", "probe", &pr) || pr.Kind != "a" || pr.Impl == nil || pr.Impl.Limits()[0] != 1 {
+			t.Fatalf("read %d: probe = %+v", i, pr)
+		}
+
+		var tree treeNode
+		if !cli.GetConfigStaticJSON("ns1", "tree", &tree) {
+			t.Fatal("tree: miss")
+		}
+		if len(tree.Children) != 1 || tree.Children[0].Parent != &tree {
+			t.Fatalf("read %d: parent link lost: %+v", i, tree)
+		}
+
+		var txt struct {
+			N      upperName            `json:"n"`
+			Nested map[string]upperName `json:"nested"`
+		}
+		if !cli.GetConfigStaticJSON("ns1", "text", &txt) || txt.N != "ABC" || txt.Nested["x"] != "Y" {
+			t.Fatalf("read %d: text = %+v", i, txt)
+		}
+
+		var withIP struct {
+			Addr net.IP `json:"addr"`
+		}
+		if !cli.GetConfigStaticJSON("ns1", "ip", &withIP) || withIP.Addr.String() != "10.0.0.1" {
+			t.Fatalf("read %d: ip = %+v", i, withIP)
+		}
 	}
-	if n := panickingDecodes.Load(); n != 1 {
-		t.Fatalf("panicking decode ran %d times, want 1", n)
+
+	if n := decodes.Load(); n != 0 {
+		t.Fatalf("custom decoders went through the cache %d times, want 0", n)
+	}
+	if r, p, pr := rejectingDecodes.Load(), panickingDecodes.Load(), probeDecodes.Load(); r != 3 || p != 3 || pr != 3 {
+		t.Fatalf("custom decoders ran (rejecting %d, panicking %d, probe %d) times, want 3 each", r, p, pr)
 	}
 }
 
+func TestGetConfigStaticJSON_TimeAndRawMessageAreCached(t *testing.T) {
+	decodes := countDecodes(t)
+	cli := seedStatic(t, map[string]string{
+		"t": `{"at":"2026-11-27T08:00:00+08:00","maybe":"2026-01-02T03:04:05Z","raw":{"k":[1,2]}}`,
+	})
+	type withTime struct {
+		At    time.Time       `json:"at"`
+		Maybe *time.Time      `json:"maybe"`
+		Raw   json.RawMessage `json:"raw"`
+	}
+	var first withTime
+	for i := 0; i < 3; i++ {
+		var v withTime
+		if !cli.GetConfigStaticJSON("ns1", "t", &v) {
+			t.Fatal("miss")
+		}
+		if v.At.Unix() != 1795737600 || v.Maybe == nil || v.Maybe.Year() != 2026 || string(v.Raw) != `{"k":[1,2]}` {
+			t.Fatalf("read %d: got %+v", i, v)
+		}
+		if i == 0 {
+			first = v
+			continue
+		}
+		if v.Maybe == first.Maybe || &v.Raw[0] == &first.Raw[0] {
+			t.Fatalf("read %d shares a pointer or slice with the first read", i)
+		}
+	}
+	if n := decodes.Load(); n != 1 {
+		t.Fatalf("decoded %d times, want 1", n)
+	}
+}
+
+// hiddenCfg has an unexported field, so its decodes cannot be cached.
+type hiddenCfg struct {
+	N      int `json:"n"`
+	hidden int
+}
+
 func TestGetConfigStaticJSON_UncacheableTypeDecodesEveryTime(t *testing.T) {
-	hiddenDecodes.Store(0)
+	decodes := countDecodes(t)
 	cli := seedStatic(t, map[string]string{"h": `{"n":3}`})
 	for i := 0; i < 3; i++ {
 		var h hiddenCfg
-		if !cli.GetConfigStaticJSON("ns1", "h", &h) || h.N != 3 {
+		if !cli.GetConfigStaticJSON("ns1", "h", &h) || h.N != 3 || h.hidden != 0 {
 			t.Fatalf("read %d: got %+v", i, h)
 		}
 	}
-	if n := hiddenDecodes.Load(); n != 3 {
-		t.Fatalf("uncacheable type decoded %d times, want 3", n)
+	if n := decodes.Load(); n != 0 {
+		t.Fatalf("uncacheable type went through the cache %d times, want 0", n)
 	}
 }
 
@@ -266,8 +383,29 @@ func TestGetConfigStaticJSON_InvalidOutMatchesUnmarshal(t *testing.T) {
 	}
 }
 
+func TestGetConfigStaticJSON_PanicDuringCachedDecodeRepanics(t *testing.T) {
+	var calls atomic.Int64
+	testHookJSONDecode = func() { calls.Add(1); panic("hook boom") }
+	t.Cleanup(func() { testHookJSONDecode = nil })
+	cli := seedStatic(t, map[string]string{"obj": `{"n":1}`})
+	for i := 0; i < 2; i++ {
+		func() {
+			defer func() {
+				if got := recover(); got != "hook boom" {
+					t.Fatalf("read %d: recovered %v, want the decode panic", i, got)
+				}
+			}()
+			var c countedCfg
+			cli.GetConfigStaticJSON("ns1", "obj", &c)
+		}()
+	}
+	if n := calls.Load(); n != 1 {
+		t.Fatalf("panicking decode ran %d times, want 1", n)
+	}
+}
+
 func TestGetConfigJSON_CachesPerResolvedVersion(t *testing.T) {
-	countedDecodes.Store(0)
+	decodes := countDecodes(t)
 	h := newHarness(t)
 	h.cfgServer.SetPullSnapshot(makeSnapshot("ns1", 1, 1, map[string]typedKey{
 		"big": {full: 1, versions: map[int64]string{1: `{"n":1}`, 2: `{"n":2}`}},
@@ -290,18 +428,23 @@ func TestGetConfigJSON_CachesPerResolvedVersion(t *testing.T) {
 			t.Fatalf("full release: got (%+v, %v), want n=1", full, err)
 		}
 	}
-	if n := countedDecodes.Load(); n != 2 {
+	if n := decodes.Load(); n != 2 {
 		t.Fatalf("two versions read 3 times each were decoded %d times, want 2", n)
 	}
 }
 
 func TestGetConfigJSON_ErrorsKeepWrapping(t *testing.T) {
-	cli := seedDynamicFull(t, map[string]string{"rejected": `{"n":1}`, "obj": `{"n":1}`})
+	cli := seedDynamicFull(t, map[string]string{"bad": `{broken`, "rejected": `{"N":1}`, "obj": `{"n":1}`})
 	ctx, abctx := emptyCtx(cli)
 	for i := 0; i < 2; i++ {
+		var c countedCfg
+		err := cli.GetConfigJSON(ctx, abctx, "ns1", "bad", &c)
+		var syn *json.SyntaxError
+		if !errors.As(err, &syn) || !strings.Contains(err.Error(), `parse "{broken" as json`) {
+			t.Fatalf("read %d: err = %v, want the wrapped syntax error", i, err)
+		}
 		var r rejectingCfg
-		err := cli.GetConfigJSON(ctx, abctx, "ns1", "rejected", &r)
-		if !errors.Is(err, errRejected) || !strings.Contains(err.Error(), `parse "{\"n\":1}" as json`) {
+		if err := cli.GetConfigJSON(ctx, abctx, "ns1", "rejected", &r); !errors.Is(err, errRejected) {
 			t.Fatalf("read %d: err = %v, want the wrapped UnmarshalJSON error", i, err)
 		}
 	}
@@ -313,7 +456,7 @@ func TestGetConfigJSON_ErrorsKeepWrapping(t *testing.T) {
 }
 
 func TestGetConfigJSON_SeparateTypesCachedSeparately(t *testing.T) {
-	countedDecodes.Store(0)
+	decodes := countDecodes(t)
 	cli := seedDynamicFull(t, map[string]string{"big": countedRaw})
 	ctx, abctx := emptyCtx(cli)
 	for i := 0; i < 3; i++ {
@@ -326,8 +469,8 @@ func TestGetConfigJSON_SeparateTypesCachedSeparately(t *testing.T) {
 			t.Fatalf("map: (%v, %v)", m, err)
 		}
 	}
-	if n := countedDecodes.Load(); n != 1 {
-		t.Fatalf("struct decoded %d times, want 1", n)
+	if n := decodes.Load(); n != 2 {
+		t.Fatalf("one version read as two types was decoded %d times, want 2", n)
 	}
 }
 
@@ -395,12 +538,19 @@ func TestDeepCopyJSONValue_SharesNoMutableMemory(t *testing.T) {
 	}
 }
 
+type valueReceiverDecoder struct{ N int }
+
+func (valueReceiverDecoder) UnmarshalJSON([]byte) error { return nil }
+
 func TestJSONTypeCacheable(t *testing.T) {
 	type withChan struct{ C chan int }
 	type withUnexported struct{ a int }
 	type embedsUnexported struct {
 		withUnexported
 		B int
+	}
+	type nestedCustom struct {
+		Rules []map[string]*probeRule
 	}
 	cases := []struct {
 		v    any
@@ -410,11 +560,21 @@ func TestJSONTypeCacheable(t *testing.T) {
 		{[]string{}, true},
 		{deepNode{}, true},
 		{time.Time{}, true},
+		{(*time.Time)(nil), true},
+		{json.RawMessage(nil), true},
+		{map[string]json.RawMessage{}, true},
 		{withChan{}, false},
 		{withUnexported{}, false},
 		{embedsUnexported{}, false},
 		{map[string]withUnexported{}, false},
 		{(*func())(nil), false},
+		{probeRule{}, false},
+		{(*probeRule)(nil), false},
+		{nestedCustom{}, false},
+		{valueReceiverDecoder{}, false},
+		{upperName(""), false},
+		{map[upperName]int{}, false},
+		{net.IP{}, false},
 	}
 	for _, c := range cases {
 		if got := jsonTypeCacheable(reflect.TypeOf(c.v)); got != c.want {

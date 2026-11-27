@@ -33,8 +33,10 @@ bump first, then an SDK tag bump.
   - 返回值、错误（包括包装的错误文本）、命中日志与之前相同；类型不匹配时 `out` 里的部分
     结果也与 `json.Unmarshal` 相同；自定义 `UnmarshalJSON` panic 时照旧向调用方抛出。
   - 以下情况不走缓存，每次照旧 `json.Unmarshal` 进 `out`：`*out` 不是零值（例如预先填了
-    默认值，保留 `json.Unmarshal` 的合并语义）；类型里有带未导出字段的结构体（`time.Time`
-    除外）或 chan / func；`out` 不是非 nil 指针。
+    默认值，保留 `json.Unmarshal` 的合并语义）；类型里有自定义的 `UnmarshalJSON` /
+    `UnmarshalText`（`time.Time`、`json.RawMessage` 除外），这类代码可能在结果里放入带未导出
+    字段的值、指针环或有意共用的指针，深拷贝无法正确复制；类型里有带未导出字段的结构体
+    （`time.Time` 除外）或 chan / func；`out` 不是非 nil 指针。
 - `GetConfigStatic` 改为从同一份快照读取全量版本号和值（之前分两次读快照，并发替换时可能
   误报未命中）；返回值和命中日志不变。
 

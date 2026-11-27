@@ -1,6 +1,7 @@
 package tipsyabconfig
 
 import (
+	"encoding"
 	"encoding/json"
 	"reflect"
 	"sync"
@@ -22,10 +23,18 @@ import (
 // no string allocation) and keeps GetConfigJSON's contract that out is the
 // caller's to modify.
 //
-// Reads fall back to a plain json.Unmarshal into out, exactly as before, when
-// the cached result could not reproduce it:
+// Only values built by encoding/json's own decoding are cached: those are
+// always fresh trees of maps, slices, pointers and, inside interfaces, only
+// map[string]any / []any / string / float64 / bool, so the deep copy below
+// is exact and cannot fail. Reads fall back to a plain json.Unmarshal into
+// out, exactly as before, when the cached result could not reproduce it:
 //   - *out is not the zero value: json.Unmarshal merges into existing values
 //     (e.g. defaults filled in before the call), a copy would overwrite them;
+//   - the type tree contains a custom json.Unmarshaler or
+//     encoding.TextUnmarshaler (time.Time and json.RawMessage excepted): such
+//     code can store anything, e.g. values with unexported fields behind an
+//     interface, pointer cycles, or pointers shared on purpose, which a deep
+//     copy would break or could not make;
 //   - the type contains a struct with unexported fields (other than
 //     time.Time), which reflection cannot deep-copy, or a chan / func /
 //     unsafe.Pointer;
@@ -46,6 +55,10 @@ type jsonCacheEntry struct {
 	panicked bool
 	panicVal any
 }
+
+// testHookJSONDecode, when set by a test, runs before each cached decode, so
+// tests can count decodes. Always nil in production.
+var testHookJSONDecode func()
 
 // decodeJSONCached unmarshals raw (the value of version in snap) into out,
 // reusing the decode cached on snap when possible. The returned error is
@@ -73,13 +86,16 @@ func decodeJSONCached(snap *NamespaceSnapshot, version int64, raw string, out an
 				e.panicked, e.panicVal = true, r
 			}
 		}()
+		if testHookJSONDecode != nil {
+			testHookJSONDecode()
+		}
 		v := reflect.New(typ)
 		e.err = json.Unmarshal([]byte(raw), v.Interface())
 		e.val = v.Elem()
 	})
 	if e.panicked {
-		// A custom UnmarshalJSON panicked: re-panic on every read, as an
-		// uncached json.Unmarshal would.
+		// Defensive: the once must not end without a result (e.val would be
+		// invalid). Re-panic on every read, as an uncached call would.
 		panic(e.panicVal)
 	}
 	// Copy even on error: json.Unmarshal fills what it can before reporting a
@@ -89,13 +105,34 @@ func decodeJSONCached(snap *NamespaceSnapshot, version int64, raw string, out an
 	return e.err
 }
 
-var timeType = reflect.TypeOf(time.Time{})
+var (
+	timeType            = reflect.TypeOf(time.Time{})
+	rawMessageType      = reflect.TypeOf(json.RawMessage(nil))
+	jsonUnmarshalerType = reflect.TypeOf((*json.Unmarshaler)(nil)).Elem()
+	textUnmarshalerType = reflect.TypeOf((*encoding.TextUnmarshaler)(nil)).Elem()
+)
+
+// hasCustomDecoder reports whether encoding/json would hand values of t (or
+// *t) to user code instead of decoding them itself. time.Time and
+// json.RawMessage are standard decoders that build plain values, so they do
+// not count. Pointer types are not checked here: json decodes into the
+// element, which typeCacheable checks (as both T and *T) when it recurses.
+func hasCustomDecoder(t reflect.Type) bool {
+	if t == timeType || t == rawMessageType {
+		return false
+	}
+	pt := reflect.PointerTo(t)
+	return t.Implements(jsonUnmarshalerType) || t.Implements(textUnmarshalerType) ||
+		pt.Implements(jsonUnmarshalerType) || pt.Implements(textUnmarshalerType)
+}
 
 // cacheableTypes memoises jsonTypeCacheable per top-level type (bool).
 var cacheableTypes sync.Map
 
 // jsonTypeCacheable reports whether a decoded value of t can be deep-copied by
-// deepCopyJSONValue without losing or sharing mutable state.
+// deepCopyJSONValue without losing or sharing mutable state: t's decoding is
+// done entirely by encoding/json and every type in it can be rebuilt through
+// reflection.
 func jsonTypeCacheable(t reflect.Type) bool {
 	if v, ok := cacheableTypes.Load(t); ok {
 		return v.(bool)
@@ -113,6 +150,9 @@ func typeCacheable(t reflect.Type, visiting map[reflect.Type]bool) bool {
 	}
 	visiting[t] = true
 	defer delete(visiting, t)
+	if t.Kind() != reflect.Pointer && hasCustomDecoder(t) {
+		return false
+	}
 	switch t.Kind() {
 	case reflect.Chan, reflect.Func, reflect.UnsafePointer:
 		return false
