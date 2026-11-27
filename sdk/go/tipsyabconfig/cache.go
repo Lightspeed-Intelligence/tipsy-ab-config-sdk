@@ -36,6 +36,13 @@ type NamespaceSnapshot struct {
 	BusinessSnapshotSeq   int64
 	ExperimentSnapshotSeq int64
 	Keys                  map[string]KeyState
+
+	// parsed caches GetConfigJSON / GetConfigStaticJSON decodes of versions
+	// read from this snapshot (jsonCacheKey → *jsonCacheEntry, see
+	// json_cache.go). It is created with the snapshot and dropped with it, so a
+	// replace discards stale results without any eviction logic. nil (snapshot
+	// built outside applyProto) disables caching: every read decodes.
+	parsed *sync.Map
 }
 
 // configCache is the per-process in-memory cache of NamespaceSnapshot.
@@ -146,6 +153,7 @@ func (c *configCache) applyProto(pb *configv1.NamespaceSnapshot) (replaced, busi
 		BusinessSnapshotSeq:   newBiz,
 		ExperimentSnapshotSeq: newExp,
 		Keys:                  make(map[string]KeyState, len(pb.Keys)),
+		parsed:                new(sync.Map),
 	}
 	var byteSize uint64
 	for _, k := range pb.Keys {

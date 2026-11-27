@@ -20,6 +20,26 @@ bump first, then an SDK tag bump.
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-11-27
+
+### Changed
+
+- `GetConfigJSON` / `GetConfigStaticJSON` 按版本缓存解码结果，供每秒读上百次的大 JSON 配置
+  使用，调用方不用改代码。`*out` 为零值时，同一版本（按 `out` 的类型分开）只解码一次，并发
+  首次读取也只解码一次；之后每次读把缓存的结果深拷贝进 `out`：map、slice、指针各自一份，
+  字符串共用（不可变），所以 `out` 仍归调用方，可以随意修改。缓存挂在本地 namespace 快照上，
+  快照被替换时一起丢弃，不需要失效逻辑。约 100 KB 的 JSON：解码进结构体每次从约 360 µs、
+  253 KB 分配降到约 30 µs、25 KB；解码进 `map[string]any` 从约 360 µs 降到约 110 µs。
+  - 返回值、错误（包括包装的错误文本）、命中日志与之前相同；类型不匹配时 `out` 里的部分
+    结果也与 `json.Unmarshal` 相同；自定义 `UnmarshalJSON` panic 时照旧向调用方抛出。
+  - 以下情况不走缓存，每次照旧 `json.Unmarshal` 进 `out`：`*out` 不是零值（例如预先填了
+    默认值，保留 `json.Unmarshal` 的合并语义）；类型里有自定义的 `UnmarshalJSON` /
+    `UnmarshalText`（`time.Time`、`json.RawMessage` 除外），这类代码可能在结果里放入带未导出
+    字段的值、指针环或有意共用的指针，深拷贝无法正确复制；类型里有带未导出字段的结构体
+    （`time.Time` 除外）或 chan / func；`out` 不是非 nil 指针。
+- `GetConfigStatic` 改为从同一份快照读取全量版本号和值（之前分两次读快照，并发替换时可能
+  误报未命中）；返回值和命中日志不变。
+
 ### Deprecated
 
 - 共享 proto 将枚举 2、`custom_flat_kv` 与 `params_custom` 标记为 deprecated；保留数值、
@@ -34,14 +54,12 @@ bump first, then an SDK tag bump.
 - staticcheck 会对废弃枚举引用报告 `SA1019`；将 lint 诊断视为错误的消费方需迁移
   为显式 config 查询，或对兼容测试按项目规范局部抑制。
 
-### 发布步骤
+### Dependencies
 
-- 本次 proto 新增了 deprecated 选项，`api/gen/go` 的生成代码随之变化。发版时先给
-  `api/gen/go` 打新 tag，再把本模块 `go.mod` 中的 `api/gen/go` 从 v0.7.0 升到该新版本
-  （同步 `go.sum`），然后再打 Go SDK tag 发布。顺序不能颠倒：仓库内 `go.work` 解析的是
-  树内 `api/gen/go`，CI 不会暴露过期的 pin（同 [0.13.1] 的教训）。
-  Python 生成代码（`_proto/*_pb2.py`）已在仓库中更新；Java 生成代码在构建期由仓库内
-  已更新的 `api/proto` 生成。二者发版均无需额外步骤。
+- `api/gen/go` 从 v0.7.0 升到 v0.8.0。v0.8.0 只多了上述 proto deprecated 选项，已先于本版
+  打 tag；顺序不能颠倒，因为仓库内 `go.work` 解析的是树内 `api/gen/go`，CI 的 workspace 测试
+  不会暴露过期的 pin（同 [0.13.1] 的教训）。Python 生成代码（`_proto/*_pb2.py`）已在仓库中
+  更新；Java 生成代码在构建期由仓库内已更新的 `api/proto` 生成。二者发版均无需额外步骤。
 
 ## [0.16.0] - 2026-11-03
 

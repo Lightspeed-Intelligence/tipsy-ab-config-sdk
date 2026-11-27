@@ -10,20 +10,37 @@ import "context"
 // Per design §10.5 the empty string is a valid cached value. Callers MUST
 // gate on the second return value, not on len(value).
 func (c *Client) GetConfigStatic(ns, key, defaultValue string) (string, bool) {
+	_, val, _, ok := c.resolveStatic(ns, key)
+	if !ok {
+		return defaultValue, false
+	}
+	return val, true
+}
+
+// resolveStatic is GetConfigStatic without the caller default. It reads the
+// full-release version and its value from ONE captured snapshot (returned so
+// GetConfigStaticJSON can attach its per-version decode cache to that same
+// snapshot) and emits the get_config_static hit line on a hit.
+func (c *Client) resolveStatic(ns, key string) (snap *NamespaceSnapshot, val string, versionID int64, ok bool) {
 	if c == nil {
-		return defaultValue, false
+		return nil, "", 0, false
 	}
-	versionID, ok := c.cache.fullReleaseVersion(ns, key)
-	if !ok {
-		return defaultValue, false
+	snap = c.cache.snapshot(ns)
+	if snap == nil {
+		return nil, "", 0, false
 	}
-	val, ok := c.cache.valueOf(ns, key, versionID)
+	ks, ok := snap.Keys[key]
+	if !ok || ks.FullReleaseVersion == 0 {
+		return nil, "", 0, false
+	}
+	versionID = ks.FullReleaseVersion
+	val, ok = ks.Versions[versionID]
 	if !ok {
-		return defaultValue, false
+		return nil, "", 0, false
 	}
 	c.logger.Info("tipsyabconfig: get_config_static hit",
 		"ns", ns, "key", key, "version", versionID, "source", "full_static")
-	return val, true
+	return snap, val, versionID, true
 }
 
 // GetConfig resolves the dynamic config (ns, key) for a specific user, honoring
@@ -63,15 +80,34 @@ func (c *Client) GetConfigDefault(ctx context.Context, abctx *AbtestContext, key
 }
 
 func (c *Client) getConfigResolved(ctx context.Context, abctx *AbtestContext, ns, key, defaultValue string) (string, error) {
+	r, err := c.resolveConfig(ctx, abctx, ns, key)
+	if err != nil || r.res.source == keySourceNone {
+		return defaultValue, err
+	}
+	return r.res.value, nil
+}
+
+// resolvedConfig is one dynamic (ns, key) resolution plus the snapshot it was
+// read from, so GetConfigJSON can attach its per-version decode cache to that
+// same snapshot. res.source == keySourceNone means the caller's default applies.
+type resolvedConfig struct {
+	snap *NamespaceSnapshot
+	res  keyResolution
+}
+
+// resolveConfig is GetConfig without the caller default: same resolution, same
+// hit / default log lines. A non-nil error means GetConfig would return
+// (defaultValue, err).
+func (c *Client) resolveConfig(ctx context.Context, abctx *AbtestContext, ns, key string) (resolvedConfig, error) {
 	if c == nil {
-		return defaultValue, ErrClosed
+		return resolvedConfig{}, ErrClosed
 	}
 	if abctx == nil {
-		return defaultValue, ErrAbtestContextMissing
+		return resolvedConfig{}, ErrAbtestContextMissing
 	}
 	resolvedNs, err := c.resolveNamespace(ns)
 	if err != nil {
-		return defaultValue, err
+		return resolvedConfig{}, err
 	}
 
 	// Capture the snapshot ONCE so every read below (fast-path gate, ab value,
@@ -94,7 +130,7 @@ func (c *Client) getConfigResolved(ctx context.Context, abctx *AbtestContext, ns
 		abresult, err = abctx.resultFor(ctx, resolvedNs)
 		if err != nil {
 			// ctx canceled / deadline — surface to caller so they can abort.
-			return defaultValue, err
+			return resolvedConfig{}, err
 		}
 	}
 
@@ -108,7 +144,7 @@ func (c *Client) getConfigResolved(ctx context.Context, abctx *AbtestContext, ns
 			"ns", resolvedNs, "key", key, "reason", reasonDefault,
 			"default_cause", defaultCauseFor(snap, key, abresult, abctx.experimentHashID),
 			"uid", abctx.experimentHashID, "trace_id", abctx.traceID)
-		return defaultValue, nil
+		return resolvedConfig{snap: snap, res: res}, nil
 	}
 	// Hit log (SLS contract, design §4): msg text unchanged; `reason` is always
 	// present (one of the four resolved-value reasons here; the fifth,
@@ -138,7 +174,7 @@ func (c *Client) getConfigResolved(ctx context.Context, abctx *AbtestContext, ns
 	}
 	attrs = append(attrs, "uid", abctx.experimentHashID, "trace_id", abctx.traceID)
 	c.logger.Info(msg, attrs...)
-	return res.value, nil
+	return resolvedConfig{snap: snap, res: res}, nil
 }
 
 // reason enum for the getConfig hit log (SLS contract, design §4). Complete —

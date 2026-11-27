@@ -2,7 +2,6 @@ package tipsyabconfig
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -101,15 +100,18 @@ func (c *Client) GetConfigStaticString(ns, key, def string) (string, bool) {
 // It returns false on a cache miss OR an unmarshal failure (out is left in
 // whatever state json.Unmarshal produced), and true only when the cached value
 // successfully unmarshals.
+//
+// The decoded value is cached per version: when *out is the zero value, a
+// version is decoded once and later reads deep-copy the cached result into out
+// (see json_cache.go). out is still the caller's to modify. Pass a non-zero
+// *out (e.g. pre-filled defaults) to get json.Unmarshal's merge behaviour; that
+// path decodes on every read.
 func (c *Client) GetConfigStaticJSON(ns, key string, out any) bool {
-	raw, ok := c.GetConfigStatic(ns, key, "")
+	snap, raw, version, ok := c.resolveStatic(ns, key)
 	if !ok {
 		return false
 	}
-	if err := json.Unmarshal([]byte(raw), out); err != nil {
-		return false
-	}
-	return true
+	return decodeJSONCached(snap, version, raw, out) == nil
 }
 
 // ---------------------------------------------------------------------------
@@ -199,15 +201,20 @@ func (c *Client) GetConfigString(ctx context.Context, abctx *AbtestContext, ns, 
 // out. A miss returns nil and leaves out untouched. A non-empty value that
 // fails to unmarshal returns a wrapped error. The only other error is the
 // underlying ctx/ns error from GetConfig.
+//
+// The decoded value is cached per resolved version, as in GetConfigStaticJSON:
+// with a zero *out each version is decoded once and later reads deep-copy the
+// cached result into out, which stays the caller's to modify.
 func (c *Client) GetConfigJSON(ctx context.Context, abctx *AbtestContext, ns, key string, out any) error {
-	raw, err := c.GetConfig(ctx, abctx, ns, key, "")
+	r, err := c.resolveConfig(ctx, abctx, ns, key)
 	if err != nil {
 		return err
 	}
-	if raw == "" {
+	raw := r.res.value
+	if r.res.source == keySourceNone || raw == "" {
 		return nil
 	}
-	if uerr := json.Unmarshal([]byte(raw), out); uerr != nil {
+	if uerr := decodeJSONCached(r.snap, r.res.version, raw, out); uerr != nil {
 		return fmt.Errorf("tipsyabconfig: parse %q as json: %w", raw, uerr)
 	}
 	return nil
